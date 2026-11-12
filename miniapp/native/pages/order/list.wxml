@@ -1,0 +1,7 @@
+<view class="page"><view class="row"><view class="title">我的订单</view><button class="secondary small" bindtap="refresh" disabled="{{loading || !loggedIn}}">刷新</button></view>
+<view class="card" wx:if="{{!loggedIn}}"><view>登录后查看您的订单</view><button class="primary" bindtap="login">去登录</button></view>
+<block wx:else><view class="card" wx:if="{{error}}"><view class="error">{{error}}</view><button bindtap="retry" disabled="{{loading}}">重试</button></view>
+<view class="card" wx:for="{{list}}" wx:key="id" data-id="{{item.id}}" bindtap="detail"><view class="row"><text class="muted">{{item.orderNo}}</text><text class="tag">{{item.statusText}}</text></view><view class="subtitle">{{item.typeText}}</view><view class="line">取：{{item.fromAddress}}</view><view class="line">送：{{item.toAddress}}</view><view class="row"><text class="muted">{{item.createdText}}</text><text class="price">¥{{item.feeText}}</text></view></view>
+<view class="empty" wx:if="{{!list.length && !loading && !error}}">暂无订单<button class="secondary" bindtap="home">去首页下单</button></view>
+<view class="muted" wx:if="{{loading}}">正在加载订单…</view><button class="secondary" wx:if="{{hasMore && list.length}}" bindtap="more" disabled="{{loading}}">加载更多</button><view class="empty" wx:if="{{!hasMore && list.length}}">已经到底了</view>
+</block></view>

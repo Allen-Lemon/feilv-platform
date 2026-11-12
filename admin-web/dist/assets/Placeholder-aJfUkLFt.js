@@ -1,0 +1,1 @@
+import{_ as n,h as r,r as c,o as s}from"./index-KBdosZMo.js";const a={};function l(o,_){var e;const t=c("el-empty");return s(),r(t,{description:`【${(e=o.$route.meta)==null?void 0:e.title}】模块在完整版本中实现（对应功能设计文档相应章节），当前工程已交付核心链路，可在本工程基础上按文档扩展。`},null,8,["description"])}const i=n(a,[["render",l]]);export{i as default};

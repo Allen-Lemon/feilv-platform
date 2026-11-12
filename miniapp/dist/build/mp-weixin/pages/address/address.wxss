@@ -1,0 +1,1 @@
+.title{font-weight:600;margin-bottom:18rpx}.top{display:flex;gap:20rpx;align-items:center}.name{font-weight:600}.tag{color:#ff7d00;background:#fff2e0;padding:4rpx 12rpx;font-size:22rpx}.addr{color:#606266;margin-top:12rpx}.actions{text-align:right;margin-top:12rpx}.input{background:#f5f6f8;padding:18rpx;margin-bottom:14rpx;border-radius:10rpx}.btn-primary{margin-top:18rpx}

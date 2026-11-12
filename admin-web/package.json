@@ -1,0 +1,21 @@
+{
+  "name": "feilv-admin-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "德江县飞毛腿城市同城跑腿平台管理后台（对应功能设计文档第七章九组菜单）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "element-plus": "^2.7.2",
+    "vue": "^3.4.27",
+    "vue-router": "^4.3.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "vite": "^5.2.11"
+  }
+}

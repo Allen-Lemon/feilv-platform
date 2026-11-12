@@ -1,0 +1,37 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/login/login",
+    "pages/address/address",
+    "pages/order/create",
+    "pages/order/confirm",
+    "pages/order/list",
+    "pages/order/detail",
+    "pages/order/track",
+    "pages/my/my",
+    "pages/rider/register",
+    "pages/rider/workbench",
+    "pages/settings/settings",
+    "pages/legal/legal"
+  ],
+  "window": {
+    "navigationBarTitleText": "飞毛腿跑腿",
+    "navigationBarBackgroundColor": "#176B52",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#F4F6F5"
+  },
+  "tabBar": {
+    "color": "#68776F",
+    "selectedColor": "#176B52",
+    "list": [
+      { "pagePath": "pages/index/index", "text": "首页" },
+      { "pagePath": "pages/order/list", "text": "订单" },
+      { "pagePath": "pages/my/my", "text": "我的" }
+    ]
+  },
+  "permission": { "scope.userLocation": { "desc": "骑手主动上报配送位置，用于向订单用户展示配送轨迹" } },
+  "requiredPrivateInfos": ["getLocation"],
+  "sitemapLocation": "sitemap.json",
+  "style": "v2",
+  "lazyCodeLoading": "requiredComponents"
+}

@@ -1,0 +1,8 @@
+<view class="page">
+  <view class="hero"><view class="title">飞毛腿跑腿</view><view>德江同城 · 送得快，办得好</view></view>
+  <view class="notice">当前支付为 MOCK 演示，不发生真实扣款。请勿用于真实交易。</view>
+  <view class="card"><view class="title">今天需要什么帮助？</view>
+    <view class="entry" wx:for="{{types}}" wx:key="code" data-type="{{item.code}}" bindtap="create"><view class="subtitle">{{item.label}} →</view><view class="muted">{{item.desc}}</view></view>
+  </view>
+  <view class="card"><view class="title">下单须知</view><view class="hint">手填取送联系人及电话，微信登录无需授权手机号。距离为手工预估，费用以服务端计价为准。</view><view class="hint">请勿寄送处方药、烟草及其他禁限寄物品。贵重、易碎物品请事先确认配送条件。</view><button class="secondary" bindtap="orders">查看我的订单</button><view class="link" bindtap="settings">连接服务设置</view></view>
+</view>

@@ -1,0 +1,44 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: feilv-server
+  datasource:
+    url: jdbc:mysql://${DB_HOST:42.193.151.196}:${DB_PORT:3306}/${DB_NAME:feilv}?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:alenlove@2026}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  sql:
+    init:
+      mode: always
+      encoding: UTF-8
+      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql
+
+# 调度参数（对应功能设计文档 8.2 调度引擎 / 详细设计 3.3 计价，全部可配置化）
+feilv:
+  wechat:
+    app-id: ${WECHAT_APP_ID:}
+    app-secret: ${WECHAT_APP_SECRET:}
+  dispatch:
+    radius-km: 5                 # 候选推送半径
+    order-grab-timeout-min: 10    # 待接单超时（分钟）
+  pricing:
+    base-fee-fen: 500             # 起步价5元（分）
+    base-distance-m: 2000         # 起步含2公里
+    per-km-fen: 150               # 超出每公里1.5元
+    night-rate: 120               # 夜间(22:00-7:00)加成120%
+  share:
+    rider-percent: 70             # 分账：骑手70% / 平台30%（生产经持牌机构分账，本工程模拟记录）
+
+logging:
+  level:
+    com.feilv: info

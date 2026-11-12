@@ -1,0 +1,4 @@
+com\feilv\service\WechatLoginServiceTest.class
+com\feilv\controller\WechatLoginControllerTest.class
+com\feilv\service\WechatLoginPersistenceTest.class
+com\feilv\service\WechatSessionClientTest.class

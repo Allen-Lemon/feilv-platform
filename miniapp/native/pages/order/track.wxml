@@ -1,0 +1,5 @@
+<view class="page"><view class="notice" wx:if="{{invalid}}">无效订单ID</view><view class="card"><view class="title">真实配送轨迹</view><view class="hint">仅展示承运骑手实际上传的最近50个位置点，前台每5秒查询。不代表实时连续定位或导航路线。</view><view class="error" wx:if="{{error}}">{{error}}</view><button class="secondary" loading="{{loading}}" disabled="{{loading || invalid}}" bindtap="refresh">刷新轨迹</button><view class="muted" wx:if="{{lastUpdated}}">查询时间：{{lastUpdated}}</view></view>
+<view class="card" wx:if="{{points.length}}"><map class="map" latitude="{{latitude}}" longitude="{{longitude}}" markers="{{markers}}" polyline="{{polyline}}" include-points="{{includePoints}}" scale="15" enable-scroll enable-zoom/><view class="hint">蓝色连线：骑手上报轨迹；标注为最近上报位置。可缩放、拖动地图，下方列出全部可见点。</view></view>
+<view class="empty" wx:if="{{!points.length && !loading}}">暂未收到有效位置上报，不显示模拟轨迹。</view>
+<view class="card" wx:if="{{points.length}}"><view class="title">轨迹点明细（时间正序）</view><view class="line" wx:for="{{points}}" wx:key="id"><view>{{item.timeText}}</view><view class="muted mono">经度 {{item.lngText}} · 纬度 {{item.latText}}</view></view></view>
+</view>

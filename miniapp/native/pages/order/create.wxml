@@ -1,0 +1,21 @@
+<view class="page"><view class="notice">{{typeText}} · 请手动填写实际联系人。距离为手工预估，不是地图测距；报价由服务端计算。</view>
+  <view class="card"><view class="row"><view class="title">取件 / 起点信息</view><button class="secondary small" data-side="from" bindtap="address" disabled="{{busy}}">选地址簿</button></view>
+    <view class="field"><text class="label">取件联系人</text><input value="{{form.fromContact}}" data-field="fromContact" bindinput="input" maxlength="30" disabled="{{busy}}" placeholder="姓名"/></view>
+    <view class="field"><text class="label">取件手机号</text><input type="number" value="{{form.fromPhone}}" data-field="fromPhone" bindinput="input" maxlength="11" disabled="{{busy}}" placeholder="11位手机号"/></view>
+    <view class="field"><text class="label">取件详细地址</text><input value="{{form.fromAddress}}" data-field="fromAddress" bindinput="input" maxlength="200" disabled="{{busy}}" placeholder="街道、楼栋、门牌"/></view>
+  </view>
+  <view class="card"><view class="row"><view class="title">送达 / 终点信息</view><button class="secondary small" data-side="to" bindtap="address" disabled="{{busy}}">选地址簿</button></view>
+    <view class="field"><text class="label">收件联系人</text><input value="{{form.toContact}}" data-field="toContact" bindinput="input" maxlength="30" disabled="{{busy}}" placeholder="姓名"/></view>
+    <view class="field"><text class="label">收件手机号</text><input type="number" value="{{form.toPhone}}" data-field="toPhone" bindinput="input" maxlength="11" disabled="{{busy}}" placeholder="11位手机号"/></view>
+    <view class="field"><text class="label">送达详细地址</text><input value="{{form.toAddress}}" data-field="toAddress" bindinput="input" maxlength="200" disabled="{{busy}}" placeholder="街道、楼栋、门牌"/></view>
+  </view>
+  <view class="card"><view class="title">物品与要求</view>
+    <view class="field"><text class="label">物品 / 代办事项</text><input value="{{form.goodsDesc}}" data-field="goodsDesc" bindinput="input" maxlength="128" disabled="{{busy}}" placeholder="例如：文件、鲜花、代取快递"/></view>
+    <view class="field"><text class="label">预估距离（公里，手工填写）</text><input type="digit" value="{{distanceKm}}" data-field="distanceKm" bindinput="number" disabled="{{busy}}" placeholder="例如：2.5"/></view>
+    <view class="field"><text class="label">重量（公斤，1至100的整数）</text><input type="number" value="{{weightKg}}" data-field="weightKg" bindinput="number" disabled="{{busy}}" maxlength="3"/></view>
+    <view class="field"><text class="label">备注（选填）</text><textarea value="{{form.remark}}" data-field="remark" bindinput="input" maxlength="255" disabled="{{busy}}" placeholder="配送时间、轻拿轻放等"/></view>
+    <view class="hint">照片上传与 OCR 尚未接入，本页面不会将本地选图当作已上传。</view>
+    <button class="secondary" loading="{{busy}}" disabled="{{busy}}" bindtap="calculate">{{quote ? '重新计算费用' : '计算费用'}}</button>
+  </view>
+  <view class="card" wx:if="{{quote}}"><view class="title">费用明细</view><view class="row line" wx:for="{{quote.items}}" wx:key="key"><text>{{item.label}}</text><text>¥{{item.amountText}}</text></view><view class="row line"><text>预估合计</text><text class="price">¥{{quote.totalText}}</text></view><button class="primary" disabled="{{busy}}" bindtap="next">下一步，确认订单</button></view>
+</view>

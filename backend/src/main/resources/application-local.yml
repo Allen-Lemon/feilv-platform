@@ -1,0 +1,40 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: feilv-server
+  datasource:
+    url: jdbc:mysql://${DB_HOST:42.193.151.196}:${DB_PORT:3306}/${DB_NAME:mingli}?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:alenlove@2026}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  sql:
+    init:
+      mode: always
+      encoding: UTF-8
+      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql
+
+feilv:
+  dispatch:
+    radius-km: 5
+    order-grab-timeout-min: 10
+  pricing:
+    base-fee-fen: 500
+    base-distance-m: 2000
+    per-km-fen: 150
+    night-rate: 120
+  share:
+    rider-percent: 70
+
+logging:
+  level:
+    com.feilv: info

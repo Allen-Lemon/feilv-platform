@@ -1,0 +1,16 @@
+<view class="page"><view class="notice" wx:if="{{selecting}}">选择取件或收件地址；也可以先在下方新增。</view>
+  <view class="card" wx:if="{{error}}"><view class="error">{{error}}</view><button bindtap="load">重新加载</button></view>
+  <view class="card" wx:for="{{list}}" wx:key="id"><view class="row"><text>{{item.contact}} · {{item.phone}}</text><text class="tag" wx:if="{{item.defaultFlag}}">默认</text></view><view class="line">{{item.poiName}} {{item.address}}</view>
+    <button wx:if="{{selecting}}" class="primary" data-id="{{item.id}}" bindtap="select">选择此地址</button>
+    <view class="actions"><button class="secondary small" data-id="{{item.id}}" bindtap="edit" disabled="{{busy || loading}}">编辑</button><button wx:if="{{!item.defaultFlag}}" class="secondary small" data-id="{{item.id}}" bindtap="setDefault" disabled="{{busy || loading}}">设为默认</button><button class="danger small" data-id="{{item.id}}" bindtap="remove" disabled="{{busy || loading}}">删除</button></view>
+  </view>
+  <view class="empty" wx:if="{{!list.length && !loading && !error}}">地址簿还是空的，请先新增地址</view>
+  <view class="card"><view class="title">{{editingId ? '编辑地址' : '新增地址'}}</view>
+    <view class="field"><text class="label">联系人</text><input value="{{form.contact}}" data-field="contact" bindinput="input" maxlength="30" disabled="{{busy}}" placeholder="姓名"/></view>
+    <view class="field"><text class="label">手机号</text><input value="{{form.phone}}" data-field="phone" bindinput="input" type="number" maxlength="11" disabled="{{busy}}" placeholder="11位手机号"/></view>
+    <view class="field"><text class="label">地点名称（选填）</text><input value="{{form.poiName}}" data-field="poiName" bindinput="input" maxlength="80" disabled="{{busy}}" placeholder="小区、商场或学校"/></view>
+    <view class="field"><text class="label">详细地址</text><input value="{{form.address}}" data-field="address" bindinput="input" maxlength="200" disabled="{{busy}}" placeholder="街道、楼栋、门牌号"/></view>
+    <label><switch checked="{{form.isDefault === 1}}" bindchange="defaultChange" disabled="{{busy}}" color="#176B52"/>设为默认地址</label>
+    <button class="primary" loading="{{busy}}" disabled="{{busy || loading}}" bindtap="save">保存地址</button><button wx:if="{{editingId}}" class="secondary" bindtap="reset" disabled="{{busy}}">取消编辑</button>
+  </view>
+</view>
