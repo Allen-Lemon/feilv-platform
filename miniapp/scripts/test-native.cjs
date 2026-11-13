@@ -13,6 +13,7 @@ function environment(overrides = {}) {
   const timers = new Map()
   let timerId = 0
   let definition
+  let pages = []
   const wx = {
     getStorageSync: k => storage.get(k), setStorageSync: (k, v) => storage.set(k, v), removeStorageSync: k => storage.delete(k),
     request(options) { calls.requests.push(options) },
@@ -22,6 +23,9 @@ function environment(overrides = {}) {
     showModal(options) { options.success({ confirm: true, cancel: false }) },
     getAccountInfoSync() { return { miniProgram: { envVersion: 'develop' } } },
     login(options) { options.success({ code: 'temporary-wx-code' }) },
+    canIUse() { return true }, getAppBaseInfo() { return { SDKVersion: '3.4.0' } },
+    getPrivacySetting(options) { options.success({ needAuthorization: false }) },
+    openPrivacyContract(options) { options.success({}) },
     stopPullDownRefresh() {}, openSetting() {},
     getLocation(options) { calls.locations++; options.success({ longitude: 108.123456, latitude: 28.234567, speed: 4 }) }
   }
@@ -32,7 +36,7 @@ function environment(overrides = {}) {
     if (cache.has(absolute)) return cache.get(absolute).exports
     const module = { exports: {} }
     cache.set(absolute, module)
-    const context = { module, exports: module.exports, wx, console, getCurrentPages: () => [], Page(value) { definition = value }, App(value) { definition = value },
+    const context = { module, exports: module.exports, wx, console, getCurrentPages: () => pages, Page(value) { definition = value }, App(value) { definition = value },
       setTimeout(fn) { const id = ++timerId; timers.set(id, fn); return id }, clearTimeout(id) { timers.delete(id) },
       require(name) {
         assert.ok(name.startsWith('.'), 'native modules must not load dependencies')
@@ -72,7 +76,7 @@ function environment(overrides = {}) {
   }
   function authenticated(role = 'USER') { storage.set('feilv_token', 'token-1'); storage.set('feilv_user_id', 1); storage.set('feilv_role', role) }
   function app() { load(path.join(native, 'app.js')); return definition }
-  return { wx, storage, calls, timers, load, page, app, authenticated }
+  return { wx, storage, calls, timers, load, page, app, authenticated, setPages(value) { pages = value } }
 }
 function event(field, value) { return { currentTarget: { dataset: { field } }, detail: { value } } }
 
@@ -447,6 +451,244 @@ test('session: multi-step rider load cannot send follow-up request with another 
   await pending
   assert.equal(env.calls.requests.length, 1)
   assert.equal(page.data.info, null)
+})
+function profileValue(patch = {}) {
+  return Object.assign({ userId: 1, role: 'USER', nickname: '平台昵称', mobile: '', mobileBound: false }, patch)
+}
+function phoneEvent(code, errMsg = 'getPhoneNumber:ok') { return { detail: { code, errMsg } } }
+async function readyProfile(env, api, from = 'my') {
+  env.authenticated()
+  const page = env.page('pages/profile/profile', api)
+  page.onLoad({ from }); await page.onShow()
+  return page
+}
+test('profile: WeChat redirects replacement login then GET uses the new session scope', async () => {
+  const env = environment()
+  env.setPages([{ route: 'pages/order/create' }, { route: 'pages/login/login' }])
+  const login = env.page('pages/login/login')
+  login.onLoad({}); login.onShow(); login.consent({ detail: { value: ['yes'] } })
+  const session = env.load(path.join(native, 'utils/session.js')); const before = session.revision()
+  const pending = login.wechat(); await flush()
+  env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: { token: 'new-wechat-token', userId: 1, role: 'USER', nickname: '平台昵称' } } })
+  await pending
+  assert.equal(session.revision(), before + 1)
+  assert.equal(env.calls.requests.length, 1, 'login must never call me using the obsolete run scope')
+  assert.equal(env.calls.navigation.length, 1)
+  assert.equal(env.calls.navigation[0].url, '/pages/profile/profile?from=login')
+  assert.equal(env.calls.navigation[0].back, undefined)
+  const profile = env.page('pages/profile/profile')
+  profile.onLoad({ from: 'login' }); const loading = profile.onShow()
+  const req = env.calls.requests[1]
+  assert.ok(req.url.endsWith('/user/me')); assert.equal(req.header.Authorization, 'Bearer new-wechat-token')
+  req.success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await loading
+  assert.equal(profile.data.loaded, true)
+  profile.leave(); assert.equal(env.calls.navigation.at(-1).back, true)
+})
+test('profile: complete returning WeChat profile continues; from=my always allows editing', async () => {
+  for (const from of ['login', 'my']) {
+    const env = environment(); env.setPages([{ route: 'pages/order/create' }, { route: 'pages/profile/profile' }])
+    const page = await readyProfile(env, { async me() { return profileValue({ mobile: '138****8000', mobileBound: true }) } }, from)
+    assert.equal(env.calls.navigation.length, from === 'login' ? 1 : 0)
+    assert.equal(page.data.mobile, '138****8000')
+    assert.equal(page.data.mobileBound, true)
+  }
+})
+test('profile: nickname cache update preserves drafts, pending order and session revision', async () => {
+  const env = environment()
+  const page = await readyProfile(env, { async me() { return profileValue() }, async updateProfile(value) { return profileValue({ nickname: value }) } })
+  const session = env.load(path.join(native, 'utils/session.js')); const revision = session.revision()
+  const draft = { owner: 1, payload: { goodsDesc: '保留的草稿' } }; const pending = { owner: 1, id: 88 }
+  env.storage.set('native_draft', draft); env.storage.set('native_pending_order', pending)
+  page.input({ detail: { value: '  新昵称  ' } }); await page.save()
+  assert.equal(env.storage.get('feilv_nickname'), '新昵称'); assert.equal(page.data.nickname, '新昵称')
+  assert.equal(session.revision(), revision); assert.equal(env.storage.get('native_draft'), draft); assert.equal(env.storage.get('native_pending_order'), pending)
+  assert.equal(env.storage.get('feilv_token'), 'token-1')
+  assert.equal(session.updateNickname('越权', 2, revision), false)
+  assert.equal(session.updateNickname('过期', 1, revision - 1), false)
+  assert.equal(env.storage.get('feilv_nickname'), '新昵称')
+})
+test('profile: nickname validates Unicode codepoints, trims and rejects empty, long or control input', async () => {
+  const env = environment(); const submitted = []
+  const page = await readyProfile(env, { async me() { return profileValue() }, async updateProfile(value) { submitted.push(value); return profileValue({ nickname: value }) } })
+  for (const value of ['  ', 'a'.repeat(33), '昵称\n', 'ab', 'ab', '😀'.repeat(33)]) {
+    page.input({ detail: { value } }); await page.save()
+  }
+  assert.equal(submitted.length, 0)
+  page.input({ detail: { value: '  ' + '😀'.repeat(32) + '  ' } }); await page.save()
+  assert.equal(Array.from(submitted[0]).length, 32)
+})
+test('profile: denial, cancellation and old encrypted response without code send nothing and keep login', async () => {
+  const env = environment(); let bindings = 0
+  const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { bindings++ } })
+  for (const detail of [
+    { errMsg: 'getPhoneNumber:fail user deny', code: 'ignored' },
+    { errMsg: 'getPhoneNumber:fail user cancel' },
+    { errMsg: 'getPhoneNumber:ok', encryptedData: 'legacy', iv: 'legacy', phoneNumber: '13800000000' },
+    { errMsg: 'getPhoneNumber:ok', code: '   ' }
+  ]) { page.preparePhone(); await page.bindPhone({ detail }) }
+  assert.equal(bindings, 0); assert.equal(env.storage.get('feilv_token'), 'token-1'); assert.equal(env.calls.navigation.length, 0)
+})
+test('profile: binding request sends only getPhoneNumber code; draft nickname remains unsaved', async () => {
+  const env = environment(); env.authenticated()
+  const page = env.page('pages/profile/profile'); page.onLoad({ from: 'my' }); const loading = page.onShow()
+  env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await loading
+  page.input({ detail: { value: '尚未保存的名字' } }); page.preparePhone()
+  const pending = page.bindPhone({ detail: { errMsg: 'getPhoneNumber:ok', code: 'phone-authorization-code', phoneNumber: '13800000000', encryptedData: 'unused', iv: 'unused' } })
+  const req = env.calls.requests[1]
+  assert.ok(req.url.endsWith('/user/wechat-phone')); assert.equal(req.method, 'POST')
+  assert.deepEqual(Object.keys(req.data), ['code']); assert.equal(req.data.code, 'phone-authorization-code')
+  assert.notEqual(req.data.code, 'temporary-wx-code')
+  req.success({ statusCode: 200, data: { code: 0, data: profileValue({ mobile: '138****8000', mobileBound: true }) } }); await pending
+  assert.equal(page.data.nickname, '尚未保存的名字'); assert.equal(page.data.savedNickname, '平台昵称')
+  assert.equal(env.storage.get('feilv_nickname'), '平台昵称')
+  assert.equal(page.data.mobile, '138****8000'); assert.equal(env.calls.requests.length, 2)
+  page.complete(); assert.equal(env.calls.navigation.length, 0, 'complete must not silently discard edits')
+  for (const [key, value] of env.storage) { assert.equal(/mobile|phone/i.test(key), false); assert.notEqual(value, '13800000000') }
+})
+test('profile: nickname PUT contract is limited to nickname and masked server response is not cached', async () => {
+  const env = environment(); env.authenticated()
+  const page = env.page('pages/profile/profile'); page.onLoad({ from: 'my' }); const loading = page.onShow()
+  env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await loading
+  page.input({ detail: { value: '  保存名  ' } }); const saving = page.save()
+  const req = env.calls.requests[1]
+  assert.ok(req.url.endsWith('/user/profile')); assert.equal(req.method, 'PUT'); assert.deepEqual(Object.keys(req.data), ['nickname']); assert.equal(req.data.nickname, '保存名')
+  req.success({ statusCode: 200, data: { code: 0, data: profileValue({ nickname: '保存名', mobile: '已绑定', mobileBound: true }) } }); await saving
+  assert.equal(page.data.mobileBound, true); assert.equal(page.data.mobile, '')
+  page.preparePhone(); await page.bindPhone(phoneEvent('new-code')); assert.equal(env.calls.requests.length, 2)
+  assert.equal(env.storage.get('feilv_nickname'), '保存名')
+})
+test('profile: skip returns prior business page or falls back to My without writes', async () => {
+  for (const count of [1, 2]) {
+    const env = environment(); env.setPages(Array.from({ length: count }, () => ({ route: 'pages/profile/profile' })))
+    const page = await readyProfile(env, { async me() { return profileValue() } }, 'login')
+    page.input({ detail: { value: '不保存' } }); page.leave(); page.leave()
+    assert.equal(env.calls.navigation.length, 1)
+    if (count === 2) assert.equal(env.calls.navigation[0].back, true)
+    else assert.equal(env.calls.navigation[0].url, '/pages/my/my')
+    assert.equal(env.storage.get('feilv_nickname'), '平台昵称')
+  }
+})
+test('profile: repeat binding and consumed authorization code cannot send duplicate requests', async () => {
+  const env = environment(); let complete; let calls = 0
+  const page = await readyProfile(env, { async me() { return profileValue() }, bindWechatPhone() { calls++; return new Promise(resolve => { complete = resolve }) } })
+  page.preparePhone(); const pending = page.bindPhone(phoneEvent('single-use-code'))
+  page.preparePhone(); await page.bindPhone(phoneEvent('single-use-code')); assert.equal(calls, 1)
+  complete(profileValue()); await pending
+  page.preparePhone(); await page.bindPhone(phoneEvent('single-use-code')); assert.equal(calls, 1)
+  page.preparePhone(); const again = page.bindPhone(phoneEvent('fresh-code')); assert.equal(calls, 2)
+  complete(profileValue({ mobile: '138****8000', mobileBound: true })); await again
+  page.preparePhone(); await page.bindPhone(phoneEvent('third-code')); assert.equal(calls, 2)
+})
+test('profile: binding conflict/network failure retains authenticated session and nickname draft', async () => {
+  for (const message of ['手机号已绑定其他账号', '网络异常']) {
+    const env = environment()
+    const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { throw new Error(message) } })
+    page.input({ detail: { value: '保留编辑' } }); page.preparePhone(); await page.bindPhone(phoneEvent('code'))
+    assert.equal(page.data.error, message); assert.equal(page.data.nickname, '保留编辑')
+    assert.equal(page.data.mobileBound, false); assert.equal(env.storage.get('feilv_token'), 'token-1'); assert.equal(env.calls.navigation.length, 0)
+  }
+})
+test('profile: stale account me/save/phone responses never update cache, UI or navigation', async () => {
+  for (const operation of ['me', 'save', 'phone']) {
+    const env = environment(); env.authenticated(); let respond
+    const api = { async me() { return profileValue() }, updateProfile: () => new Promise(resolve => { respond = resolve }), bindWechatPhone: () => new Promise(resolve => { respond = resolve }) }
+    if (operation === 'me') api.me = () => new Promise(resolve => { respond = resolve })
+    const page = env.page('pages/profile/profile', api); page.onLoad({ from: 'my' })
+    let pending = page.onShow()
+    if (operation !== 'me') {
+      await pending
+      if (operation === 'save') { page.input({ detail: { value: 'A新昵称' } }); pending = page.save() }
+      else { page.preparePhone(); pending = page.bindPhone(phoneEvent('A-code')) }
+    }
+    const session = env.load(path.join(native, 'utils/session.js'))
+    session.save({ token: 'B-token', userId: 2, role: 'USER', nickname: 'B昵称' })
+    respond(profileValue({ nickname: 'A秘密昵称', mobile: '138****8000', mobileBound: true })); await pending
+    assert.notEqual(page.data.nickname, 'A秘密昵称'); assert.equal(env.storage.get('feilv_nickname'), 'B昵称'); assert.equal(env.calls.navigation.length, 0)
+  }
+})
+test('profile: late phone event after account change, hide or unload is discarded', async () => {
+  for (const state of ['switch', 'hide', 'unload']) {
+    const env = environment(); let calls = 0
+    const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { calls++; return profileValue() } })
+    page.preparePhone()
+    if (state === 'switch') env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
+    else if (state === 'hide') page.onHide()
+    else page.onUnload()
+    await page.bindPhone(phoneEvent('old-code')); assert.equal(calls, 0)
+  }
+})
+test('profile: privacy agreement is separate, verified, and required before native phone intent', async () => {
+  let needed = true; let opens = 0; let binds = 0
+  const env = environment({ getPrivacySetting(options) { options.success({ needAuthorization: needed, privacyContractName: '隐私保护指引' }) }, openPrivacyContract(options) { opens++; options.success({}) } })
+  const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { binds++; return profileValue() } })
+  assert.equal(page.data.privacyNeeded, true); assert.equal(page.data.privacyReady, false)
+  page.preparePhone(); await page.bindPhone(phoneEvent('no-privacy')); assert.equal(binds, 0)
+  await page.openPrivacy(); assert.equal(opens, 1)
+  await page.agreePrivacy(); assert.equal(page.data.privacyReady, false, 'unconfirmed/denied agreement must not unlock phone')
+  needed = false; await page.agreePrivacy(); assert.equal(page.data.privacyReady, true)
+  page.preparePhone(); await page.bindPhone(phoneEvent('privacy-approved')); assert.equal(binds, 1)
+})
+test('profile: privacy query failure, old version and missing capabilities fail safely without logout', async () => {
+  for (const override of [
+    { getPrivacySetting(options) { options.fail({ errMsg: 'failed' }) } },
+    { canIUse() { return false } },
+    { canIUse: undefined },
+    { getAppBaseInfo() { return { SDKVersion: '2.21.1' } } },
+    { getPrivacySetting(options) { options.success({ needAuthorization: true }) }, canIUse: value => value !== 'button.open-type.agreePrivacyAuthorization' }
+  ]) {
+    const env = environment(override); let calls = 0
+    const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { calls++ } })
+    page.preparePhone(); await page.bindPhone(phoneEvent('blocked')); assert.equal(calls, 0)
+    assert.equal(env.storage.get('feilv_token'), 'token-1'); page.leave(); assert.equal(env.calls.navigation.length, 1)
+  }
+  const env = environment({ getPrivacySetting: undefined })
+  const page = await readyProfile(env, { async me() { return profileValue() } })
+  assert.equal(page.data.phoneSupported, true); assert.equal(page.data.privacyReady, true)
+})
+test('profile: late privacy callbacks cannot mutate hidden, unloaded or replacement-account page', async () => {
+  for (const change of ['hide', 'unload', 'switch']) {
+    let respond
+    const env = environment({ getPrivacySetting(options) { respond = options } }); env.authenticated()
+    const page = env.page('pages/profile/profile', { async me() { return profileValue() } }); page.onLoad({ from: 'my' })
+    const loading = page.onShow(); await flush()
+    if (change === 'switch') env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
+    else if (change === 'hide') page.onHide()
+    else page.onUnload()
+    respond.success({ needAuthorization: false }); await loading
+    assert.equal(page.data.privacyReady, false); assert.equal(env.calls.navigation.length, 0)
+  }
+})
+test('profile: My entry and refresh preserve draft nickname without resetting revision', async () => {
+  const env = environment(); env.authenticated(); const session = env.load(path.join(native, 'utils/session.js'))
+  const page = env.page('pages/my/my', { async me() { return profileValue({ nickname: '服务端昵称', mobileBound: true, mobile: '138****8000' }) } })
+  page.onLoad({}); env.storage.set('native_draft', { owner: 1 }); const revision = session.revision(); await page.onShow()
+  assert.equal(page.data.nickname, '服务端昵称'); assert.equal(env.storage.get('feilv_nickname'), '服务端昵称')
+  assert.equal(session.revision(), revision); assert.equal(env.storage.has('native_draft'), true)
+  page.profile(); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=my')
+  const profile = await readyProfile(env, { async me() { return profileValue() } })
+  profile.input({ detail: { value: '未保存编辑' } }); await profile.load(); assert.equal(profile.data.nickname, '未保存编辑')
+})
+test('login: SMS finish remains back-or-My and never redirects to profile', async () => {
+  for (const count of [1, 2]) {
+    const env = environment(); env.setPages(Array.from({ length: count }, () => ({ route: 'pages/login/login' })))
+    const page = env.page('pages/login/login'); page.onLoad({}); page.onShow()
+    page.consent({ detail: { value: ['yes'] } }); page.input(event('mobile', '13800000000')); page.input(event('code', '123456'))
+    const pending = page.smsLogin(); const req = env.calls.requests[0]
+    assert.ok(req.url.endsWith('/auth/login')); assert.equal(req.data.mobile, '13800000000'); assert.equal(req.data.code, '123456')
+    req.success({ statusCode: 200, data: { code: 0, data: { token: 'sms-token', userId: 1, role: 'USER', nickname: '短信用户' } } }); await pending
+    assert.equal(env.storage.get('feilv_token'), 'sms-token')
+    if (count === 2) assert.equal(env.calls.navigation[0].back, true)
+    else assert.equal(env.calls.navigation[0].url, '/pages/my/my')
+    assert.equal(env.calls.navigation.some(item => item.url && item.url.includes('/profile/')), false)
+  }
+})
+test('profile: native privacy APIs never use getUserProfile or declare getPhoneNumber as requiredPrivateInfos', () => {
+  const app = JSON.parse(fs.readFileSync(path.join(native, 'app.json'), 'utf8'))
+  assert.ok(app.pages.includes('pages/profile/profile')); assert.equal(app.requiredPrivateInfos.includes('getPhoneNumber'), false)
+  const source = fs.readFileSync(path.join(native, 'pages/profile/profile.js'), 'utf8')
+  const template = fs.readFileSync(path.join(native, 'pages/profile/profile.wxml'), 'utf8')
+  assert.equal(/wx\.(?:getUserProfile|login)\s*\(/.test(source), false)
+  assert.ok(template.includes('type="nickname"')); assert.ok(template.includes('open-type="getPhoneNumber"')); assert.ok(template.includes('open-type="agreePrivacyAuthorization"'))
 })
 ;(async () => {
   let failures = 0

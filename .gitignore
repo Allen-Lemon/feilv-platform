@@ -1,0 +1,36 @@
+# 编辑器和 IDE 本地配置
+.idea/
+.vscode/
+.fleet/
+.settings/
+.classpath
+.project
+.factorypath
+*.iml
+*.ipr
+*.iws
+*.code-workspace
+.history/
+
+# 微信开发者工具个人配置
+project.private.config.json
+
+# 运行日志、进程文件和 JVM 转储
+logs/
+log/
+*.log
+*.log.*
+*.pid
+*.pid.lock
+*.hprof
+*.jfr
+hs_err_pid*
+replay_pid*
+
+# 编辑器临时文件和系统文件
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini

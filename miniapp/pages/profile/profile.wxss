@@ -1,0 +1,29 @@
+.profile-page .section-title .optional {
+  margin-left: 12rpx;
+}
+
+.phone-status {
+  margin-top: 20rpx;
+  padding: 20rpx 24rpx;
+  border-radius: 18rpx;
+  background: #EDF7F2;
+}
+
+.phone-status .hint {
+  margin-bottom: 0;
+}
+
+.privacy-link {
+  padding-left: 0;
+  text-align: left;
+  justify-content: flex-start;
+}
+
+.profile-actions {
+  margin-top: 28rpx;
+}
+
+.profile-actions .text-button {
+  width: 100%;
+  margin-top: 12rpx;
+}

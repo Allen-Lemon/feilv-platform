@@ -37,12 +37,16 @@ definePage({
   wechat() {
     if (!this.checkConsent()) return
     return this.run('busy', async (api) => {
+      const revision = session.revision()
       const result = await new Promise((resolve, reject) => wx.login({ timeout: 15000, success: resolve, fail: () => reject(new Error('微信登录失败，请检查 AppID 或稍后重试')) }))
-      if (this._dead || !this._visible) return
+      if (this._dead || !this._visible || revision !== session.revision()) return
       if (!result.code) throw new Error('微信未返回登录 code，请使用真实 AppID 联调')
       const value = await api.wechatLogin(result.code)
+      if (this._dead || !this._visible || revision !== session.revision()) return
       if (!value || !['USER', 'RIDER'].includes(value.role)) throw new Error('微信登录返回的账户类型无效')
-      await this.finish(value)
+      session.save(value)
+      // save 已更换会话版本；资料请求交给新页面，不能复用本次 run 的旧 api 作用域。
+      wx.redirectTo({ url: '/pages/profile/profile?from=login' })
     })
   },
   smsLogin() {

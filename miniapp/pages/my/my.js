@@ -1,4 +1,3 @@
-const api = require('../../utils/api')
 const session = require('../../utils/session')
 const { definePage, modal, toast } = require('../../utils/page')
 definePage({
@@ -11,14 +10,19 @@ definePage({
   },
   load() {
     return this.run('loading', async (api) => {
+      const revision = session.revision(); const userId = wx.getStorageSync('feilv_user_id')
       try {
         const me = await api.me()
-        // 微信账号允许无手机号，不将手机号缺失视作未登录。
-        this.safeSet({ me: { userId: me.userId, mobile: me.mobile || '尚未绑定手机号（微信登录无需手机号）' }, nickname: me.nickname || this.data.nickname, error: '' })
+        if (this._dead || revision !== session.revision() || String(me.userId) !== String(userId)) return
+        if (typeof me.nickname === 'string') session.updateNickname(me.nickname, userId, revision)
+        // 微信账号允许无手机号；号码仅展示服务端脱敏值，不写入本机存储。
+        const masked = typeof me.mobile === 'string' && /^\d{3}\*{4}\d{4}$/.test(me.mobile) ? me.mobile : ''
+        this.safeSet({ me: { userId: me.userId, mobile: me.mobileBound ? (masked || '手机号已绑定') : '尚未绑定手机号（可选）' }, nickname: me.nickname || this.data.nickname, error: '' })
       } catch (e) { this.safeSet({ error: e.message }); throw e }
     })
   },
   login() { session.login() },
+  profile() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/profile/profile?from=my' }) },
   address() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/address/address' }) },
   rider() { wx.navigateTo({ url: '/pages/rider/register' }) },
   workbench() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/rider/workbench' }) },

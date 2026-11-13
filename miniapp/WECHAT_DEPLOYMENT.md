@@ -11,7 +11,7 @@
 
 ## 仍需提供的真实 AppID
 
-`project.config.json` 当前保留 `touristappid`。请将它替换为该小程序的真实 AppID（形如 wx 开头的18位标识），不要填写 AppSecret：
+请核对 `project.config.json` 和开发者工具“详情 → 基本信息”中的实际 AppID，必须与后端生效的登录配置一致（形如 wx 开头的18位标识），不能使用游客或测试占位 AppID，不要填写 AppSecret：
 
 ```json
 "appid": "你的真实小程序AppID"
@@ -44,7 +44,18 @@ AppSecret **仅放后端**，不要写到小程序代码、不要提交到仓库
 docker compose up -d --build --force-recreate backend
 ```
 
-微信登录调用 `POST /api/v1/auth/wechat-login`，后端通过微信官方 `jscode2session` 换码并签发平台JWT。客户端不提供 openid、手机号或 session_key。未配置或不匹配凭据时不能完成真实微信登录。
+微信登录调用 `POST /api/v1/auth/wechat-login`，后端通过微信官方 `jscode2session` 换码并签发平台JWT。客户端不提供 openid、手机号或 session_key。未配置或不匹配凭据时不能完成真实微信登录。若已在管理后台保存登录配置，数据库配置优先于环境变量；格式与完整性校验不会联网证明凭据有效。
+
+### 昵称和手机号授权
+
+- 微信登录本身不返回昵称或手机号。登录成功后进入可跳过的资料页，昵称由用户主动选择或填写，作为平台展示用户名，不是微信号或真实姓名。
+- 手机号需用户单独点击 `getPhoneNumber` 授权按钮。后端使用同一 AppID 的有效凭据获取应用 `access_token`，向微信换取手机号后才绑定；前端不得提交或缓存完整号码作为验证依据。
+- 新接口均需平台登录：`PUT /api/v1/user/profile {nickname}`、`POST /api/v1/user/wechat-phone {code}`；该 code 不是 `wx.login` 的 code。`GET /api/v1/user/me` 增加 `mobileBound`，手机号始终脱敏。
+- 拒绝、取消、无 code 或能力不可用时可以跳过，保留登录态。号码冲突返回409，不切换账号、不覆盖绑定、不合并订单或角色；首版不支持换号。
+- 在微信公众平台核对手机号能力的主体、认证、权限与额度要求；完善昵称和手机号用途、存储、删除/更正渠道以及用户隐私保护指引，并真机验证平台隐私弹窗。不能用本地文案代替后台配置，也不要将手机号API填入定位类 `requiredPrivateInfos`。
+- 手机号也是原有短信登录的查找键。**正式用户环境开启绑定前，必须关闭演示验证码回传并接入真实短信验证服务，或禁用短信登录入口。** 本次资料接口不把演示短信视为生产认证能力。
+- 真机验收至少包含：正常微信登录、昵称选择/手填、同意/拒绝手机号、暂不完善返回原业务页、重复进入编辑、同号幂等/跨账号冲突、退出/切号后的旧响应隔离。离线测试不调用真实微信，不能证明手机号资格已开通。
+- 微信接口说明参考：<https://developers.weixin.qq.com/miniprogram/dev/OpenApiDoc/user-info/phone-number/getPhoneNumber.html>、<https://developers.weixin.qq.com/miniprogram/dev/OpenApiDoc/mp-access-token/getStableAccessToken.html>。平台规则和接口要求应以当前官方文档及后台为准。
 
 ## 本地校验与上传
 
@@ -76,4 +87,4 @@ npm run check:release --prefix miniapp
 - 短信验证码与骑手入驻仍存在演示逻辑。
 - 真实微信授权未因HTTPS配置而自动完成，必须用真实AppID/Secret实测。
 - 服务/隐私页面是当前数据流说明，正式法律文本、业务资质及审核材料必须由运营方补全。
-- 照片上传、OCR、真实支付和手机号绑定/微信短信账号合并等不在本次部署配置修改范围。
+- 照片上传、OCR、真实支付、手机号换绑和微信短信既有账号合并仍未实现。自愿手机号绑定不等于账户合并，也不解决真实微信登录的凭据错误。

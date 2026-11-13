@@ -1,7 +1,7 @@
 <view class="page login-page">
   <view class="login-intro"><view class="login-mark">飞</view><view class="eyebrow">飞毛腿 · 同城跑腿</view><view class="title">你好，欢迎回来</view><view class="page-desc">登录后，开始安排你的同城小事</view></view>
   <view class="card login-card">
-    <view class="section-title">使用微信账号登录</view><view class="hint">无需授权手机号。下单联系人、骑手入驻所需电话由您手动填写。</view>
+    <view class="section-title">使用微信账号登录</view><view class="hint">微信登录无需手机号。登录后可选填平台昵称，并由您主动授权绑定手机号；也可跳过。</view>
     <checkbox-group bindchange="consent"><label class="consent-label"><checkbox value="yes" checked="{{agreed}}" color="#C94320"/><text class="grow">我已阅读并同意服务与隐私说明</text></label></checkbox-group>
     <view class="legal-links"><text class="link" data-kind="service" bindtap="legal">服务说明</text><text class="link" data-kind="privacy" bindtap="legal">隐私说明</text></view>
     <button type="primary" class="wechat-button" loading="{{busy}}" disabled="{{busy || sending}}" bindtap="wechat"><view class="wechat-symbol" wx:if="{{!busy}}"><view class="wechat-bubble"></view><view class="wechat-bubble bubble-small"></view></view><text>微信一键登录</text></button>
@@ -13,5 +13,5 @@
     <view class="notice" wx:if="{{demoCode}}">后端演示验证码：{{demoCode}}（非真实短信发送证明，请手动填写）</view>
     <button class="primary" loading="{{busy}}" disabled="{{busy || sending}}" bindtap="smsLogin">短信登录 / 注册</button>
   </view>
-  <view class="login-footnote"><view class="footnote-title">关于账号与联调</view><view>微信与短信账号不会自动合并，本版本暂不提供手机号绑定。游客 AppID 无法完成真实微信登录；接口失败不会伪造登录成功。</view></view>
+  <view class="login-footnote"><view class="footnote-title">关于账号与联调</view><view>微信与短信账号不会自动合并。绑定手机号仅在您主动点击并授权后进行，下单联系人电话仍需填写。游客 AppID 无法完成真实微信登录；接口失败不会伪造登录成功。</view></view>
 </view>

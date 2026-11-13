@@ -2,29 +2,38 @@ package com.feilv.controller;
 
 import com.feilv.common.Result;
 import com.feilv.common.UserContext;
-import com.feilv.domain.User;
 import com.feilv.dto.AddressDtos.AddressReq;
-import com.feilv.repository.UserRepository;
+import com.feilv.dto.UserProfileDtos.ProfileReq;
+import com.feilv.dto.UserProfileDtos.ProfileVO;
+import com.feilv.dto.UserProfileDtos.WechatPhoneReq;
 import com.feilv.service.AddressService;
+import com.feilv.service.UserProfileService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/user")
 @RequiredArgsConstructor
 public class UserController {
-    private final UserRepository userRepository;
+    private final UserProfileService profileService;
     private final AddressService addressService;
 
     @GetMapping("/me")
-    public Result<Map<String, Object>> me() {
-        User u = userRepository.findById(UserContext.userId()).orElseThrow();
-        return Result.ok(Map.of("userId", u.getId(), "mobile", (u.getMobile() == null ? "" : u.getMobile()).replaceAll("(\\d{3})\\d{4}(\\d{4})", "$1****$2"),
-                "nickname", u.getNickname(), "role", u.getRole()));
+    public Result<ProfileVO> me() {
+        return Result.ok(profileService.me(UserContext.userId()));
+    }
+
+    @PutMapping("/profile")
+    public Result<ProfileVO> profile(@Valid @RequestBody ProfileReq req) {
+        return Result.ok(profileService.updateNickname(UserContext.userId(), req.nickname()));
+    }
+
+    @PostMapping("/wechat-phone")
+    public Result<ProfileVO> wechatPhone(@Valid @RequestBody WechatPhoneReq req) {
+        return Result.ok(profileService.bindWechatPhone(UserContext.userId(), req.code()));
     }
 
     @PostMapping("/address")
