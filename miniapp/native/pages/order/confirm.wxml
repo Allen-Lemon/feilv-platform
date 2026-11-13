@@ -1,5 +1,19 @@
-<view class="page"><view class="card" wx:if="{{invalid}}"><view class="error">订单草稿不存在或账户已变化，请返回重新填写。</view><button bindtap="back">返回</button></view>
-<block wx:else><view class="notice">MOCK 模拟支付 · 不是真实微信支付，不发生扣款。最终订单金额以服务端为准。</view>
-<view class="card"><view class="title">确认订单 · {{typeText}}</view><view class="line">取件：{{draft.fromContact}} {{draft.fromPhone}}</view><view class="line">{{draft.fromAddress}}</view><view class="line">送达：{{draft.toContact}} {{draft.toPhone}}</view><view class="line">{{draft.toAddress}}</view><view class="line">物品：{{draft.goodsDesc}}</view><view class="line">预估距离：{{draft.distanceM}}米 · 重量：{{draft.weightKg}}公斤</view><view class="hint">备注：{{draft.remark || '无'}}</view></view>
-<view class="card"><view class="title">预估费用</view><view class="row line" wx:for="{{quote.items}}" wx:key="key"><text>{{item.label}}</text><text>¥{{item.amountText}}</text></view><view class="row line"><text>合计</text><text class="price">¥{{quote.totalText}}</text></view><view class="notice" wx:if="{{orderId}}">订单已创建（ID：{{orderId}}），重试仅支付该订单，不会重复创建。</view><button class="primary" loading="{{busy}}" disabled="{{busy || uncertain}}" bindtap="submit">{{orderId ? '重试 MOCK 模拟支付' : '确认创建并 MOCK 模拟支付'}}</button><button wx:if="{{orderId}}" class="secondary" disabled="{{busy}}" bindtap="detail">查看已创建订单</button><view class="notice" wx:if="{{uncertain}}">创建结果待核实，已阻止重复提交。请先在订单列表检查，再从已有订单继续操作。</view><button class="secondary" bindtap="orders" disabled="{{busy}}">前往订单列表核实</button><view class="hint">网络超时可能表示创建结果未知。服务端未提供幂等键，请勿在核实前重新填写相同订单。</view></view>
-</block></view>
+<view class="page confirm-page">
+  <view class="page-head"><view class="eyebrow">最后核对</view><view class="title">确认你的跑腿需求</view><view class="page-desc">核对取送地址、物品和预估费用</view></view>
+  <view class="empty" wx:if="{{invalid}}"><view class="empty-mark">!</view><view class="empty-title">请重新填写订单</view><view>订单草稿不存在或账户已变化</view><button class="secondary" bindtap="back">返回</button></view>
+  <block wx:else>
+    <view class="mock-note"><text class="mock-badge">MOCK</text><text class="grow">模拟支付，不是真实微信支付，不发生扣款。最终金额以服务端为准。</text></view>
+    <view class="card"><view class="section-head"><view class="section-title">配送信息</view><text class="tag">{{typeText}}</text></view>
+      <view class="route-stop"><text class="stop-dot">取</text><view class="grow"><view class="route-address">{{draft.fromAddress}}</view><view class="route-contact">{{draft.fromContact}} · {{draft.fromPhone}}</view></view></view>
+      <view class="route-stop"><text class="stop-dot end">送</text><view class="grow"><view class="route-address">{{draft.toAddress}}</view><view class="route-contact">{{draft.toContact}} · {{draft.toPhone}}</view></view></view>
+      <view class="divider"></view><view class="summary-row"><text class="summary-label">物品 / 事项</text><text class="grow">{{draft.goodsDesc}}</text></view><view class="summary-row"><text class="summary-label">距离 / 重量</text><text class="grow">{{draft.distanceM}}米 · {{draft.weightKg}}公斤</text></view><view class="summary-row"><text class="summary-label">备注</text><text class="grow">{{draft.remark || '无'}}</text></view>
+    </view>
+    <view class="card"><view class="section-title">预估费用</view><view class="row line" wx:for="{{quote.items}}" wx:key="key"><text class="grow">{{item.label}}</text><text>¥{{item.amountText}}</text></view><view class="row confirm-total"><text>合计</text><text class="price"><text class="currency">¥</text>{{quote.totalText}}</text></view>
+      <view class="notice" wx:if="{{orderId}}">订单已创建（ID：{{orderId}}），重试仅支付该订单，不会重复创建。</view>
+      <view class="notice" wx:if="{{uncertain}}">创建结果待核实，已阻止重复提交。请先在订单列表检查，再从已有订单继续操作。</view>
+      <button class="primary" loading="{{busy}}" disabled="{{busy || uncertain}}" bindtap="submit">{{orderId ? '重试 MOCK 模拟支付' : '确认创建并 MOCK 模拟支付'}}</button>
+      <view class="actions confirm-actions"><button wx:if="{{orderId}}" class="secondary" disabled="{{busy}}" bindtap="detail">查看已创建订单</button><button class="text-button" bindtap="orders" disabled="{{busy}}">前往订单列表核实 →</button></view>
+      <view class="hint">网络超时可能表示创建结果未知。服务端未提供幂等键，请勿在核实前重新填写相同订单。</view>
+    </view>
+  </block>
+</view>

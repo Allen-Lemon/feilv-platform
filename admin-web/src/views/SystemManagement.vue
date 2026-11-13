@@ -1,40 +1,53 @@
 <template>
-  <el-tabs v-model="tab">
-    <el-tab-pane label="菜单管理" name="menus">
-      <el-button type="primary" @click="editMenu()">新增菜单</el-button>
-      <el-table :data="menus" border stripe style="margin-top:12px">
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="code" label="编码" width="150" />
-        <el-table-column prop="name" label="名称" />
-        <el-table-column prop="path" label="路径" />
-        <el-table-column prop="sort" label="排序" width="80" />
-        <el-table-column label="操作" width="180"><template #default="{ row }"><el-button size="small" @click="editMenu(row)">编辑</el-button><el-button size="small" type="danger" @click="disableMenu(row)">停用</el-button></template></el-table-column>
-      </el-table>
-    </el-tab-pane>
-    <el-tab-pane label="角色管理" name="roles">
-      <el-button type="primary" @click="editRole()">新增角色</el-button>
-      <el-table :data="roles" border stripe style="margin-top:12px">
-        <el-table-column prop="id" label="ID" width="80" /><el-table-column prop="code" label="编码" /><el-table-column prop="name" label="名称" /><el-table-column label="操作"><template #default="{ row }"><el-button size="small" @click="editRole(row)">编辑</el-button><el-button size="small" @click="assign(row)">配置菜单</el-button></template></el-table-column>
-      </el-table>
-    </el-tab-pane>
-    <el-tab-pane label="用户管理" name="users">
-      <el-button type="primary" @click="createUser">新增管理员</el-button>
-      <el-table :data="users" border stripe style="margin-top:12px"><el-table-column prop="id" label="ID" width="80" /><el-table-column prop="mobile" label="账号" /><el-table-column prop="nickname" label="昵称" /><el-table-column prop="role" label="角色" /><el-table-column prop="status" label="状态" /><el-table-column label="操作"><template #default="{ row }"><el-button size="small" @click="toggleUser(row)">{{ row.status === 1 ? '禁用' : '启用' }}</el-button><el-button size="small" @click="assignUser(row)">分配角色</el-button></template></el-table-column></el-table>
-    </el-tab-pane>
-  </el-tabs>
+  <section>
+    <div class="page-head"><div><span class="eyebrow">WORKSPACE SETTINGS</span><h1>系统管理</h1><p>让协作更有秩序。统一维护菜单、角色与管理账户。</p></div><el-button :loading="loading" @click="load"><span class="button-content"><AppIcon name="refresh" :size="16" />刷新列表</span></el-button></div>
+    <div class="panel system-panel" v-loading="loading">
+      <el-tabs v-model="tab">
+        <el-tab-pane label="菜单管理" name="menus"><div class="panel-heading"><div><h2>导航与菜单</h2><p>维护后台菜单名称、路径与展示顺序</p></div><el-button type="primary" @click="editMenu()"><span class="button-content"><AppIcon name="plus" :size="16" />新增菜单</span></el-button></div>
+          <el-table :data="filteredMenus"><el-table-column prop="code" label="菜单编码" min-width="140" /><el-table-column prop="name" label="菜单名称" min-width="130" /><el-table-column prop="path" label="页面路径" min-width="160" /><el-table-column prop="sort" label="排序" width="85" /><el-table-column label="操作" width="160" fixed="right"><template #default="{ row }"><el-button text @click="editMenu(row)">编辑</el-button><el-button text type="danger" @click="disableMenu(row)">停用</el-button></template></el-table-column><template #empty><el-empty description="暂无可管理菜单" :image-size="70" /></template></el-table>
+        </el-tab-pane>
+        <el-tab-pane label="角色管理" name="roles"><div class="panel-heading"><div><h2>角色与权限</h2><p>根据团队分工，配置不同角色的菜单授权</p></div><el-button type="primary" @click="editRole()"><span class="button-content"><AppIcon name="plus" :size="16" />新增角色</span></el-button></div>
+          <el-table :data="roles"><el-table-column prop="code" label="角色编码" min-width="170" /><el-table-column prop="name" label="角色名称" min-width="140" /><el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.enabled === 1 ? 'success' : 'info'" effect="light">{{ row.enabled === 1 ? '● 启用中' : '○ 已停用' }}</el-tag></template></el-table-column><el-table-column label="操作" width="200" fixed="right"><template #default="{ row }"><el-button text @click="editRole(row)">编辑</el-button><el-button text type="primary" @click="assign(row)">菜单授权</el-button></template></el-table-column><template #empty><el-empty description="暂无角色，先创建一个吧" :image-size="70" /></template></el-table>
+        </el-tab-pane>
+        <el-tab-pane label="用户管理" name="users"><div class="panel-heading"><div><h2>用户与管理员</h2><p>查看账户信息，维护账户状态与角色关联</p></div><el-button type="primary" @click="createUser"><span class="button-content"><AppIcon name="plus" :size="16" />新增管理员</span></el-button></div>
+          <div class="filter-row"><el-input v-model="search" clearable placeholder="搜索账号或昵称" style="max-width: 300px"><template #prefix><AppIcon name="search" :size="16" /></template></el-input><span class="table-caption">当前列表共 {{ filteredUsers.length }} 个账户</span></div>
+          <el-table :data="filteredUsers"><el-table-column label="账户" min-width="190"><template #default="{ row }"><div class="user-cell"><span class="table-avatar">{{ (row.nickname || row.mobile || '微').slice(0,1) }}</span><div><strong>{{ row.nickname || '未设置昵称' }}</strong><small>{{ row.mobile || '微信用户 · 无手机号' }}</small></div></div></template></el-table-column><el-table-column prop="id" label="用户 ID" width="95" /><el-table-column label="账户类型" min-width="115"><template #default="{ row }">{{ { ADMIN: '管理账户', USER: '普通用户', RIDER: '骑手账户' }[row.role] || row.role }}</template></el-table-column><el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 1 ? 'success' : 'danger'">{{ row.status === 1 ? '● 正常' : '○ 已禁用' }}</el-tag></template></el-table-column><el-table-column label="操作" width="200" fixed="right"><template #default="{ row }"><el-button text :type="row.status === 1 ? 'danger' : 'primary'" @click="toggleUser(row)">{{ row.status === 1 ? '禁用' : '启用' }}</el-button><el-button text @click="assignUser(row)">分配角色</el-button></template></el-table-column><template #empty><el-empty description="没有找到匹配的账户" :image-size="70" /></template></el-table>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+    <el-dialog v-model="menuOpen" :title="menuForm.id ? '编辑菜单' : '新增菜单'" width="500px" :close-on-click-modal="false"><el-form label-position="top" :model="menuForm"><div class="form-grid"><el-form-item label="菜单名称"><el-input v-model="menuForm.name" maxlength="64" placeholder="例如：订单管理" /></el-form-item><el-form-item label="菜单编码"><el-input v-model="menuForm.code" maxlength="32" placeholder="例如：orders" /></el-form-item></div><el-form-item label="页面路径"><el-input v-model="menuForm.path" maxlength="128" placeholder="例如：/orders" /></el-form-item><div class="form-grid"><el-form-item label="父级菜单"><el-select v-model="menuForm.parentId" style="width:100%"><el-option :value="0" label="无（一级菜单）" /><el-option v-for="m in menus.filter(m => m.id !== menuForm.id)" :key="m.id" :value="m.id" :label="m.name" /></el-select></el-form-item><el-form-item label="排序"><el-input-number v-model="menuForm.sort" :min="0" :max="9999" style="width:100%" /></el-form-item></div></el-form><template #footer><el-button @click="menuOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveMenu">保存菜单</el-button></template></el-dialog>
+    <el-dialog v-model="roleOpen" :title="roleForm.id ? '编辑角色' : '新增角色'" width="460px" :close-on-click-modal="false"><el-form label-position="top"><el-form-item label="角色名称"><el-input v-model="roleForm.name" maxlength="64" placeholder="例如：运营专员" /></el-form-item><el-form-item label="角色编码"><el-input v-model="roleForm.code" maxlength="32" placeholder="例如：OPERATOR" /></el-form-item><el-form-item label="角色状态"><el-radio-group v-model="roleForm.enabled"><el-radio :value="1">启用</el-radio><el-radio :value="0">停用</el-radio></el-radio-group></el-form-item></el-form><template #footer><el-button @click="roleOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveRole">保存角色</el-button></template></el-dialog>
+    <el-dialog v-model="createOpen" title="新增管理员" width="460px" :close-on-click-modal="false"><p class="dialog-description">创建后请在用户列表为管理员分配适当的角色。</p><el-form label-position="top"><el-form-item label="管理账号"><el-input v-model="userForm.username" maxlength="20" autocomplete="off" placeholder="请输入账号" /></el-form-item><el-form-item label="显示昵称"><el-input v-model="userForm.nickname" maxlength="32" placeholder="请输入昵称" /></el-form-item><el-form-item label="初始密码"><el-input v-model="userForm.password" type="password" show-password autocomplete="new-password" placeholder="至少8位，不要使用常见密码" /></el-form-item></el-form><template #footer><el-button @click="createOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveUser">创建账户</el-button></template></el-dialog>
+    <el-dialog v-model="assignOpen" :title="assignmentKind === 'menus' ? '配置角色菜单' : '分配用户角色'" width="500px" :close-on-click-modal="false"><p class="dialog-description">{{ assignmentTitle }}</p><el-alert v-if="assignmentKind === 'menus'" title="当前接口不返回已授权菜单，请完整选择本次权限集合；保存将替换原有授权。" type="warning" show-icon :closable="false" class="assignment-alert" /><el-checkbox-group v-model="selectedIds" class="permission-options"><el-checkbox v-for="option in assignmentOptions" :key="option.id" :value="option.id" border><strong>{{ option.name }}</strong><small>{{ option.code }}</small></el-checkbox></el-checkbox-group><template #footer><el-button @click="assignOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveAssignment">确认保存</el-button></template></el-dialog>
+  </section>
 </template>
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminApi } from '../api'
-const tab = ref('menus'); const menus = ref([]); const roles = ref([]); const users = ref([])
-const load = async () => { menus.value = await adminApi.systemMenus(); roles.value = await adminApi.systemRoles(); users.value = await adminApi.systemUsers() }
-const editMenu = (row = {}) => ElMessageBox.prompt('请输入菜单名称', '菜单管理', { inputValue: row.name || '', inputValidator: v => !!v || '名称必填' }).then(async ({ value }) => { await adminApi.saveMenu({ id: row.id, code: row.code || value.toLowerCase().replace(/\s+/g, '_'), name: value, path: row.path || '/' + value, parentId: row.parentId || 0, sort: row.sort || 100, enabled: 1 }); load() }).catch(() => {})
-const disableMenu = async row => { await adminApi.deleteMenu(row.id); ElMessage.success('菜单已停用'); load() }
-const editRole = (row = {}) => ElMessageBox.prompt('请输入角色名称', '角色管理', { inputValue: row.name || '', inputValidator: v => !!v || '名称必填' }).then(async ({ value }) => { await adminApi.saveRole({ id: row.id, code: row.code || value.toUpperCase().replace(/\s+/g, '_'), name: value, enabled: 1 }); load() }).catch(() => {})
-const assign = async row => { await adminApi.assignRoleMenus(row.id, menus.value.map(m => m.id)); ElMessage.success('菜单权限已保存') }
-const assignUser = (row) => ElMessageBox.prompt('请输入角色ID，多个用逗号分隔', '分配角色', { inputValue: (row.roleIds || []).join(',') }).then(async ({ value }) => { const ids = value.split(',').map(v => Number(v.trim())).filter(Boolean); await adminApi.assignUserRoles(row.id, ids); ElMessage.success('角色已分配'); load() }).catch(() => {})
-const createUser = () => ElMessageBox.prompt('请输入管理员账号', '新增管理员').then(({ value }) => ElMessageBox.prompt('请输入至少8位密码', '设置密码').then(async p => { await adminApi.createAdmin({ username: value, password: p.value, nickname: value }); ElMessage.success('创建成功'); load() })).catch(() => {})
-const toggleUser = async row => { await adminApi.changeUserStatus(row.id, row.status === 1 ? 0 : 1); load() }
+import AppIcon from '../components/AppIcon.vue'
+const tab = ref('menus'), menus = ref([]), roles = ref([]), users = ref([]), loading = ref(false), saving = ref(false), search = ref('')
+const filteredMenus = computed(() => menus.value)
+const filteredUsers = computed(() => users.value.filter(u => [u.mobile, u.nickname].some(v => String(v || '').toLowerCase().includes(search.value.toLowerCase()))))
+async function load() { if (loading.value) return; loading.value = true; try { [menus.value, roles.value, users.value] = await Promise.all([adminApi.systemMenus(), adminApi.systemRoles(), adminApi.systemUsers()]) } catch { /* 请求层已提示错误。 */ } finally { loading.value = false } }
+const menuOpen = ref(false), roleOpen = ref(false), createOpen = ref(false), assignOpen = ref(false)
+const menuForm = reactive({}), roleForm = reactive({}), userForm = reactive({})
+const editMenu = (row = {}) => { Object.assign(menuForm, { id: row.id, name: row.name || '', code: row.code || '', path: row.path || '', parentId: row.parentId || 0, sort: row.sort ?? 100, enabled: row.enabled ?? 1 }); menuOpen.value = true }
+const editRole = (row = {}) => { Object.assign(roleForm, { id: row.id, name: row.name || '', code: row.code || '', enabled: row.enabled ?? 1 }); roleOpen.value = true }
+const createUser = () => { Object.assign(userForm, { username: '', nickname: '', password: '' }); createOpen.value = true }
+async function persist(action, close, message) { if (saving.value) return; saving.value = true; try { await action(); close(); ElMessage.success(message); await load() } catch { /* 请求层统一处理。 */ } finally { saving.value = false } }
+function saveMenu() { if (!menuForm.name.trim() || !/^[a-zA-Z][\w-]*$/.test(menuForm.code) || (menuForm.path && !menuForm.path.startsWith('/'))) return ElMessage.warning('请填写名称、英文菜单编码和以 / 开头的路径'); return persist(() => adminApi.saveMenu({ ...menuForm }), () => { menuOpen.value = false }, '菜单已保存') }
+function saveRole() { if (!roleForm.name.trim() || !/^[a-zA-Z][\w-]*$/.test(roleForm.code)) return ElMessage.warning('请填写角色名称和英文编码'); return persist(() => adminApi.saveRole({ ...roleForm }), () => { roleOpen.value = false }, '角色已保存') }
+function saveUser() { if (!userForm.username.trim() || userForm.password.length < 8) return ElMessage.warning('请填写账号和至少8位密码'); return persist(() => adminApi.createAdmin({ ...userForm, nickname: userForm.nickname.trim() || userForm.username.trim() }), () => { createOpen.value = false; userForm.password = '' }, '管理员已创建') }
+async function disableMenu(row) { try { await ElMessageBox.confirm(`停用「${row.name}」后，该菜单将不再显示。是否继续？`, '停用菜单', { confirmButtonText: '确认停用', cancelButtonText: '取消', type: 'warning' }); await adminApi.deleteMenu(row.id); ElMessage.success('菜单已停用'); await load() } catch {} }
+async function toggleUser(row) { try { await ElMessageBox.confirm(`确认${row.status === 1 ? '禁用' : '启用'}账户「${row.nickname || row.mobile}」？`, '账户状态', { confirmButtonText: '确认操作', cancelButtonText: '取消', type: 'warning' }); await adminApi.changeUserStatus(row.id, row.status === 1 ? 0 : 1); await load() } catch {} }
+const assignmentKind = ref('menus'), assignmentTitle = ref(''), selectedIds = ref([]), assignmentId = ref(null)
+const assignmentOptions = computed(() => assignmentKind.value === 'menus' ? menus.value : roles.value)
+function assign(row) { assignmentKind.value = 'menus'; assignmentId.value = row.id; assignmentTitle.value = `为「${row.name}」选择本次允许访问的菜单。`; selectedIds.value = []; assignOpen.value = true }
+function assignUser(row) { assignmentKind.value = 'roles'; assignmentId.value = row.id; assignmentTitle.value = `为「${row.nickname || row.mobile}」分配角色。`; selectedIds.value = [...(row.roleIds || [])]; assignOpen.value = true }
+function saveAssignment() { return persist(() => assignmentKind.value === 'menus' ? adminApi.assignRoleMenus(assignmentId.value, selectedIds.value) : adminApi.assignUserRoles(assignmentId.value, selectedIds.value), () => { assignOpen.value = false }, '授权已保存') }
 onMounted(load)
 </script>
+<style scoped>
+.user-cell { display: flex; gap: 12px; align-items: center; }.table-avatar { flex-shrink: 0; width: 34px; height: 34px; border-radius: 11px; display: flex; align-items: center; justify-content: center; color: #985126; background: #fff0e5; font-size: 13px; }.user-cell strong { display: block; font-weight: 550; font-size: 12px; }.user-cell small { display: block; font-size: 11px; color: #667085; margin-top: 5px; }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }.dialog-description { font-size: 13px; color: #667085; margin-bottom: 22px; line-height: 1.7; }.permission-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.permission-options .el-checkbox { margin: 0; height: auto; min-height: 58px; padding: 12px; border-radius: 10px; }.permission-options :deep(.el-checkbox__label) { white-space: normal; }.permission-options strong { display: block; font-size: 12px; font-weight: 500; }.permission-options small { display: block; margin-top: 5px; color: #667085; font-size: 10px; }.assignment-alert { margin-bottom: 18px; }@media(max-width:600px) { .form-grid { grid-template-columns: 1fr; gap: 0; }.panel-heading { align-items: flex-start; }.panel-heading p { max-width: 180px; } }
+</style>

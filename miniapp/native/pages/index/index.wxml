@@ -1,8 +1,17 @@
-<view class="page">
-  <view class="hero"><view class="title">飞毛腿跑腿</view><view>德江同城 · 送得快，办得好</view></view>
-  <view class="notice">当前支付为 MOCK 演示，不发生真实扣款。请勿用于真实交易。</view>
-  <view class="card"><view class="title">今天需要什么帮助？</view>
-    <view class="entry" wx:for="{{types}}" wx:key="code" data-type="{{item.code}}" bindtap="create"><view class="subtitle">{{item.label}} →</view><view class="muted">{{item.desc}}</view></view>
+<view class="page home-page">
+  <view class="home-brand"><text class="brand-mark">飞</text><text class="brand-name">飞毛腿</text><text class="brand-city">德江同城跑腿</text></view>
+  <view class="home-hero">
+    <view class="hero-decoration hero-orbit"></view><view class="hero-decoration hero-sun"></view>
+    <view class="hero-content"><view class="eyebrow">让日常，轻松一点</view><view class="hero-title">你的同城小事<view>交给飞毛腿</view></view><view class="hero-desc">送物 · 代买 · 代办，从这里开始</view></view>
+    <view class="hero-stamp">同城<view>跑腿</view></view>
   </view>
-  <view class="card"><view class="title">下单须知</view><view class="hint">手填取送联系人及电话，微信登录无需授权手机号。距离为手工预估，费用以服务端计价为准。</view><view class="hint">请勿寄送处方药、烟草及其他禁限寄物品。贵重、易碎物品请事先确认配送条件。</view><button class="secondary" bindtap="orders">查看我的订单</button><view class="link" bindtap="settings">连接服务设置</view></view>
+  <view class="mock-note"><text class="mock-badge">MOCK</text><text class="grow">演示模式 · 支付不扣款，请勿用于真实交易。</text></view>
+  <view class="section-head home-section"><view><view class="section-title">今天，需要什么帮助？</view><view class="page-desc">选一个服务，填写你的需求</view></view></view>
+  <view class="service-list">
+    <button class="service-entry service-{{item.code}}" wx:for="{{types}}" wx:key="code" data-type="{{item.code}}" bindtap="create" hover-class="tap-feedback">
+      <view class="service-icon">{{item.code === 'SEND' ? '送' : item.code === 'BUY' ? '买' : '办'}}</view>
+      <view class="grow"><view class="service-name">{{item.label}}</view><view class="service-desc">{{item.desc}}</view></view><view class="service-arrow">↗</view>
+    </button>
+  </view>
+  <view class="card home-guide"><view class="section-head"><view class="section-title">下单前，了解一下</view><text class="section-note">服务须知</text></view><view class="guide-row"><text class="guide-dot"></text><text class="grow">手填取送联系人与电话，微信登录无需授权手机号。距离手工预估，费用以服务端计价为准。</text></view><view class="guide-row"><text class="guide-dot"></text><text class="grow">请勿寄送处方药、烟草等禁限寄物品。贵重、易碎物品请事先确认配送条件。</text></view><view class="home-links"><button class="text-button" bindtap="orders">我的订单 →</button><button class="text-button" bindtap="settings">连接服务设置</button></view></view>
 </view>

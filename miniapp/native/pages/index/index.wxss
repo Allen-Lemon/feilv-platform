@@ -1,1 +1,191 @@
-/* 通用表单、卡片与布局由 app.wxss 提供。 */
+.home-brand {
+  display: flex;
+  align-items: center;
+  margin: 0 4rpx 24rpx;
+}
+
+.brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 54rpx;
+  height: 54rpx;
+  margin-right: 14rpx;
+  border-radius: 17rpx;
+  background: #C94320;
+  color: #FFFFFF;
+  font-size: 30rpx;
+  font-weight: 700;
+}
+
+.brand-name {
+  font-size: 32rpx;
+  font-weight: 700;
+}
+
+.brand-city {
+  margin-left: auto;
+  color: #667085;
+  font-size: 24rpx;
+}
+
+.home-hero {
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 20rpx;
+  padding: 38rpx 32rpx;
+  border: 1rpx solid #FFE0D0;
+  border-radius: 32rpx;
+  background: #FFF0E8;
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
+}
+
+.hero-title {
+  margin: 16rpx 0;
+  font-size: 48rpx;
+  line-height: 1.4;
+  font-weight: 700;
+  letter-spacing: 1rpx;
+}
+
+.hero-desc {
+  color: #944025;
+  font-size: 25rpx;
+}
+
+.hero-decoration {
+  position: absolute;
+  border-radius: 50%;
+}
+
+.hero-orbit {
+  right: -94rpx;
+  top: -46rpx;
+  width: 288rpx;
+  height: 288rpx;
+  border: 36rpx solid #FF7547;
+  opacity: 0.2;
+}
+
+.hero-sun {
+  right: 32rpx;
+  bottom: -34rpx;
+  width: 108rpx;
+  height: 108rpx;
+  background: #FFD572;
+}
+
+.hero-stamp {
+  position: absolute;
+  right: 32rpx;
+  top: 100rpx;
+  color: #C94320;
+  font-size: 31rpx;
+  font-weight: 700;
+  line-height: 1.25;
+  transform: rotate(12deg);
+}
+
+.home-section {
+  margin: 30rpx 4rpx 22rpx;
+}
+
+.service-list {
+  margin-bottom: 28rpx;
+}
+
+.service-entry {
+  justify-content: flex-start;
+  margin: 16rpx 0;
+  padding: 28rpx 24rpx;
+  border: 1rpx solid #EAECF0;
+  border-radius: 26rpx;
+  background: #FFFFFF;
+  box-shadow: 0 6rpx 24rpx rgba(32, 41, 57, 0.03);
+  text-align: left;
+}
+
+.service-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 88rpx;
+  height: 88rpx;
+  margin-right: 24rpx;
+  border-radius: 28rpx;
+  background: #FFF0E8;
+  color: #AA381B;
+  font-size: 38rpx;
+  font-weight: 700;
+}
+
+.service-BUY .service-icon {
+  background: #F2F4F7;
+  color: #344054;
+}
+
+.service-ERRAND .service-icon {
+  background: #FFF0E8;
+  border-radius: 50%;
+}
+
+.service-name {
+  font-size: 32rpx;
+  font-weight: 700;
+}
+
+.service-desc {
+  margin-top: 8rpx;
+  color: #667085;
+  font-size: 24rpx;
+  font-weight: 400;
+  line-height: 1.65;
+}
+
+.service-arrow {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  color: #C94320;
+  font-size: 36rpx;
+}
+
+.guide-row {
+  display: flex;
+  margin: 18rpx 0;
+  color: #667085;
+  font-size: 25rpx;
+  line-height: 1.8;
+}
+
+.guide-dot {
+  flex-shrink: 0;
+  width: 10rpx;
+  height: 10rpx;
+  margin: 18rpx 16rpx 0 0;
+  border-radius: 50%;
+  background: #FF7547;
+}
+
+.home-links {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin: 18rpx -12rpx -10rpx;
+  border-top: 1rpx solid #F0F2F5;
+}
+
+@media (max-width: 350px) {
+  .hero-title {
+    font-size: 44rpx;
+  }
+
+  .hero-stamp {
+    right: 22rpx;
+    font-size: 27rpx;
+  }
+}

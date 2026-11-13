@@ -1,1 +1,49 @@
-/* 通用表单、卡片与布局由 app.wxss 提供。 */
+.address-person {
+  font-size: 30rpx;
+  font-weight: 700;
+  word-wrap: break-word;
+}
+
+.address-phone {
+  display: inline-block;
+  margin-left: 16rpx;
+  color: #667085;
+  font-size: 25rpx;
+  font-weight: 400;
+}
+
+.address-location {
+  margin: 18rpx 0 22rpx;
+  font-size: 28rpx;
+  word-break: break-all;
+}
+
+.address-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-top: 16rpx;
+  border-top: 1rpx solid #F0F2F5;
+}
+
+.address-toolbar > .primary {
+  margin: 6rpx 12rpx 6rpx 0;
+}
+
+.address-toolbar .actions {
+  margin-top: 0;
+  margin-left: auto;
+}
+
+.address-toolbar .actions button {
+  padding: 14rpx 18rpx;
+  font-size: 24rpx;
+}
+
+.retry-button {
+  margin-top: 20rpx;
+}
+
+.address-form .switch-row {
+  border-top: 1rpx solid #F0F2F5;
+}

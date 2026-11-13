@@ -16,13 +16,16 @@
   ],
   "window": {
     "navigationBarTitleText": "飞毛腿跑腿",
-    "navigationBarBackgroundColor": "#176B52",
-    "navigationBarTextStyle": "white",
-    "backgroundColor": "#F4F6F5"
+    "navigationBarBackgroundColor": "#F7F8FA",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F7F8FA",
+    "backgroundTextStyle": "dark"
   },
   "tabBar": {
-    "color": "#68776F",
-    "selectedColor": "#176B52",
+    "color": "#667085",
+    "selectedColor": "#C94320",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "white",
     "list": [
       { "pagePath": "pages/index/index", "text": "首页" },
       { "pagePath": "pages/order/list", "text": "订单" },

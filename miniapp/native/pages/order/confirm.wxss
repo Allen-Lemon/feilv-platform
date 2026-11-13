@@ -1,1 +1,30 @@
-/* 通用表单、卡片与布局由 app.wxss 提供。 */
+.summary-row {
+  display: flex;
+  align-items: flex-start;
+  margin: 18rpx 0;
+  font-size: 26rpx;
+  word-break: break-all;
+}
+
+.summary-label {
+  flex-shrink: 0;
+  width: 162rpx;
+  padding-right: 18rpx;
+  color: #667085;
+}
+
+.confirm-total {
+  margin-bottom: 20rpx;
+  padding: 26rpx 0 8rpx;
+}
+
+.confirm-actions {
+  justify-content: center;
+  margin-top: 14rpx;
+}
+
+.confirm-actions button {
+  padding-right: 16rpx;
+  padding-left: 16rpx;
+  font-size: 24rpx;
+}

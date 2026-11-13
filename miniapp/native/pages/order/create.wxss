@@ -1,1 +1,57 @@
-/* 通用表单、卡片与布局由 app.wxss 提供。 */
+.create-page .section-head {
+  margin-bottom: 8rpx;
+}
+
+.create-page .section-title {
+  display: flex;
+  align-items: center;
+}
+
+.form-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48rpx;
+  height: 48rpx;
+  margin-right: 14rpx;
+  border-radius: 16rpx;
+  background: #FFF0E8;
+  color: #AA381B;
+  font-size: 24rpx;
+}
+
+.form-step.end {
+  background: #EDF0F5;
+  color: #344054;
+}
+
+.create-page .card > .field:last-child {
+  margin-bottom: 0;
+}
+
+.measure-fields {
+  display: flex;
+}
+
+.measure-fields .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.measure-fields .field:first-child {
+  margin-right: 20rpx;
+}
+
+.measure-hint {
+  margin-top: 10rpx;
+  color: #667085;
+  font-size: 23rpx;
+}
+
+.quote-card {
+  border-color: #FFDCCB;
+}
+
+.quote-total {
+  padding: 26rpx 0 10rpx;
+}
