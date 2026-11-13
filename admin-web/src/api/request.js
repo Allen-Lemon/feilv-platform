@@ -15,7 +15,7 @@ request.interceptors.response.use(
   (resp) => {
     const body = resp.data
     if (body.code !== 0) {
-      ElMessage.error(body.msg || '请求失败')
+      if (!resp.config.silentError) ElMessage.error(body.msg || '请求失败')
       return Promise.reject(body)
     }
     return body.data
@@ -25,8 +25,8 @@ request.interceptors.response.use(
     if (err.response?.status === 401) {
       localStorage.removeItem('feilv_admin_token')
       router.push('/login')
-      ElMessage.error(body?.msg || '登录已失效')
-    } else {
+      if (!err.config?.silentError) ElMessage.error(body?.msg || '登录已失效')
+    } else if (!err.config?.silentError) {
       ElMessage.error(body?.msg || '网络异常，请稍后再试')
     }
     return Promise.reject(err)

@@ -2,6 +2,7 @@ C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\service\AddressService.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\domain\Rider.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\service\DispatchService.java
+C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\controller\WechatConfigController.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\interceptor\AuthInterceptor.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\controller\ReviewController.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\domain\AdminAccount.java
@@ -12,6 +13,7 @@ C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\repository\PayRecordRepository.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\common\BizException.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\common\Result.java
+C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\dto\WechatConfigDtos.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\repository\AdminRoleRepository.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\common\UserContext.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\repository\OpLogRepository.java
@@ -35,12 +37,14 @@ C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\task\OrderTimeoutTask.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\controller\RiderController.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\domain\AdminRoleMenu.java
+C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\repository\WechatConfigRepository.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\domain\UserAddress.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\repository\AdminMenuRepository.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\controller\AdminController.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\domain\Merchant.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\service\MessageService.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\domain\RiderTrack.java
+C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\service\WechatConfigService.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\service\WechatSessionClient.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\config\WebConfig.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\repository\AdminAccountRepository.java
@@ -49,10 +53,13 @@ C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\repository\ComplaintRepository.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\service\OrderService.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\controller\AuthController.java
+C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\domain\WechatConfig.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\controller\AppOrderController.java
+C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\controller\HealthController.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\domain\OrderFeeDetail.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\repository\CreditLogRepository.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\repository\RiderRepository.java
+C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\service\WechatConfigAccess.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\service\UserService.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\repository\OrderRepository.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\util\PasswordUtil.java
@@ -76,3 +83,4 @@ C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\service\TrackService.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\domain\AdminMenu.java
 C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\repository\BanWordRepository.java
+C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform\backend\src\main\java\com\feilv\util\ConfigSecretCipher.java

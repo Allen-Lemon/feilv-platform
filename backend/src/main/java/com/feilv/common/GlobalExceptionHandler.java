@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -22,6 +23,13 @@ public class GlobalExceptionHandler {
         String msg = e.getBindingResult().getFieldErrors().isEmpty() ? "参数错误"
                 : e.getBindingResult().getFieldErrors().get(0).getDefaultMessage();
         return ResponseEntity.ok(Result.fail(400, msg));
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Result<Void>> methodNotSupported(HttpRequestMethodNotSupportedException e) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .headers(e.getHeaders())
+                .body(Result.fail(405, "该接口不支持此请求方法，请按接口约定调用"));
     }
 
     @ExceptionHandler(Exception.class)

@@ -1,4 +1,13 @@
-com\feilv\service\WechatLoginServiceTest.class
+com\feilv\controller\HealthControllerTest.class
+com\feilv\controller\WechatConfigHttpTest.class
+com\feilv\service\WechatConfigPersistenceTest.class
+com\feilv\controller\WechatConfigControllerTest.class
+com\feilv\service\WechatConfigServiceTest.class
+com\feilv\service\ConfigSecretCipherTest.class
+com\feilv\service\WechatConfigAccessTest.class
 com\feilv\controller\WechatLoginControllerTest.class
+com\feilv\controller\SystemAdminAuthorizationTest.class
+com\feilv\service\WechatConfigMigrationTest.class
+com\feilv\service\WechatLoginServiceTest.class
 com\feilv\service\WechatLoginPersistenceTest.class
 com\feilv\service\WechatSessionClientTest.class

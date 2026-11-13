@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
 const { spawnSync } = require('node:child_process')
-const root = path.resolve(__dirname, '../native')
+const root = path.resolve(__dirname, '..')
 const app = JSON.parse(fs.readFileSync(path.join(root, 'app.json'), 'utf8'))
 const candidates = [process.env.WECHAT_DEVTOOLS_HOME,
   'C:/Program Files (x86)/Tencent/微信web开发者工具',

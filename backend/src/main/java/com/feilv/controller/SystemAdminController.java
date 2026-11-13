@@ -27,6 +27,10 @@ public class SystemAdminController {
     private final AdminRoleMenuRepository roleMenuRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final com.feilv.service.WechatConfigAccess configAccess;
+
+    @ModelAttribute
+    public void requireSystemAdmin() { configAccess.requireSystemAdmin(); }
 
     @GetMapping("/menus")
     public Result<List<AdminMenu>> menus() {

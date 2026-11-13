@@ -16,4 +16,4 @@ spring:
     init:
       mode: always
       encoding: UTF-8
-      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql
+      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql,classpath:db/migrations/20261113_wechat_config.sql

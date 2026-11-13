@@ -3,7 +3,6 @@ package com.feilv.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.feilv.common.BizException;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -16,21 +15,24 @@ import java.time.Duration;
 
 @Component
 public class WechatSessionClient {
-    private final String appId;
-    private final String secret;
+    private final java.util.function.Supplier<WechatConfigService.LoginCredentials> credentials;
     private final ObjectMapper mapper;
     private final HttpClient http;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public WechatSessionClient(@Value("${feilv.wechat.app-id:}") String appId,
-                               @Value("${feilv.wechat.app-secret:}") String secret,
-                               ObjectMapper mapper) {
-        this(appId, secret, mapper, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build());
+    public WechatSessionClient(WechatConfigService settings, ObjectMapper mapper) {
+        this(settings::effectiveLogin, mapper, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build());
     }
 
+    // 包级构造函数仅用于隔离单元测试，不用于生产注入。
+    WechatSessionClient(String appId, String secret, ObjectMapper mapper) {
+        this(appId, secret, mapper, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build());
+    }
     WechatSessionClient(String appId, String secret, ObjectMapper mapper, HttpClient http) {
-        this.appId = appId;
-        this.secret = secret;
+        this(() -> new WechatConfigService.LoginCredentials(appId, secret), mapper, http);
+    }
+    WechatSessionClient(java.util.function.Supplier<WechatConfigService.LoginCredentials> credentials, ObjectMapper mapper, HttpClient http) {
+        this.credentials = credentials;
         this.mapper = mapper;
         this.http = http;
     }
@@ -38,6 +40,9 @@ public class WechatSessionClient {
     public record Session(String appId, String openid, String unionid) {}
 
     public Session exchange(String code) {
+        var current = credentials.get();
+        String appId = current.appId();
+        String secret = current.secret();
         if (appId.isBlank() || secret.isBlank()) {
             throw BizException.of(503, "微信登录未配置，请联系管理员设置 WECHAT_APP_ID 和 WECHAT_APP_SECRET");
         }

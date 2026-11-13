@@ -21,10 +21,11 @@ spring:
     init:
       mode: always
       encoding: UTF-8
-      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql
+      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql,classpath:db/migrations/20261113_wechat_config.sql
 
 # 调度参数（对应功能设计文档 8.2 调度引擎 / 详细设计 3.3 计价，全部可配置化）
 feilv:
+  config-encryption-key: ${CONFIG_ENCRYPTION_KEY:}
   wechat:
     app-id: ${WECHAT_APP_ID:}
     app-secret: ${WECHAT_APP_SECRET:}

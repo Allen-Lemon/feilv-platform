@@ -1,0 +1,39 @@
+const transport = require('./request')
+const root = '/api/v1'
+function createApi(r) {
+  return {
+    wechatLogin: code => r.post(root + '/auth/wechat-login', { code, agreed: true }, { public: true }),
+    smsCode: mobile => r.post(root + '/auth/sms-code', { mobile }, { public: true }),
+    login: (mobile, code) => r.post(root + '/auth/login', { mobile, code }, { public: true }),
+    riderRegister: data => r.post(root + '/auth/rider-register', data, { public: true }),
+    me: () => r.get(root + '/user/me'),
+    addressList: () => r.get(root + '/user/address'),
+    addAddress: data => r.post(root + '/user/address', data),
+    updateAddress: (id, data) => r.put(root + '/user/address/' + id, data),
+    deleteAddress: id => r.delete(root + '/user/address/' + id),
+    quote: data => r.post(root + '/orders/quote', data),
+    createOrder: data => r.post(root + '/orders', data),
+    payOrder: id => r.post(root + '/orders/' + id + '/pay'),
+    cancelOrder: (id, reason) => r.post(root + '/orders/' + id + '/cancel', { reason }),
+    confirmOrder: id => r.post(root + '/orders/' + id + '/confirm'),
+    myOrders: page => r.get(root + '/orders', { page, size: 10 }),
+    orderDetail: id => r.get(root + '/orders/' + id),
+    orderTrack: id => r.get(root + '/orders/' + id + '/track'),
+    review: data => r.post(root + '/reviews', data),
+    complaint: data => r.post(root + '/complaints', data),
+    riderMe: () => r.get(root + '/rider/me'),
+    riderOnline: onlineStatus => r.post(root + '/rider/online', { onlineStatus }),
+    grabList: () => r.get(root + '/grab/list'),
+    grab: id => r.post(root + '/grab/' + id),
+    riderOrders: page => r.get(root + '/rider/orders', { page }),
+    pickup: (id, pickupCode) => r.post(root + '/orders/' + id + '/pickup', { pickupCode }),
+    depart: id => r.post(root + '/orders/' + id + '/depart'),
+    deliver: id => r.post(root + '/orders/' + id + '/deliver'),
+    reportTrack: data => r.post(root + '/track/report', data),
+    creditLogs: () => r.get(root + '/credit/logs')
+  }
+}
+module.exports = Object.assign(createApi(transport.request), {
+  // 将多步异步操作绑定到开始时的会话，不能在切换账号后发出后续请求。
+  forSession: revision => createApi(transport.bindSession(revision))
+})

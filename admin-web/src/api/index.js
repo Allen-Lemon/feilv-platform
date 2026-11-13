@@ -2,7 +2,11 @@ import request from './request'
 
 export const adminApi = {
   login: (data) => request.post('/v1/auth/admin-login', data),
-  profile: () => request.post('/v1/auth/admin-profile'),
+  profile: (config) => request.post('/v1/auth/admin-profile', undefined, config),
+  wechatSettings: () => request.get('/v1/admin/system/wechat', { silentError: true }),
+  saveWechatLogin: (data) => request.put('/v1/admin/system/wechat/login', data, { silentError: true }),
+  saveWechatPayment: (data) => request.put('/v1/admin/system/wechat/payment', data, { silentError: true }),
+  validateWechat: (section) => request.post('/v1/admin/system/wechat/validate', { section }, { silentError: true }),
   stats: () => request.get('/v1/admin/stats'),
   orders: (params) => request.get('/v1/admin/orders', { params }),
   cancelOrder: (id, reason) => request.post(`/v1/admin/orders/${id}/cancel`, { reason }),

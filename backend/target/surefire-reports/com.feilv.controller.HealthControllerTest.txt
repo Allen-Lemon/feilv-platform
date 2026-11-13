@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.feilv.controller.HealthControllerTest
+-------------------------------------------------------------------------------
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 24.74 s -- in com.feilv.controller.HealthControllerTest

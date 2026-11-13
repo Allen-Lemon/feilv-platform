@@ -27,6 +27,22 @@ class WechatSessionClientTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void configurationIsReadAgainForEveryCodeExchange() throws Exception {
+        HttpClient http = mock(HttpClient.class);
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200); when(response.body()).thenReturn("{\"openid\":\"verified\"}");
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenAnswer(call -> {
+            ids.add(((HttpRequest) call.getArgument(0)).uri().getQuery()); return response;
+        });
+        var active = new java.util.concurrent.atomic.AtomicReference<>(new WechatConfigService.LoginCredentials("app-one", "secret-one"));
+        var client = new WechatSessionClient(active::get, new ObjectMapper(), http);
+        client.exchange("first"); active.set(new WechatConfigService.LoginCredentials("app-two", "secret-two")); client.exchange("second");
+        assertTrue(ids.get(0).contains("appid=app-one")); assertTrue(ids.get(1).contains("appid=app-two"));
+    }
+
+    @Test
     void verifiedResponseDoesNotExposeSessionKey() throws Exception {
         var session = client("{\"openid\":\"verified\",\"unionid\":\"union\",\"session_key\":\"private\"}", 200).exchange("code");
         assertEquals("verified", session.openid());

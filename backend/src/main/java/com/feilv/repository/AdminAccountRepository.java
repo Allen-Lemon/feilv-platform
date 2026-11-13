@@ -7,4 +7,5 @@ import java.util.Optional;
 
 public interface AdminAccountRepository extends JpaRepository<AdminAccount, Long> {
     Optional<AdminAccount> findByUsernameAndEnabled(String username, int enabled);
+    boolean existsByUserIdAndEnabled(Long userId, int enabled);
 }

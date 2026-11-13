@@ -1,6 +1,6 @@
 <template>
   <section>
-    <div class="page-head"><div><span class="eyebrow">WORKSPACE SETTINGS</span><h1>系统管理</h1><p>让协作更有秩序。统一维护菜单、角色与管理账户。</p></div><el-button :loading="loading" @click="load"><span class="button-content"><AppIcon name="refresh" :size="16" />刷新列表</span></el-button></div>
+    <div class="page-head"><div><span class="eyebrow">WORKSPACE SETTINGS</span><h1>系统管理</h1><p>让协作更有秩序。统一维护菜单、角色与管理账户。</p></div><div class="page-actions"><el-button plain @click="router.push('/wechat-settings')"><span class="button-content"><AppIcon name="shield" :size="16" />微信配置</span></el-button><el-button :loading="loading" @click="load"><span class="button-content"><AppIcon name="refresh" :size="16" />刷新列表</span></el-button></div></div>
     <div class="panel system-panel" v-loading="loading">
       <el-tabs v-model="tab">
         <el-tab-pane label="菜单管理" name="menus"><div class="panel-heading"><div><h2>导航与菜单</h2><p>维护后台菜单名称、路径与展示顺序</p></div><el-button type="primary" @click="editMenu()"><span class="button-content"><AppIcon name="plus" :size="16" />新增菜单</span></el-button></div>
@@ -23,9 +23,11 @@
 </template>
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminApi } from '../api'
 import AppIcon from '../components/AppIcon.vue'
+const router = useRouter()
 const tab = ref('menus'), menus = ref([]), roles = ref([]), users = ref([]), loading = ref(false), saving = ref(false), search = ref('')
 const filteredMenus = computed(() => menus.value)
 const filteredUsers = computed(() => users.value.filter(u => [u.mobile, u.nickname].some(v => String(v || '').toLowerCase().includes(search.value.toLowerCase()))))
@@ -49,5 +51,6 @@ function saveAssignment() { return persist(() => assignmentKind.value === 'menus
 onMounted(load)
 </script>
 <style scoped>
+.page-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .user-cell { display: flex; gap: 12px; align-items: center; }.table-avatar { flex-shrink: 0; width: 34px; height: 34px; border-radius: 11px; display: flex; align-items: center; justify-content: center; color: #985126; background: #fff0e5; font-size: 13px; }.user-cell strong { display: block; font-weight: 550; font-size: 12px; }.user-cell small { display: block; font-size: 11px; color: #667085; margin-top: 5px; }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }.dialog-description { font-size: 13px; color: #667085; margin-bottom: 22px; line-height: 1.7; }.permission-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.permission-options .el-checkbox { margin: 0; height: auto; min-height: 58px; padding: 12px; border-radius: 10px; }.permission-options :deep(.el-checkbox__label) { white-space: normal; }.permission-options strong { display: block; font-size: 12px; font-weight: 500; }.permission-options small { display: block; margin-top: 5px; color: #667085; font-size: 10px; }.assignment-alert { margin-bottom: 18px; }@media(max-width:600px) { .form-grid { grid-template-columns: 1fr; gap: 0; }.panel-heading { align-items: flex-start; }.panel-heading p { max-width: 180px; } }
 </style>

@@ -20,7 +20,7 @@ feilv-platform/
 │       ├── controller/      # REST API（对齐详细设计第十章）
 │       └── task/            # 超时引擎（15分钟关单/待接单提醒/默认完成）
 ├── admin-web/       # Vue3 管理后台（登录/看板/订单监控干预/骑手管理/结算/工单）
-└── miniapp/         # 微信开发者工具导入此目录，native/ 为原生源码，src/ 为迁移前备份
+└── miniapp/         # 纯微信原生工程，根目录直接包含app.json、pages/、utils/，零框架依赖
 ```
 
 ## 二、快速启动
@@ -49,13 +49,13 @@ npm run dev        # http://localhost:5173 ，账号 admin / 123456
 
 ### 3）微信原生小程序
 
-- 微信开发者工具直接导入 `miniapp`，由 `project.config.json` 指向 `native/`，不再导入 `dist/build/mp-weixin`，不需要 uni-app 编译。
-- 配置真实小程序 AppID；后端环境变量 `WECHAT_APP_ID` 必须与其一致，`WECHAT_APP_SECRET` 只在后端设置。
+- 微信开发者工具直接导入 `miniapp`，`project.config.json` 指向 `./`，根目录直接包含 `app.json`，无需框架构建。旧源码、依赖和编译产物文件已清理；不要再导入dist或native子目录。
+- 配置真实小程序 AppID；后端登录参数可在管理后台“微信配置”页面维护，或在尚未保存数据库配置时使用 `WECHAT_APP_ID/WECHAT_APP_SECRET` 环境变量。必须与小程序一致，AppSecret只留在后端。
 - 微信登录：`wx.login` 获取一次性 code → `POST /api/v1/auth/wechat-login` → 后端调用微信 `jscode2session` → 返回平台 JWT。openid、session_key 和 AppSecret 不下发客户端。
-- 原生请求地址在 `miniapp/native/config.js` 配置。开发工具可使用本机地址；真机必须使用可达地址，上线需配置已备案 HTTPS request 合法域名。
+- 原生请求地址已配置为 `https://xt.allms.cn`，默认禁止历史开发地址覆盖。体验版/正式版固定使用官方HTTPS服务，微信后台需配置同名 request 合法域名。真实AppID、上传前校验与发布步骤见 `miniapp/WECHAT_DEPLOYMENT.md`。
 - 默认及 local/docker profile 启动时执行 `db/migrations/20261112_wechat_login.sql`，将手机号改为可空并创建 `t_wechat_identity`；不会删除或重置现有用户。
 - 微信登录不会自动得到手机号，也不会自动合并现有手机号账号；短信登录仍独立保留。未配置微信凭据时接口明确返回配置错误，不使用模拟 openid 冒充登录成功。
-- 详见 `miniapp` 下迁移说明；旧 `src/` 仅用于迁移追溯。
+- 原生目录结构见 `miniapp/README.md`；校验命令 `npm run build --prefix miniapp`、`npm run check:wechat --prefix miniapp`，不需要安装第三方npm依赖。
 
 后端启动前设置（不要将 AppSecret 写到前端）：
 
@@ -68,6 +68,14 @@ mvn -f backend/pom.xml spring-boot:run
 IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Docker Compose 使用项目根 `.env`，模板已包含这两个变量。小程序 AppID 在开发者工具项目配置中填写。游客模式只能查看页面，不能验证真实微信登录。
 
 测试命令：`mvn -f backend/pom.xml test`。微信登录回归测试使用 Mock 微信服务和 H2 内存库，不会修改远程业务数据；真实授权需配置凭据并在微信开发者工具/真机验证。
+
+### 4）后台微信登录/支付参数管理
+
+后台新增 `/wechat-settings`（微信配置），分别管理登录AppID/AppSecret及微信支付API v3商户、公钥、通知URL等参数。机密以AES-256-GCM加密，查询不回显；留空保留、勾选清除、乐观版本冲突与操作审计已接入。
+
+首次部署须生成一次并持久保存 `CONFIG_ENCRYPTION_KEY`（`openssl rand -base64 32`），写入服务器 `.env`，重建后端后才能保存机密。不要将主密钥或商户私钥放到前端/小程序。数据库配置优先于环境变量，登录参数保存后即时读取；**支付运行模式仍为MOCK，保存参数不会接通真实收单、退款或回调**。
+
+默认/local/docker启动新增表 `t_wechat_config` 及“微信配置”菜单，默认授权SUPER_ADMIN；其他管理员需明确菜单授权。账号角色授权接口仅超级管理员可操作。详见 `backend/WECHAT_CONFIG.md`。
 
 ## 三、Docker 部署
 
@@ -102,6 +110,31 @@ docker compose ps
 docker compose logs -f backend
 docker compose logs -f admin-web
 ```
+
+### 健康检查与请求方法排查
+
+后端提供无需登录、只读的 `GET /health`，检查数据库连接可用性：就绪返回 HTTP 200，未就绪返回 HTTP 503。不调用验证码、登录等业务接口。
+
+```bash
+# 默认 compose 发布后端端口时：
+curl -i http://127.0.0.1:8080/health
+# 容器内检查（两个 compose 均可用）：
+docker compose exec backend curl -fsS --max-time 4 http://127.0.0.1:8080/health
+```
+
+`Request method 'GET' is not supported` 表示运行中的服务收到了错误方法的请求，不是 JVM 启动失败。验证码和登录只接受 POST；请勿用浏览器地址栏或 GET 健康探针访问。旧 compose 的验证码探针已替换，方法错误现在返回 HTTP 405 和 Allow 响应头，不再误记为 500 系统异常。
+
+升级时必须同时更新应用镜像和 compose 配置，不能只重启旧容器：
+
+```bash
+docker compose up -d --build backend admin-web
+docker compose ps
+docker compose logs --tail=100 backend
+```
+
+使用 `docker-compose.prod.yml` 的镜像部署需先构建/发布包含 `/health`、curl 和 HEALTHCHECK 的新镜像，再拉取并重建容器；旧镜像不满足新的 `service_healthy` 启动条件。健康状态正常不等于支付、微信授权等第三方能力已经接入。
+
+本地回归：`mvn -f backend/pom.xml package`，随后运行 `node backend/scripts/smoke-health.cjs`。冒烟脚本使用 H2 内存库和随机本机端口，检查健康接口、405 响应及鉴权，完成后关闭验证进程，不修改远程业务数据库。
 
 ### 4）停止服务
 

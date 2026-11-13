@@ -1,6 +1,9 @@
 {
   "setting": {
     "es6": true,
+    "urlCheck": true,
+    "minifyWXML": true,
+    "minifyWXSS": true,
     "postcss": true,
     "minified": true,
     "uglifyFileName": false,
@@ -16,11 +19,21 @@
   "compileType": "miniprogram",
   "simulatorPluginLibVersion": {},
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      { "type": "folder", "value": "scripts" },
+      { "type": "folder", "value": "dist" },
+      { "type": "folder", "value": "node_modules" },
+      { "type": "file", "value": "package.json" },
+      { "type": "file", "value": "package-lock.json" },
+      { "type": "file", "value": "README.md" },
+      { "type": "file", "value": "NATIVE_MIGRATION.md" },
+      { "type": "file", "value": "WECHAT_DEPLOYMENT.md" },
+      { "type": "file", "value": ".gitignore" }
+    ],
     "include": []
   },
   "appid": "touristappid",
-  "miniprogramRoot": "native/",
+  "miniprogramRoot": "./",
   "projectname": "feilv-native",
   "editorSetting": {},
   "isGameTourist": false
