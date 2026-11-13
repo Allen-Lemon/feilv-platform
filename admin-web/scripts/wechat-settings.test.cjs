@@ -201,17 +201,48 @@ test('03 loading/network failure disables actions; retry recovers without fake d
   assert.equal(harness.state.pageError.value, '')
 })
 
-test('04 encryption not ready permits reading/validation but never saving', async t => {
+test('04 encryption not ready permits draft switches/editing and validation but never saving', async t => {
   const harness = createHarness(t, { wechatSettings: async () => ({ ...overview(), encryptionReady: false }) })
   await harness.mount()
   assert.equal(harness.state.ready.value, true)
   assert.equal(harness.state.canSave.value, false)
-  assert.equal(harness.state.fieldsDisabled.value, true)
+  assert.equal(harness.state.fieldsDisabled.value, false)
   assert.equal(harness.state.canValidate.value, true)
-  for (const section of sections) await harness.state.saveSection(section)
+  for (const section of sections) {
+    const form = formFor(harness.state, section), saved = savedFor(harness.state, section)
+    form.enabled = !saved.enabled
+    form.appId = 'wxfedcba9876543210'
+    await harness.state.saveSection(section)
+    assert.equal(form.enabled, !saved.enabled)
+    assert.equal(form.appId, 'wxfedcba9876543210')
+  }
+  assert.equal(harness.confirmations.length, 0)
   assert.equal(countCalls(harness, 'saveWechatLogin') + countCalls(harness, 'saveWechatPayment'), 0)
   await harness.state.validateSaved('PAYMENT')
   assert.equal(countCalls(harness, 'validateWechat'), 1)
+  assert.equal(harness.state.fieldsDisabled.value, false)
+  assert.equal(harness.state.canSave.value, false)
+})
+
+test('04b draft fields remain locked until loaded/authorized and during conflicts or operations', async t => {
+  const harness = createHarness(t)
+  const state = harness.state
+  assert.equal(state.fieldsDisabled.value, true)
+  await harness.mount()
+  assert.equal(state.fieldsDisabled.value, false)
+  for (const flag of ['loading', 'confirming', 'saving', 'validating', 'needsReload']) {
+    state[flag].value = flag === 'saving' || flag === 'validating' ? 'LOGIN' : true
+    assert.equal(state.fieldsDisabled.value, true, `${flag} must lock draft fields`)
+    state[flag].value = flag === 'saving' || flag === 'validating' ? '' : false
+    assert.equal(state.fieldsDisabled.value, false)
+  }
+  for (const flag of ['ready', 'authorized']) {
+    state[flag].value = false
+    assert.equal(state.fieldsDisabled.value, true, `${flag} is required to edit drafts`)
+    state[flag].value = true
+    assert.equal(state.fieldsDisabled.value, false)
+  }
+  assert.equal((descriptor.template.content.match(/:disabled="fieldsDisabled"/g) || []).length, 2, 'Both forms must use the draft editing guard')
 })
 
 test('05 blank secrets retain original values; clear flags are explicit and independent', async t => {
@@ -367,6 +398,7 @@ test('11 401/403/503 fail closed; network save errors preserve input without lea
     assert.equal(harness.state.canSave.value, code === 500)
     assertNoSuccess(harness)
     assert.equal(harness.messages.some(message => message.text.includes(mockSecret)), false)
+    assert.equal(harness.state.fieldsDisabled.value, code === 401 || code === 403)
     if (code === 503) assert.equal(harness.state.encryptionReady.value, false)
     if (code === 401 || code === 403) assert.ok(harness.state.pageError.value)
   }

@@ -9,8 +9,8 @@
       <template #default><el-button size="small" :disabled="busy" @click="reloadSettings">重试加载</el-button></template>
     </el-alert>
     <el-alert v-if="needsReload" title="配置已被其他管理员修改，或配置来源已变化。请重新加载后核对并再次编辑，不会自动覆盖。" type="warning" show-icon :closable="false" class="notice" />
-    <el-alert v-if="ready && !encryptionReady" title="配置加密尚未就绪，保存已禁用" type="warning" show-icon :closable="false" class="notice">
-      <template #default>请联系后台运维配置 CONFIG_ENCRYPTION_KEY（32 字节密钥的 Base64 编码）。不要在本页面填写该密钥；配置完成后重新加载。</template>
+    <el-alert v-if="ready && !encryptionReady" title="配置加密尚未就绪：可编辑草稿，暂不能保存生效" type="warning" show-icon :closable="false" class="notice">
+      <template #default>请在后端运行环境中配置 CONFIG_ENCRYPTION_KEY（32 字节随机密钥的 Base64 编码），重启后端后重新加载。本机或 IDEA 启动需设置进程环境变量，Docker Compose 使用服务器 .env。不要在本页面填写主密钥，也不要用 AppSecret 或 API v3 密钥代替；已有加密配置时须恢复原主密钥，勿重新生成替换。</template>
     </el-alert>
 
     <div class="panel settings-panel" v-loading="loading">
@@ -121,7 +121,7 @@ let disposed = false
 const busy = computed(() => loading.value || confirming.value || !!saving.value || !!validating.value)
 const canValidate = computed(() => ready.value && authorized.value && !needsReload.value && !busy.value)
 const canSave = computed(() => canValidate.value && encryptionReady.value)
-const fieldsDisabled = computed(() => !canSave.value)
+const fieldsDisabled = computed(() => !canValidate.value)
 const canLeaveTab = () => !busy.value
 const configuredText = (configured) => !ready.value ? '尚未加载' : configured ? '已配置' : '未配置'
 const secretPlaceholder = (configured) => configured ? '已配置，留空保留原值' : '未配置，请按需输入'
