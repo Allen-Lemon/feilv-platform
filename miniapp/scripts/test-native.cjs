@@ -1471,6 +1471,39 @@ test('manual phone: HTTP 401 during inline send restores login instead of leavin
   assert.equal(page.data.profileStage, false); assert.equal(page.data.manualMobile, ''); assert.equal(page.data.phoneSending, false)
   assert.equal(env.storage.has('feilv_token'), false)
 })
+test('development phone: backend option allows direct binding without sending or entering a code', async () => {
+  const env = environment(); let direct = 0; let sms = 0
+  const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneBindingOptions() { return { developmentBypass: true } }, async phoneSmsCode() { sms++; }, async bindDevelopmentPhone(mobile) { direct++; assert.equal(mobile, '13800138000'); return profileValue({ mobileBound: true, mobile: '138****8000' }) } })
+  assert.equal(page.data.phoneDevelopment, true); manualFill(page); await page.sendPhoneSms(); assert.equal(sms, 0)
+  await page.bindManualPhone(); assert.equal(direct, 1); assert.equal(page.data.mobileBound, true); assert.equal(page.data.manualMobile, '')
+  assert.ok(env.calls.toast.includes('开发测试手机号已绑定（未验证归属）'))
+})
+test('development phone: options failures and nonboolean values never unlock bypass', async () => {
+  for (const value of [null, {}, { developmentBypass: 'true' }, { developmentBypass: false }, 'failure']) {
+    const env = environment(); let direct = 0
+    const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneBindingOptions() { if (value === 'failure') throw new Error('失败'); return value }, async bindDevelopmentPhone() { direct++ } })
+    assert.equal(page.data.phoneDevelopment, false); manualFill(page); await page.bindManualPhone(); assert.equal(direct, 0)
+  }
+})
+test('development phone: stale server options cannot unlock another account and server rejection never marks bound', async () => {
+  const env = environment(); env.authenticated(); let respond
+  const page = env.page('pages/profile/profile', { async me() { return profileValue() }, phoneBindingOptions() { return new Promise(r => { respond = r }) } })
+  page.onLoad({}); await page.onShow(); const options = page.togglePhoneMethod()
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
+  respond({ developmentBypass: true }); await options; assert.equal(page.data.phoneDevelopment, false)
+  const other = environment(); const manual = await readyManualPhone(other, { async me() { return profileValue() }, async phoneBindingOptions() { return { developmentBypass: true } }, async bindDevelopmentPhone() { throw Object.assign(new Error('开发权限已关闭'), { code: 403 }) } })
+  manualFill(manual); await manual.bindManualPhone(); assert.equal(manual.data.mobileBound, false); assert.equal(manual.data.phoneError, '开发权限已关闭')
+})
+test('development phone: client sends phone only to dedicated authenticated endpoint', async () => {
+  const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
+  const options = api.phoneBindingOptions(); assert.ok(env.calls.requests[0].url.endsWith('/user/phone/options'))
+  env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: { developmentBypass: true } } }); await options
+  const binding = api.bindDevelopmentPhone('13800138000'); const req = env.calls.requests[1]
+  assert.ok(req.url.endsWith('/user/phone/development')); assert.equal(req.header.Authorization, 'Bearer token-1')
+  assert.deepEqual(Object.keys(req.data), ['mobile']); req.success({ statusCode: 200, data: { code: 0, data: profileValue({ mobileBound: true }) } }); await binding
+  const template = fs.readFileSync(path.join(native, 'templates/manual-phone.wxml'), 'utf8')
+  assert.ok(template.includes('wx:if="{{!phoneDevelopment}}"')); assert.ok(template.includes('开发模式直接绑定')); assert.ok(template.includes('号码归属未经验证'))
+})
 ;(async () => {
   let failures = 0
   for (const { name, fn } of tests) {

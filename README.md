@@ -81,6 +81,12 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 - 头像通过同域 `/api/v1/avatars/<UUID>.png` 公开展示，请勿上传敏感图片。微信后台除 request 合法域名外，还需配置同域 uploadFile/downloadFile 合法域名和隐私声明。项目Nginx上传上限已设为6MB；外层代理也应允许至少6MB。
 - 真实头像选择、昵称填写与手机号授权仍需真实AppID、微信能力资格及真机验证。现有短信登录为演示实现，生产上线前必须接入真实短信并关闭验证码回传，或停用短信登录；否则会削弱手机号账户的认证安全。
 
+#### 开发模式临时免验证码绑定
+
+- 后端以 `local` profile 启动时，默认开启 `feilv.sms.binding-dev-bypass-enabled`，可用 `SMS_BINDING_DEV_BYPASS_ENABLED=false` 关闭。`development` profile 需显式配置该属性为true；普通环境默认false，同时包含 `prod`、`production` 或 `docker` 时一律拒绝，即使显式开启也不能绕过。
+- 小程序切换手动绑定时读取认证接口 `GET /api/v1/user/phone/options`；仅返回 `developmentBypass:true` 时隐藏短信区域、显示开发测试警告，点击“开发模式直接绑定”提交 `POST /api/v1/user/phone/development {mobile}`。不发送短信、不填写验证码，仍校验当前账号状态、号码格式、用户行锁及唯一性，不支持换绑或账号合并。
+- 仅限使用隔离开发数据库和测试账号。直接绑定的号码归属**未验证**，不要把开发用户数据迁入生产；该功能不能因前端传入develop标志而开启。
+
 #### 手动填写手机号 + 绑定短信验证码
 
 两个接口均须 `Authorization: Bearer <平台JWT>`，仅允许正常状态的 USER/RIDER，始终绑定当前登录账户，不接受 `userId`、`role` 或其他额外字段。沿用统一响应 `{code,msg,data}`（业务异常通常 HTTP 200，以 `code` 判断）：

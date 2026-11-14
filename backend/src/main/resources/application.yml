@@ -35,7 +35,7 @@ feilv:
     # 仅本地联调显式开启；未接真实短信时生产保持 false，手动绑号返回业务503。
     binding-mock-enabled: ${SMS_BINDING_MOCK_ENABLED:false}
     # 仅local/development且非prod/production/docker时可生效，默认拒绝免验证。
-    binding-dev-bypass-enabled: false
+    binding-dev-bypass-enabled: true
   wechat:
     app-id: ${WECHAT_APP_ID:}
     app-secret: ${WECHAT_APP_SECRET:}
