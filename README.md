@@ -85,6 +85,8 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 
 - 后端以 `local` profile 启动时，默认开启 `feilv.sms.binding-dev-bypass-enabled`，可用 `SMS_BINDING_DEV_BYPASS_ENABLED=false` 关闭。`development` profile 需显式配置该属性为true；普通环境默认false，同时包含 `prod`、`production` 或 `docker` 时一律拒绝，即使显式开启也不能绕过。
 - 小程序切换手动绑定时读取认证接口 `GET /api/v1/user/phone/options`；仅返回 `developmentBypass:true` 时隐藏短信区域、显示开发测试警告，点击“开发模式直接绑定”提交 `POST /api/v1/user/phone/development {mobile}`。不发送短信、不填写验证码，仍校验当前账号状态、号码格式、用户行锁及唯一性，不支持换绑或账号合并。
+- 仅设置 `SMS_BINDING_DEV_BYPASS_ENABLED=true` 不足以绕过profile检查；隔离开发后端还需 `SPRING_PROFILES_ACTIVE=local` 或 `development`，修改后重启。项目两个Compose文件固定启用 `docker`，仍会拒绝，不要将生产Compose切换到local来测试。小程序当前固定连接 `https://xt.allms.cn`，本机环境变量不影响该远程服务，需确认请求实际指向的开发后端。
+- 选项接口新增 `reason`（`ENABLED`、`DISABLED`、`DEVELOPMENT_PROFILE_REQUIRED`、`PROTECTED_PROFILE`）及中文 `message`。小程序显示未生效原因、当前服务地址及“刷新绑定模式”；后端旧接口404或查询失败不再静默当作正常短信模式。
 - 仅限使用隔离开发数据库和测试账号。直接绑定的号码归属**未验证**，不要把开发用户数据迁入生产；该功能不能因前端传入develop标志而开启。
 
 #### 手动填写手机号 + 绑定短信验证码

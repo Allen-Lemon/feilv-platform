@@ -16,12 +16,12 @@ import org.springframework.web.bind.annotation.*;
 public class DevelopmentPhoneBindingController {
     private final DevelopmentPhoneBindingService development;
 
-    public record BindingOptions(boolean developmentBypass) {}
+    public record BindingOptions(boolean developmentBypass, String reason, String message) {}
 
     @GetMapping("/options")
     public Result<BindingOptions> options(HttpServletResponse response) {
         response.setHeader("Cache-Control", "no-store");
-        return Result.ok(new BindingOptions(development.enabled()));
+        return Result.ok(new BindingOptions(development.enabled(), development.status().name(), development.modeMessage()));
     }
 
     @PostMapping("/development")

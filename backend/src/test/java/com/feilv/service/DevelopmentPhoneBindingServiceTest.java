@@ -36,6 +36,26 @@ class DevelopmentPhoneBindingServiceTest {
         verify(users, never()).saveAndFlush(any());
     }
 
+    @Test void environmentVariableMapsToFlagButStillRequiresDevelopmentProfile() {
+        new org.springframework.boot.test.context.runner.ApplicationContextRunner()
+                .withInitializer(context -> context.getEnvironment().getPropertySources().addFirst(
+                        new org.springframework.core.env.SystemEnvironmentPropertySource("testEnvironment", java.util.Map.of("SMS_BINDING_DEV_BYPASS_ENABLED", "true"))))
+                .withBean(UserRepository.class, () -> users)
+                .withBean(PlatformTransactionManager.class, () -> manager)
+                .withPropertyValues("feilv.sms.binding-dev-bypass-enabled=${SMS_BINDING_DEV_BYPASS_ENABLED:false}")
+                .withUserConfiguration(DevelopmentPhoneBindingService.class)
+                .run(context -> {
+                    assertNull(context.getStartupFailure());
+                    var binding = context.getBean(DevelopmentPhoneBindingService.class);
+                    assertEquals(DevelopmentPhoneBindingService.BypassStatus.DEVELOPMENT_PROFILE_REQUIRED, binding.status());
+                    context.getEnvironment().setActiveProfiles("development");
+                    assertTrue(binding.enabled());
+                    context.getEnvironment().setActiveProfiles("docker", "development");
+                    assertFalse(binding.enabled());
+                    assertTrue(binding.modeMessage().contains("受保护"));
+                });
+    }
+
     @Test void developmentBindingUsesCurrentAccountAndReturnsMaskedProfileWithoutSms() {
         User user = new User(); user.setId(42L); user.setNickname("原昵称"); user.setAvatarUrl("/api/v1/avatars/a.png");
         when(users.findByIdForUpdate(42L)).thenReturn(Optional.of(user));

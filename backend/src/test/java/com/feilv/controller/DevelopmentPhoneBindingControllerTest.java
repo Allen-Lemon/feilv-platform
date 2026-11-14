@@ -33,6 +33,7 @@ class DevelopmentPhoneBindingControllerTest {
         mvc.perform(post("/api/v1/user/phone/development").contentType(MediaType.APPLICATION_JSON).content("{\"mobile\":\"13800138000\"}"))
                 .andExpect(status().isUnauthorized());
         mvc.perform(get("/api/v1/user/phone/options").header("Authorization", token)).andExpect(jsonPath("$.data.developmentBypass").value(true))
+                .andExpect(jsonPath("$.data.reason").value("ENABLED"))
                 .andExpect(header().string("Cache-Control", "no-store"));
         mvc.perform(post("/api/v1/user/phone/development").header("Authorization", token).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"mobile\":\"13800138000\",\"userId\":99}"))
@@ -41,8 +42,14 @@ class DevelopmentPhoneBindingControllerTest {
                         .content("{\"mobile\":\"13800138000\"}"))
                 .andExpect(jsonPath("$.code").value(0)).andExpect(jsonPath("$.data.userId").value(42))
                 .andExpect(jsonPath("$.data.mobile").value("138****8000")).andExpect(header().string("Cache-Control", "no-store"));
+        env.setActiveProfiles();
+        mvc.perform(get("/api/v1/user/phone/options").header("Authorization", token))
+                .andExpect(jsonPath("$.data.developmentBypass").value(false))
+                .andExpect(jsonPath("$.data.reason").value("DEVELOPMENT_PROFILE_REQUIRED"))
+                .andExpect(jsonPath("$.data.message").value(org.hamcrest.Matchers.containsString("SPRING_PROFILES_ACTIVE=local")));
         env.setActiveProfiles("local", "prod");
-        mvc.perform(get("/api/v1/user/phone/options").header("Authorization", token)).andExpect(jsonPath("$.data.developmentBypass").value(false));
+        mvc.perform(get("/api/v1/user/phone/options").header("Authorization", token)).andExpect(jsonPath("$.data.developmentBypass").value(false))
+                .andExpect(jsonPath("$.data.reason").value("PROTECTED_PROFILE"));
         mvc.perform(post("/api/v1/user/phone/development").header("Authorization", token).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"mobile\":\"13800138000\"}"))
                 .andExpect(jsonPath("$.code").value(403));

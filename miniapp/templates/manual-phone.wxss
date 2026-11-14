@@ -1,4 +1,8 @@
 .manual-phone-form { margin-top: 18rpx; }
+.manual-phone-mode { padding: 16rpx 18rpx; border-radius: 14rpx; background: #FFF5E8; color: #944025; font-size: 23rpx; line-height: 1.7; word-wrap: break-word; }
+.manual-phone-server { margin-top: 8rpx; font-size: 22rpx; word-break: break-all; }
+.profile-page .phone-mode-refresh, .login-page .phone-mode-refresh { width: auto; margin: 8rpx 0 12rpx; padding: 14rpx 0; background: transparent; color: #AA381B; font-size: 23rpx; }
+.profile-page .phone-mode-refresh[disabled], .login-page .phone-mode-refresh[disabled] { color: #667085; background: transparent; }
 .manual-phone-field { margin: 18rpx 0; }
 .manual-phone-label { display: block; margin-bottom: 10rpx; color: #344054; font-size: 25rpx; font-weight: 600; }
 .manual-phone-code-row { display: flex; align-items: center; }

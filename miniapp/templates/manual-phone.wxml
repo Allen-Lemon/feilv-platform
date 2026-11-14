@@ -1,5 +1,8 @@
 <template name="manualPhoneForm">
   <view class="manual-phone-form">
+    <view class="manual-phone-hint" wx:if="{{phoneOptionsLoading}}">正在读取后端绑定模式…</view>
+    <view wx:if="{{phoneOptionsError || phoneModeMessage}}" class="manual-phone-mode"><view>{{phoneOptionsError || phoneModeMessage}}</view><view class="manual-phone-server">当前服务：{{phoneBackend}}</view></view>
+    <button class="phone-mode-refresh" bindtap="loadPhoneOptions" disabled="{{manualDisabled}}">刷新绑定模式</button>
     <view class="manual-phone-field"><label class="manual-phone-label" for="binding-mobile">手动填写手机号</label><input id="binding-mobile" class="manual-phone-input" type="number" maxlength="11" value="{{manualMobile}}" data-field="manualMobile" bindinput="manualPhoneInput" disabled="{{manualDisabled}}" placeholder="请输入本人使用的11位手机号"/></view>
     <view class="manual-phone-field" wx:if="{{!phoneDevelopment}}"><label class="manual-phone-label" for="binding-code">短信验证码</label><view class="manual-phone-code-row"><input id="binding-code" class="manual-phone-input" type="number" maxlength="6" value="{{manualCode}}" data-field="manualCode" bindinput="manualPhoneInput" disabled="{{manualDisabled}}" placeholder="6位验证码"/><button class="manual-phone-send" bindtap="sendPhoneSms" loading="{{phoneSending}}" disabled="{{manualDisabled || phoneCooling > 0}}">{{phoneSmsLabel}}</button></view></view>
     <view wx:if="{{phoneSmsMock}}" class="manual-phone-demo">演示模式：未发送真实短信。测试验证码 {{phoneDemoCode}}，请手动填写；生产环境不可开启演示回传。</view>

@@ -36,7 +36,7 @@
       <button wx:elif="{{privacyReady}}" class="primary" open-type="getPhoneNumber" bindtap="preparePhone" bindgetphonenumber="bindPhone" loading="{{binding}}" disabled="{{loading || saving || uploading || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}">{{binding ? '正在验证并绑定…' : '授权并绑定微信手机号'}}</button>
       <view class="hint" wx:else>隐私状态尚未确认，可重试读取或返回浏览。</view>
       </block>
-      <template wx:if="{{manualPhone}}" is="manualPhoneForm" data="{{manualMobile, manualCode, phoneSending, phoneCooling, phoneSmsLabel, phoneSmsMock, phoneDemoCode, phoneDevelopment, binding, manualDisabled: loading || saving || uploading || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}"/>
+      <template wx:if="{{manualPhone}}" is="manualPhoneForm" data="{{manualMobile, manualCode, phoneSending, phoneCooling, phoneSmsLabel, phoneSmsMock, phoneDemoCode, phoneDevelopment, phoneOptionsLoading, phoneOptionsError, phoneModeMessage, phoneBackend, binding, manualDisabled: loading || saving || uploading || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}"/>
       <button class="phone-method-toggle" bindtap="togglePhoneMethod" disabled="{{loading || saving || uploading || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}">{{manualPhone ? '改用微信授权绑定' : '手动填写手机号并短信验证 →'}}</button>
     </block>
     <view class="hint">绑定信息不会自动填入订单联系人电话，也不会自动合并短信账号。若号码已用于其他账号，请按服务端提示处理。</view>

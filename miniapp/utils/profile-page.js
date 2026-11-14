@@ -1,6 +1,6 @@
 const session = require('./session')
 const { toast } = require('./page')
-const { avatarURL } = require('./request')
+const { avatarURL, baseURL } = require('./request')
 const nickname = session.validNickname
 function codePhoneSupported() {
   if (typeof wx.canIUse !== 'function' || !wx.canIUse('button.open-type.getPhoneNumber')) return false
@@ -17,7 +17,7 @@ module.exports = {
     mobile: '', mobileBound: false, error: '', fromLogin: false, phoneOnly: false, phoneError: '',
     manualPhone: false, manualMobile: '', manualCode: '', phoneSending: false, phoneCooling: 0,
     phoneSmsLabel: '获取验证码', phoneDemoCode: '', phoneSmsMock: false,
-    phoneDevelopment: false, phoneOptionsLoading: false,
+    phoneDevelopment: false, phoneOptionsLoading: false, phoneOptionsError: '', phoneModeMessage: '', phoneBackend: '',
     phoneSupported: false, privacyReady: false, privacyNeeded: false, privacyGateSupported: false,
     privacyTitle: '微信隐私保护指引'
   },
@@ -47,19 +47,23 @@ module.exports = {
     if (!this.current() || this._working || this.data.mobileBound) return
     this._phoneIntent = null
     const manualPhone = !this.data.manualPhone
-    this.safeSet({ manualPhone, phoneError: '', phoneDevelopment: false })
+    this.safeSet({ manualPhone, phoneError: '', phoneDevelopment: false, phoneOptionsError: '', phoneModeMessage: '' })
     if (manualPhone) return this.loadPhoneOptions()
   },
   loadPhoneOptions() {
     if (!this.current() || this._working || !this.data.manualPhone) return
+    this.safeSet({ phoneDevelopment: false, phoneOptionsError: '', phoneModeMessage: '', phoneBackend: baseURL() })
     return this.run('phoneOptionsLoading', async (api) => {
       const revision = this._profileRevision; const userId = this._profileUserId
       try {
         const options = await api.phoneBindingOptions()
-        if (this.current(revision, userId)) this.safeSet({ phoneDevelopment: !!options && options.developmentBypass === true })
+        if (!this.current(revision, userId)) return
+        if (!options || typeof options.developmentBypass !== 'boolean') throw new Error('绑定配置响应格式错误')
+        this.safeSet({ phoneDevelopment: options.developmentBypass,
+          phoneModeMessage: options.developmentBypass ? '' : typeof options.message === 'string' && options.message ? options.message : '当前后端未开启开发免验证码模式，请检查开关、开发profile并重启后端后刷新。' })
       } catch (e) {
-        if (this.current(revision, userId)) this.safeSet({ phoneDevelopment: false })
-        // 配置读取失败不放开跳过能力，旧版后端仍可保留既有短信表单。
+        if (this.current(revision, userId)) this.safeSet({ phoneDevelopment: false,
+          phoneOptionsError: e && (e.status === 404 || e.code === 404) ? '当前服务没有绑定配置接口，请更新后端；修改本地配置不会影响小程序正在连接的远程服务。' : '无法读取手机号绑定配置，请检查网络和当前服务地址后重试。' })
         if (e && e.status === 401) this.phoneFailure(e, revision, userId)
       }
     })
@@ -159,6 +163,7 @@ module.exports = {
       if (!this.applyProfile(value, revision, userId, preserveDraft)) return
       if (!wasLoaded && this._fromLogin && session.nicknameReady(value.nickname) && value.mobileBound === true) return this.leave()
       await this.readPrivacy(revision, userId)
+      if (this.data.manualPhone && this.current(revision, userId)) this.later(this.loadPhoneOptions, 0)
     } catch (e) { this.failure(e, revision, userId) }
   },
   input(e) { if (this.current() && !this._working) this.safeSet({ nickname: e.detail.value }) },

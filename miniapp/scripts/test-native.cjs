@@ -1504,6 +1504,29 @@ test('development phone: client sends phone only to dedicated authenticated endp
   const template = fs.readFileSync(path.join(native, 'templates/manual-phone.wxml'), 'utf8')
   assert.ok(template.includes('wx:if="{{!phoneDevelopment}}"')); assert.ok(template.includes('开发模式直接绑定')); assert.ok(template.includes('号码归属未经验证'))
 })
+test('development options: disabled mode displays backend reason and current service instead of silently requiring SMS', async () => {
+  for (const reason of ['DEVELOPMENT_PROFILE_REQUIRED', 'PROTECTED_PROFILE', 'DISABLED']) {
+    const env = environment()
+    const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneBindingOptions() { return { developmentBypass: false, reason, message: '后端模式提示-' + reason } } })
+    assert.equal(page.data.phoneDevelopment, false); assert.equal(page.data.phoneModeMessage, '后端模式提示-' + reason)
+    assert.equal(page.data.phoneBackend, 'https://xt.allms.cn'); assert.equal(page.data.phoneOptionsError, '')
+  }
+})
+test('development options: explicit refresh picks up changed server mode while retaining entered phone', async () => {
+  const env = environment(); let enabled = false
+  const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneBindingOptions() { return { developmentBypass: enabled } } })
+  manualFill(page); assert.equal(page.data.phoneDevelopment, false); enabled = true; await page.loadPhoneOptions()
+  assert.equal(page.data.phoneDevelopment, true); assert.equal(page.data.manualMobile, '13800138000'); assert.equal(page.data.phoneModeMessage, '')
+  enabled = false; await page.loadPhoneOptions(); assert.equal(page.data.phoneDevelopment, false); assert.ok(page.data.phoneModeMessage)
+})
+test('development options: failed or missing backend endpoint gives actionable error with bypass disabled', async () => {
+  const env = environment()
+  const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneBindingOptions() { throw Object.assign(new Error('not found'), { status: 404 }) } })
+  assert.equal(page.data.phoneDevelopment, false); assert.ok(page.data.phoneOptionsError.includes('更新后端'))
+  assert.equal(page.data.phoneOptionsLoading, false)
+  const template = fs.readFileSync(path.join(native, 'templates/manual-phone.wxml'), 'utf8')
+  assert.ok(template.includes('刷新绑定模式')); assert.ok(template.includes('当前服务：')); assert.ok(template.includes('phoneOptionsError || phoneModeMessage'))
+})
 ;(async () => {
   let failures = 0
   for (const { name, fn } of tests) {
