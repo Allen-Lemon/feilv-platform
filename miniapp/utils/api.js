@@ -10,6 +10,8 @@ function createApi(r) {
     updateProfile: nickname => r.put(root + '/user/profile', { nickname }),
     uploadAvatar: filePath => r.uploadAvatar(filePath),
     bindWechatPhone: code => r.post(root + '/user/wechat-phone', { code }),
+    phoneBindingOptions: () => r.get(root + '/user/phone/options'),
+    bindDevelopmentPhone: mobile => r.post(root + '/user/phone/development', { mobile }),
     phoneSmsCode: mobile => r.post(root + '/user/phone/sms-code', { mobile }),
     bindPhone: (mobile, code) => r.post(root + '/user/phone', { mobile, code }),
     addressList: () => r.get(root + '/user/address'),

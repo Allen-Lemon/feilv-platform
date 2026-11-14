@@ -1332,7 +1332,7 @@ async function readyManualPhone(env, api, route = 'pages/profile/profile') {
   env.authenticated()
   const page = env.page(route, api)
   page.onLoad({ from: 'my', mode: 'phone' }); await page.onShow()
-  page.togglePhoneMethod()
+  await page.togglePhoneMethod()
   return page
 }
 function manualFill(page, mobile = '13800138000', code = '') {
@@ -1393,7 +1393,7 @@ test('manual phone: changing phone clears old code and mock display; cooldown bl
 test('manual phone: switching method revokes pending WeChat phone intent but keeps manual form in page memory', async () => {
   const env = environment(); let binds = 0
   const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { binds++ } })
-  page.preparePhone(); page.togglePhoneMethod(); await page.bindPhone(phoneEvent('late-code')); assert.equal(binds, 0)
+  page.preparePhone(); await page.togglePhoneMethod(); await page.bindPhone(phoneEvent('late-code')); assert.equal(binds, 0)
   manualFill(page, '13800138000', '123456'); page.togglePhoneMethod(); assert.equal(page.data.manualPhone, false)
   page.togglePhoneMethod(); assert.equal(page.data.manualMobile, '13800138000'); assert.equal(page.data.manualCode, '123456')
 })
@@ -1464,8 +1464,10 @@ test('manual phone: HTTP 401 during inline send restores login instead of leavin
   const env = environment(); env.authenticated(); env.setPages([{ route: 'pages/login/login' }])
   const page = env.page('pages/login/login'); page.onLoad({}); const showing = page.onShow()
   env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await showing
-  page.togglePhoneMethod(); manualFill(page); const pending = page.sendPhoneSms()
-  env.calls.requests[1].success({ statusCode: 401, data: { code: 401 } }); await pending
+  const options = page.togglePhoneMethod()
+  env.calls.requests[1].success({ statusCode: 200, data: { code: 0, data: { developmentBypass: false } } }); await options
+  manualFill(page); const pending = page.sendPhoneSms()
+  env.calls.requests[2].success({ statusCode: 401, data: { code: 401 } }); await pending
   assert.equal(page.data.profileStage, false); assert.equal(page.data.manualMobile, ''); assert.equal(page.data.phoneSending, false)
   assert.equal(env.storage.has('feilv_token'), false)
 })

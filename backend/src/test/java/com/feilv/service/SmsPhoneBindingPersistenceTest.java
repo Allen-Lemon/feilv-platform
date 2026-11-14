@@ -99,9 +99,22 @@ class SmsPhoneBindingPersistenceTest {
 
     @Test
     void uniqueIndexRaceAcrossDifferentAccountsRollsBackLoserWithoutMerging() throws Exception {
-        assertEquals("OFF", environment.getProperty("logging.level.org.hibernate.engine.jdbc.spi.SqlExceptionHelper"));
-        assertFalse(org.slf4j.LoggerFactory.getLogger("org.hibernate.engine.jdbc.spi.SqlExceptionHelper").isErrorEnabled(),
-                "唯一约束错误不得通过Hibernate日志泄漏完整手机号");
+        assertTrue(org.slf4j.LoggerFactory.getLogger("org.hibernate.engine.jdbc.spi.SqlExceptionHelper").isErrorEnabled(),
+                "必须保留数据库错误日志用于排障");
+        var context = (ch.qos.logback.classic.LoggerContext) org.slf4j.LoggerFactory.getILoggerFactory();
+        var encoder = new ch.qos.logback.classic.encoder.PatternLayoutEncoder();
+        encoder.setContext(context);
+        encoder.setPattern(environment.getRequiredProperty("logging.pattern.console"));
+        encoder.start();
+        try {
+            var event = new ch.qos.logback.classic.spi.LoggingEvent();
+            event.setLevel(ch.qos.logback.classic.Level.ERROR); event.setLoggerName("org.hibernate.engine.jdbc.spi.SqlExceptionHelper");
+            event.setMessage("Unique constraint violation for 13800138103");
+            event.setThrowableProxy(new ch.qos.logback.classic.spi.ThrowableProxy(new RuntimeException("conflict for 13900139103")));
+            String output = new String(encoder.encode(event), java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(output.contains("Unique constraint violation")); assertTrue(output.contains("RuntimeException"));
+            assertTrue(output.contains("[PHONE_REDACTED]")); assertFalse(output.contains("13800138103")); assertFalse(output.contains("13900139103"));
+        } finally { encoder.stop(); }
         long first = create("sms-owner-a", "USER"), second = create("sms-owner-b", "RIDER");
         String mobile = "13800138103";
         String firstCode = binding.sendCode(first, mobile).demoCode();

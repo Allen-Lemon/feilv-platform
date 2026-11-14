@@ -24,6 +24,9 @@ spring:
       schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql,classpath:db/migrations/20261113_wechat_config.sql,classpath:db/migrations/20261114_user_profile.sql,classpath:db/migrations/20261115_address_region.sql
 
 feilv:
+  sms:
+    # 本地开发临时跳过短信；只操作开发数据库，不可用于真实用户。
+    binding-dev-bypass-enabled: ${SMS_BINDING_DEV_BYPASS_ENABLED:true}
   dispatch:
     radius-km: 5
     order-grab-timeout-min: 10

@@ -17,6 +17,7 @@ module.exports = {
     mobile: '', mobileBound: false, error: '', fromLogin: false, phoneOnly: false, phoneError: '',
     manualPhone: false, manualMobile: '', manualCode: '', phoneSending: false, phoneCooling: 0,
     phoneSmsLabel: '获取验证码', phoneDemoCode: '', phoneSmsMock: false,
+    phoneDevelopment: false, phoneOptionsLoading: false,
     phoneSupported: false, privacyReady: false, privacyNeeded: false, privacyGateSupported: false,
     privacyTitle: '微信隐私保护指引'
   },
@@ -45,7 +46,23 @@ module.exports = {
   togglePhoneMethod() {
     if (!this.current() || this._working || this.data.mobileBound) return
     this._phoneIntent = null
-    this.safeSet({ manualPhone: !this.data.manualPhone, phoneError: '' })
+    const manualPhone = !this.data.manualPhone
+    this.safeSet({ manualPhone, phoneError: '', phoneDevelopment: false })
+    if (manualPhone) return this.loadPhoneOptions()
+  },
+  loadPhoneOptions() {
+    if (!this.current() || this._working || !this.data.manualPhone) return
+    return this.run('phoneOptionsLoading', async (api) => {
+      const revision = this._profileRevision; const userId = this._profileUserId
+      try {
+        const options = await api.phoneBindingOptions()
+        if (this.current(revision, userId)) this.safeSet({ phoneDevelopment: !!options && options.developmentBypass === true })
+      } catch (e) {
+        if (this.current(revision, userId)) this.safeSet({ phoneDevelopment: false })
+        // 配置读取失败不放开跳过能力，旧版后端仍可保留既有短信表单。
+        if (e && e.status === 401) this.phoneFailure(e, revision, userId)
+      }
+    })
   },
   manualPhoneInput(e) {
     if (!this.current() || this._working || this.data.mobileBound) return
@@ -63,7 +80,7 @@ module.exports = {
     if (cooling) this.later(this.updatePhoneCooling, 1000)
   },
   sendPhoneSms() {
-    if (!this.current() || this._working || !this.data.loaded || this.data.mobileBound || !this.data.manualPhone || this.data.phoneCooling) return
+    if (!this.current() || this._working || !this.data.loaded || this.data.mobileBound || !this.data.manualPhone || this.data.phoneCooling || this.data.phoneDevelopment) return
     const mobile = this.data.manualMobile.trim()
     if (!/^1[3-9]\d{9}$/.test(mobile)) return toast('请输入正确的11位手机号')
     return this.run('phoneSending', async (api) => {
@@ -84,15 +101,17 @@ module.exports = {
   bindManualPhone() {
     if (!this.current() || this._working || !this.data.loaded || this.data.mobileBound || !this.data.manualPhone) return
     const mobile = this.data.manualMobile.trim(); const code = this.data.manualCode.trim()
-    if (!/^1[3-9]\d{9}$/.test(mobile) || !/^\d{6}$/.test(code)) return toast('请填写正确手机号和6位短信验证码')
-    if (mobile !== this._phoneSmsMobile) return toast('请先为当前手机号获取绑定验证码')
+    if (!/^1[3-9]\d{9}$/.test(mobile)) return toast('请输入正确的11位手机号')
+    if (!this.data.phoneDevelopment && !/^\d{6}$/.test(code)) return toast('请填写6位短信验证码')
+    if (!this.data.phoneDevelopment && mobile !== this._phoneSmsMobile) return toast('请先为当前手机号获取绑定验证码')
     return this.run('binding', async (api) => {
       const revision = this._profileRevision; const userId = this._profileUserId
       try {
-        const value = await api.bindPhone(mobile, code)
+        const development = this.data.phoneDevelopment
+        const value = development ? await api.bindDevelopmentPhone(mobile) : await api.bindPhone(mobile, code)
         if (!this.current(revision, userId)) return
         if (!value || value.mobileBound !== true) throw new Error('服务端尚未确认绑定成功，请重新读取资料后重试')
-        if (this.applyProfile(value, revision, userId, true)) toast('手机号已验证并绑定')
+        if (this.applyProfile(value, revision, userId, true)) toast(development ? '开发测试手机号已绑定（未验证归属）' : '手机号已验证并绑定')
       } catch (e) { this.phoneFailure(e, revision, userId) }
     })
   },

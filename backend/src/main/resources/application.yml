@@ -34,6 +34,8 @@ feilv:
   sms:
     # 仅本地联调显式开启；未接真实短信时生产保持 false，手动绑号返回业务503。
     binding-mock-enabled: ${SMS_BINDING_MOCK_ENABLED:false}
+    # 仅local/development且非prod/production/docker时可生效，默认拒绝免验证。
+    binding-dev-bypass-enabled: false
   wechat:
     app-id: ${WECHAT_APP_ID:}
     app-secret: ${WECHAT_APP_SECRET:}
@@ -51,5 +53,7 @@ feilv:
 logging:
   level:
     com.feilv: info
-    # 数据库唯一约束异常可能包含完整手机号；由业务层转换为脱敏409，不输出驱动原始错误。
-    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: "OFF"
+  # 保留数据库异常及堆栈，只对消息和堆栈内的大陆手机号遮蔽，不关闭日志类别。
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{36} : %replace(%msg%wEx){'(?<![0-9])1[3-9][0-9]{9}(?![0-9])','[PHONE_REDACTED]'}%n"
+    file: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{36} : %replace(%msg%wEx){'(?<![0-9])1[3-9][0-9]{9}(?![0-9])','[PHONE_REDACTED]'}%n"
