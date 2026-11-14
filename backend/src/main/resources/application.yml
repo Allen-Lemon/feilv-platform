@@ -51,3 +51,5 @@ feilv:
 logging:
   level:
     com.feilv: info
+    # 数据库唯一约束异常可能包含完整手机号；由业务层转换为脱敏409，不输出驱动原始错误。
+    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: "OFF"

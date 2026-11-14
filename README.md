@@ -81,7 +81,7 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 - 头像通过同域 `/api/v1/avatars/<UUID>.png` 公开展示，请勿上传敏感图片。微信后台除 request 合法域名外，还需配置同域 uploadFile/downloadFile 合法域名和隐私声明。项目Nginx上传上限已设为6MB；外层代理也应允许至少6MB。
 - 真实头像选择、昵称填写与手机号授权仍需真实AppID、微信能力资格及真机验证。现有短信登录为演示实现，生产上线前必须接入真实短信并关闭验证码回传，或停用短信登录；否则会削弱手机号账户的认证安全。
 
-#### 手动填写手机号 + 绑定短信验证码（后端接口）
+#### 手动填写手机号 + 绑定短信验证码
 
 两个接口均须 `Authorization: Bearer <平台JWT>`，仅允许正常状态的 USER/RIDER，始终绑定当前登录账户，不接受 `userId`、`role` 或其他额外字段。沿用统一响应 `{code,msg,data}`（业务异常通常 HTTP 200，以 `code` 判断）：
 
@@ -90,6 +90,7 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 - 绑定凭证与旧 `/api/v1/auth/sms-code` 登录凭证完全独立，绑定 userId + mobile + PHONE_BINDING 用途；有效期5分钟，用户和手机号两个维度各60秒冷却、每日最多10次（北京时间自然日），连续错误5次作废，验证成功一次消费。错误/过期返回 `4011`/`4010`，不是平台登录失效 `401`，前端勿因此清除平台会话。
 - 已绑定不同号码、号码属于其他账户均返回业务 `409`；同号也须重新验证后才幂等成功，不自动合并账户或换号。数据库行锁与既有微信绑定共用，唯一索引竞争回滚后返回 `409`。
 - 本地联调显式设置 `SMS_BINDING_MOCK_ENABLED=true` 后启动后端（例如 `SMS_BINDING_MOCK_ENABLED=true mvn -f backend/pom.xml spring-boot:run`）。此模式只调用现有 `MessageService` 日志模拟，并使用脱敏号码、不将验证码写入日志；验证码仅在 mock 响应 `demoCode` 中供本地填写。**生产必须保持关闭；开启 mock 不等于发送真实短信，接入真实网关前手动短信绑号不可用，请使用微信授权。**
+- 两个绑号接口设置 `Cache-Control: no-store`。默认关闭 `org.hibernate.engine.jdbc.spi.SqlExceptionHelper` 的原始驱动错误日志，避免手机号唯一约束冲突在业务层转换409前泄漏完整号码；此设置会同时抑制该日志类别的其他数据库错误，排障时应使用不含敏感值的监控，不要在生产直接恢复原始SQL错误输出。
 - 凭证与限流当前为单实例内存状态，重启失效；mock 仅用于本地联调。未来接真实短信及多实例部署时须迁移到共享存储、原子限流/消费并取消明文验证码回传。既有短信登录仍是历史 demo，本次不改变其行为，也不能把其登录验证码用于绑定。
 
 ### 5）后台微信登录/支付参数管理

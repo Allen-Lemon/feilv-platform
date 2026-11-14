@@ -1,0 +1,12 @@
+.manual-phone-form { margin-top: 18rpx; }
+.manual-phone-field { margin: 18rpx 0; }
+.manual-phone-label { display: block; margin-bottom: 10rpx; color: #344054; font-size: 25rpx; font-weight: 600; }
+.manual-phone-code-row { display: flex; align-items: center; }
+.manual-phone-code-row .manual-phone-input { flex: 1; width: 0; min-width: 0; margin-right: 14rpx; }
+.profile-page .manual-phone-send, .login-page .manual-phone-send { flex-shrink: 0; width: 210rpx; max-width: 45%; min-height: 44px; margin: 0; padding: 18rpx 12rpx; border: 1rpx solid #E4E7EC; border-radius: 16rpx; background: #FFF0E8; color: #AA381B; font-size: 24rpx; }
+.profile-page .manual-phone-submit, .login-page .manual-phone-submit { width: 100%; min-height: 44px; margin-top: 20rpx; padding: 22rpx; border-radius: 18rpx; background: #C94320; color: #FFFFFF; font-size: 27rpx; }
+.manual-phone-hint { margin-top: 14rpx; color: #667085; font-size: 23rpx; line-height: 1.75; }
+.manual-phone-demo { margin: 16rpx 0; padding: 16rpx 18rpx; border: 1rpx solid #F6DDC1; border-radius: 14rpx; background: #FFF5E8; color: #944025; font-size: 23rpx; line-height: 1.7; }
+.profile-page .phone-method-toggle, .login-page .phone-method-toggle { width: 100%; margin: 14rpx 0 0; padding: 16rpx 10rpx; background: transparent; color: #AA381B; font-size: 25rpx; }
+.profile-page .manual-phone-send[disabled], .login-page .manual-phone-send[disabled], .profile-page .manual-phone-submit[disabled], .login-page .manual-phone-submit[disabled], .profile-page .phone-method-toggle[disabled], .login-page .phone-method-toggle[disabled] { border-color: #EAECF0; background: #EAECF0; color: #667085; }
+@media (max-width: 350px) { .profile-page .manual-phone-send, .login-page .manual-phone-send { width: 184rpx; font-size: 22rpx; } }
