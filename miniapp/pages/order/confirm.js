@@ -1,7 +1,6 @@
-const api = require('../../utils/api')
 const session = require('../../utils/session')
 const draftState = require('../../utils/draft')
-const { definePage, modal, toast } = require('../../utils/page')
+const { definePage, toast } = require('../../utils/page')
 const { types } = require('../../utils/format')
 const paidStates = ['WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED']
 definePage({
@@ -35,8 +34,8 @@ definePage({
     return this.run('busy', async (api) => {
       if (!this.activeDraft()) throw new Error('账户或订单草稿已变化，请重新打开确认页')
       if (!await session.requireOrderProfile(api, () => !this._dead && this._visible && this.activeDraft())) return
-      const answer = await modal({ title: 'MOCK 模拟支付', content: '不拉起微信支付，不发生真实扣款。确认创建订单并调用后端模拟支付？' })
-      if (!answer.confirm || this._dead || !this.activeDraft()) return
+      // 此页已展示路线、报价及MOCK说明；明确点击发布即确认，无需再弹重复确认框。
+      if (this._dead || !this._visible || !this.activeDraft()) return
       let id = this.data.orderId
       const retrying = !!id
       if (!id) {

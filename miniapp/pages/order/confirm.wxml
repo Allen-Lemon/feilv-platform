@@ -1,128 +1,40 @@
 <view class="page confirm-page">
   <view class="empty" wx:if="{{invalid}}">
-    <view class="empty-mark">!</view>
-    <view class="empty-title">请重新填写订单</view>
-    <view>订单草稿不存在或账户已变化</view>
-    <button class="secondary" bindtap="back">返回</button>
+    <view class="empty-mark">!</view><view class="empty-title">请重新填写任务</view>
+    <view>任务草稿不存在、费用尚未计算或账户已变化</view>
+    <button class="secondary" bindtap="back">返回填写</button>
   </view>
-
   <block wx:else>
-    <view class="card confirm-header">
-      <view class="header-topline">
-        <text class="header-caption">最后核对</text>
-        <text class="service-type">{{typeText}}</text>
-      </view>
+    <view class="confirm-header">
+      <view class="header-topline"><text class="header-caption">核对后即可发布</text><text class="service-type">{{typeText}}</text></view>
       <view class="confirm-heading" wx:if="{{uncertain}}">创建结果待核实</view>
       <view class="confirm-heading" wx:elif="{{orderId}}">订单已创建</view>
-      <view class="confirm-heading" wx:else>确认跑腿订单</view>
-      <view class="header-description" wx:if="{{uncertain}}">
-        已暂停提交，请先前往订单列表核实。
-      </view>
-      <view class="header-description" wx:elif="{{orderId}}">
-        继续操作将复用已有订单，不会重复创建。
-      </view>
-      <view class="header-description" wx:else>
-        请核对取送地址、物品与预估费用。
-      </view>
-    </view>
-
-    <view class="mock-note confirm-mock">
-      <text class="mock-badge">MOCK</text>
-      <text class="mock-description">模拟支付，不是真实微信支付，不发生扣款。最终金额以服务端为准。</text>
+      <view class="confirm-heading" wx:else>确认你的任务</view>
+      <view class="header-description">{{uncertain ? '请先核实上一笔结果，不要重复提交。' : orderId ? '继续处理已有订单，不会重复创建。' : '核对地址、需求和费用，确认后发布。'}}</view>
     </view>
 
     <view class="card confirm-panel">
       <view class="panel-title">配送路线</view>
-      <view class="route-node route-origin">
-        <text class="route-marker">取</text>
-        <view class="route-content">
-          <view class="route-label">取件地址</view>
-          <view class="address-text">{{draft.fromAddress}}</view>
-          <view class="contact-line">
-            <text class="contact-name">{{draft.fromContact}}</text>
-            <text>{{draft.fromPhone}}</text>
-          </view>
-        </view>
+      <view class="route-node route-origin"><text class="route-marker">取</text><view class="route-content"><view class="address-text">{{draft.fromAddress}}</view><view class="contact-line"><text class="contact-name">{{draft.fromContact}}</text><text>{{draft.fromPhone}}</text></view></view></view>
+      <view class="route-node"><text class="route-marker destination-marker">送</text><view class="route-content"><view class="address-text">{{draft.toAddress}}</view><view class="contact-line"><text class="contact-name">{{draft.toContact}}</text><text>{{draft.toPhone}}</text></view></view></view>
+      <view class="task-summary">
+        <view class="summary-row"><text class="summary-label">需求</text><text class="summary-value">{{draft.goodsDesc}}</text></view>
+        <view class="summary-row"><text class="summary-label">距离 / 重量</text><text class="summary-value">{{draft.distanceM}}米 · {{draft.weightKg}}公斤</text></view>
+        <view class="summary-row" wx:if="{{draft.remark}}"><text class="summary-label">备注</text><text class="summary-value">{{draft.remark}}</text></view>
       </view>
-      <view class="route-node">
-        <text class="route-marker destination-marker">送</text>
-        <view class="route-content">
-          <view class="route-label">送达地址</view>
-          <view class="address-text">{{draft.toAddress}}</view>
-          <view class="contact-line">
-            <text class="contact-name">{{draft.toContact}}</text>
-            <text>{{draft.toPhone}}</text>
-          </view>
-        </view>
-      </view>
-    </view>
-
-    <view class="card confirm-panel">
-      <view class="panel-title">物品与需求</view>
-      <view class="summary-row">
-        <text class="summary-label">物品 / 事项</text>
-        <text class="summary-value">{{draft.goodsDesc}}</text>
-      </view>
-      <view class="summary-row">
-        <text class="summary-label">预估距离</text>
-        <text class="summary-value">{{draft.distanceM}} 米</text>
-      </view>
-      <view class="summary-row">
-        <text class="summary-label">物品重量</text>
-        <text class="summary-value">{{draft.weightKg}} 公斤</text>
-      </view>
-      <view class="summary-row remark-row">
-        <text class="summary-label">备注</text>
-        <text class="summary-value">{{draft.remark || '无'}}</text>
-      </view>
-    </view>
-
-    <view class="card confirm-panel">
-      <view class="panel-title">预估费用</view>
-      <view class="fee-row" wx:for="{{quote.items}}" wx:key="key">
-        <text class="fee-label">{{item.label}}</text>
-        <text class="fee-value">¥{{item.amountText}}</text>
-      </view>
-      <view class="confirm-total">
-        <text class="total-label">预估合计</text>
-        <text class="total-amount"><text class="amount-currency">¥</text>{{quote.totalText}}</text>
-      </view>
-      <view class="fee-note">距离为手工预估，最终金额以服务端为准。</view>
     </view>
 
     <view class="card confirm-panel submit-panel">
-      <view class="panel-title">确认与支付</view>
-      <view class="notice submission-notice" wx:if="{{orderId}}">
-        <view class="notice-title">订单已创建，请勿重复下单</view>
-        <view class="created-order-id">订单ID：{{orderId}}</view>
-        <view>重试仅对该订单进行 MOCK 模拟支付，不会重复创建。</view>
-      </view>
-      <view class="notice submission-notice" wx:if="{{uncertain}}">
-        <view class="notice-title">创建结果待核实，已阻止重复提交</view>
-        <view>请先在订单列表检查，再从已有订单继续操作。</view>
-      </view>
-      <view class="submit-explanation">
-        点击后将{{orderId ? '对已有订单重试' : '创建订单并调用后端'}} MOCK 模拟支付，不拉起微信支付，不发生真实扣款。
-      </view>
-      <view class="duplicate-warning">
-        网络超时可能表示创建结果未知。服务端未提供幂等键，请勿在核实前重新填写相同订单。
-      </view>
-      <button
-        class="primary submit-button"
-        loading="{{busy}}"
-        disabled="{{busy || uncertain}}"
-        bindtap="submit"
-      >
-        {{orderId ? '重试 MOCK 支付' : '创建并 MOCK 支付'}}
-      </button>
-      <view class="secondary-actions">
-        <button wx:if="{{orderId}}" class="outline-button" disabled="{{busy}}" bindtap="detail">
-          查看已创建订单
-        </button>
-        <button class="quiet-button" bindtap="orders" disabled="{{busy}}">
-          前往订单列表核实
-        </button>
-      </view>
+      <view class="panel-title">费用与发布</view>
+      <view class="fee-row" wx:for="{{quote.items}}" wx:key="key"><text class="fee-label">{{item.label}}</text><text class="fee-value">¥{{item.amountText}}</text></view>
+      <view class="confirm-total"><text class="total-label">预估合计</text><text class="total-amount"><text class="amount-currency">¥</text>{{quote.totalText}}</text></view>
+      <view class="fee-note">距离为手工预估，最终金额以服务端为准。</view>
+      <view class="mock-note confirm-mock"><text class="mock-badge">MOCK</text><text class="mock-description">点击发布将创建任务并模拟支付，不拉起微信支付，不发生真实扣款。</text></view>
+      <view class="notice submission-notice" wx:if="{{orderId}}"><view class="notice-title">订单已创建，请勿重复下单</view><view class="created-order-id">订单ID：{{orderId}}</view><view>重试仅对该订单进行 MOCK 模拟支付，不会重复创建。</view></view>
+      <view class="notice submission-notice" wx:if="{{uncertain}}"><view class="notice-title">创建结果待核实，已阻止重复提交</view><view>请先在订单列表检查，再从已有订单继续操作。</view></view>
+      <button class="primary submit-button" loading="{{busy}}" disabled="{{busy || uncertain}}" bindtap="submit">{{orderId ? '重试 MOCK 支付' : '确认发布 · MOCK 支付'}}</button>
+      <view class="secondary-actions" wx:if="{{orderId || uncertain}}"><button wx:if="{{orderId}}" class="outline-button" disabled="{{busy}}" bindtap="detail">查看已创建订单</button><button class="quiet-button" bindtap="orders" disabled="{{busy}}">前往订单列表核实</button></view>
+      <view class="duplicate-warning">网络超时先核实订单，请勿重复发布。服务端未提供幂等键。</view>
     </view>
   </block>
 </view>

@@ -18,8 +18,5 @@ definePage({
     if (!session.token()) { this._pendingType = type; session.login(); return }
     this._pendingType = null
     wx.navigateTo({ url: '/pages/order/create?type=' + type })
-  },
-  orders() { wx.switchTab({ url: '/pages/order/list' }) },
-  address() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/address/address' }) },
-  settings() { wx.navigateTo({ url: '/pages/settings/settings' }) }
+  }
 })

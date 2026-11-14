@@ -1,4 +1,3 @@
-const api = require('../../utils/api')
 const session = require('../../utils/session')
 const { definePage, toast } = require('../../utils/page')
 const fmt = require('../../utils/format')
@@ -6,15 +5,49 @@ const draftState = require('../../utils/draft')
 const addresses = require('../../utils/address')
 const initial = type => ({ orderType: type, fromContact: '', fromPhone: '', fromAddress: '', fromLng: null, fromLat: null, toContact: '', toPhone: '', toAddress: '', toLng: null, toLat: null, goodsDesc: '', remark: '' })
 definePage({
-  data: { form: initial('SEND'), typeText: '跑腿送', distanceKm: '', weightKg: '5', busy: false, quote: null,
+  data: { form: initial('SEND'), typeText: '跑腿送', distanceKm: '', weightKg: '1', busy: false, quote: null,
+    fromContactEditing: false, toContactEditing: false, moreVisible: false, restored: false,
+    goodsPlaceholder: '例如：文件一份、鲜花一束', goodsSuggestions: ['文件', '鲜花', '日用品'],
     addressOptions: [], addressLoading: false, addressError: '', fromAddressId: null, toAddressId: null, fromAddressIndex: 0, toAddressIndex: 0 },
   onLoad(q) {
     const type = fmt.types[q.type] ? q.type : 'SEND'
-    this.setData({ form: initial(type), typeText: fmt.types[type] })
+    this.setData({ form: initial(type), typeText: fmt.types[type],
+      goodsPlaceholder: type === 'BUY' ? '需要买什么、数量多少？' : type === 'ERRAND' ? '需要代办什么事？请简要说明' : '例如：文件一份、鲜花一束',
+      goodsSuggestions: type === 'BUY' ? ['日用品', '食品饮料', '文具'] : type === 'ERRAND' ? ['代取快递', '代排队', '代送资料'] : ['文件', '鲜花', '日用品'] })
     this._version = 0
+    this._defaultRevision = session.revision()
+    this.restoreDraft(type)
+  },
+  restoreDraft(type) {
+    const draft = wx.getStorageSync('native_draft')
+    const owner = wx.getStorageSync('feilv_user_id')
+    if (!session.token() || !draft || draft.owner !== owner || !draft.payload || draft.payload.orderType !== type) return
+    const form = initial(type)
+    for (const key of Object.keys(form)) if (draft.payload[key] !== undefined) form[key] = draft.payload[key]
+    if (!Number.isFinite(Number(draft.payload.distanceM)) || Number(draft.payload.distanceM) <= 0) return
+    this.safeSet({ form, distanceKm: String(Number(draft.payload.distanceM) / 1000), weightKg: String(draft.payload.weightKg || 1),
+      fromAddressId: draft.fromAddressId == null ? null : draft.fromAddressId, toAddressId: draft.toAddressId == null ? null : draft.toAddressId,
+      restored: true })
+  },
+  toggleContact(e) {
+    const side = e.currentTarget.dataset.side
+    if (this._working || !['from', 'to'].includes(side)) return
+    this.safeSet({ [side + 'ContactEditing']: !this.data[side + 'ContactEditing'] })
+  },
+  toggleMore() { if (!this._working) this.safeSet({ moreVisible: !this.data.moreVisible }) },
+  goodsChoice(e) {
+    const value = e.currentTarget.dataset.value
+    if (this._working || !this.data.goodsSuggestions.includes(value)) return
+    this.safeSet({ 'form.goodsDesc': value })
+    this.invalidate()
   },
   onShow() {
     if (!session.requireLogin()) return
+    if (this._defaultRevision !== session.revision()) {
+      this._defaultRevision = session.revision()
+      this._defaultApplied = false
+      this._version++
+    }
     if (this._working) { this._showAfterRun = true; return }
     return this.loadAddresses()
   },
@@ -52,6 +85,12 @@ definePage({
         }
         this.safeSet(patch)
         if (changed) this.invalidate()
+        // 仅首次空白取件地址使用默认地址，终点仍由用户明确选择，不覆盖已填草稿。
+        if (!this.data.form.fromAddress && this.data.fromAddressId == null && !this._defaultApplied) {
+          this._defaultApplied = true
+          const index = rows.findIndex(a => Number(a.isDefault) === 1)
+          if (index >= 0) { this.applyAddress('from', rows[index]); this.safeSet({ fromAddressIndex: index }) }
+        }
       } catch (e) {
         this.safeSet({ addressOptions: [], addressError: e.message || '地址读取失败，请重试' })
         throw e
@@ -73,7 +112,8 @@ definePage({
     this.safeSet({ [side + 'AddressId']: value.id == null ? null : value.id,
       ['form.' + side + 'Contact']: value.contact, ['form.' + side + 'Phone']: value.phone,
       ['form.' + side + 'Address']: addresses.orderAddress(value),
-      ['form.' + side + 'Lng']: value.lng == null ? null : value.lng, ['form.' + side + 'Lat']: value.lat == null ? null : value.lat })
+      ['form.' + side + 'Lng']: value.lng == null ? null : value.lng, ['form.' + side + 'Lat']: value.lat == null ? null : value.lat,
+      [side + 'ContactEditing']: !value.contact || !fmt.mobile(value.phone) })
     this.invalidate()
   },
   invalidate() { this._version++; this.setData({ quote: null }); this._quotedPayload = null },
@@ -83,9 +123,9 @@ definePage({
     this.safeSet({ ['form.' + field]: e.detail.value })
     this.invalidate()
   },
-  number(e) { const field = e.currentTarget.dataset.field; if (['distanceKm', 'weightKg'].includes(field)) { this.setData({ [field]: e.detail.value }); this.invalidate() } },
+  number(e) { const field = e.currentTarget.dataset.field; if (!this._working && ['distanceKm', 'weightKg'].includes(field)) { this.safeSet({ [field]: e.detail.value }); this.invalidate() } },
   address(e) {
-    if (this.data.busy) return
+    if (this._working) return
     const prefix = e.currentTarget.dataset.side
     if (!['from', 'to'].includes(prefix)) return
     const revision = session.revision()
@@ -112,30 +152,38 @@ definePage({
     data.weightKg = weight
     return data
   },
-  calculate() {
-    return this.run('busy', async (api) => {
-      const data = this.buildPayload()
-      const version = this._version
-      const quote = await api.quote({ orderType: data.orderType, distanceM: data.distanceM, weightKg: data.weightKg })
-      if (version !== this._version || this._dead) return
-      this._quotedPayload = data
-      this.safeSet({ quote: fmt.quote(quote) })
-    })
-  },
   next() {
-    if (!this._quotedPayload || !this.data.quote || this._working) return toast('请先计算最新费用')
-    if (!session.requireLogin()) return
-    this.buildPayload()
+    if (this._working || !session.requireLogin()) return
+    const data = this.buildPayload()
     const owner = wx.getStorageSync('feilv_user_id')
     const previous = wx.getStorageSync('native_draft')
-    const reuse = previous && previous.owner === owner && draftState.samePayload(previous.payload, this._quotedPayload)
-    // 门禁之前保存草稿，拒绝/网络失败/资料页返回均不能丢失填写内容。
-    const saved = { payload: this._quotedPayload, quote: this.data.quote, owner, savedAt: reuse ? previous.savedAt : draftState.timestamp() }
+    const pending = wx.getStorageSync('native_pending_order')
+    const reuse = previous && previous.owner === owner && draftState.samePayload(previous.payload, data)
+    // 尚有已创建/结果未知订单时，不覆盖它的草稿和标记，即使用户修改了表单。
+    if (!reuse && previous && previous.owner === owner && draftState.matches(pending, owner, previous.savedAt)) {
+      toast('上一笔任务尚待处理，请先核实后再发布新任务')
+      wx.navigateTo({ url: '/pages/order/confirm' })
+      return
+    }
+    const saved = { payload: data, quote: reuse ? previous.quote : null, owner, savedAt: reuse ? previous.savedAt : draftState.timestamp(),
+      fromAddressId: this.data.fromAddressId, toAddressId: this.data.toAddressId }
     wx.setStorageSync('native_draft', saved)
     return this.run('busy', async (api) => {
       const version = this._version
       const active = () => !this._dead && this._visible && version === this._version && draftState.current(owner, saved.savedAt)
-      if (await session.requireOrderProfile(api, active) && active()) wx.navigateTo({ url: '/pages/order/confirm' })
+      if (!await session.requireOrderProfile(api, active) || !active()) return
+      // 对已创建/待核实任务直接续办，不能重算后替换原订单信息。
+      if (reuse && draftState.matches(pending, owner, saved.savedAt)) {
+        wx.navigateTo({ url: '/pages/order/confirm' })
+        return
+      }
+      const result = await api.quote({ orderType: data.orderType, distanceM: data.distanceM, weightKg: data.weightKg })
+      if (!active()) return
+      if (!result || !Number.isSafeInteger(result.totalFen) || result.totalFen < 0 || !Array.isArray(result.items)) throw new Error('计价结果异常，请重试；未创建任务')
+      const quote = fmt.quote(result)
+      wx.setStorageSync('native_draft', Object.assign({}, saved, { quote }))
+      this.safeSet({ quote })
+      wx.navigateTo({ url: '/pages/order/confirm' })
     })
   }
 })

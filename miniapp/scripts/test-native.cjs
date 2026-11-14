@@ -345,7 +345,7 @@ test('quote: changes invalidate old quote and validate contacts/distance/weight'
 test('orders: returning to unchanged create form preserves known and uncertain pending order', async () => {
   for (const pendingFields of [{ id: 88 }, { uncertain: true }]) {
     const env = environment(); env.authenticated()
-    const create = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) } })
+    const create = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) }, async quote() { return { totalFen: 500, items: [] } } })
     create.onLoad({ type: 'SEND' }); create._visible = true
     Object.assign(create.data.form, { fromContact: '甲', fromPhone: '13800000000', fromAddress: 'A', toContact: '乙', toPhone: '13900000000', toAddress: 'B', goodsDesc: '文件' })
     create.data.distanceKm = '2'; create.data.weightKg = '5'
@@ -818,7 +818,7 @@ test('orders: create and confirm query real me, block incomplete profiles, retai
   for (const route of ['create', 'confirm']) {
     for (const incomplete of [{ mobileBound: false }, { mobileBound: true, nickname: '' }, { mobileBound: true, nickname: '微信用户' }]) {
       const env = environment(); env.authenticated(); let bound = false; let reads = 0; let creates = 0
-      const api = { async addressList() { return [] }, async me() { reads++; return profileValue(bound ? { mobileBound: true } : incomplete) }, async createOrder() { creates++; return { id: 88 } }, async payOrder() {} }
+      const api = { async addressList() { return [] }, async quote() { return { totalFen: 500, items: [] } }, async me() { reads++; return profileValue(bound ? { mobileBound: true } : incomplete) }, async createOrder() { creates++; return { id: 88 } }, async payOrder() {} }
       env.storage.set('native_draft', { owner: 1, savedAt: 12, payload: { orderType: 'SEND' }, quote: {} })
       const page = env.page('pages/order/' + route, api); page.onLoad({}); await page.onShow()
       if (route === 'create') fillCreate(page)
@@ -973,22 +973,19 @@ test('login layout: signed-in form has compact welcome, grouped fields and separ
 test('main pages: home and account quick links preserve native navigation and login gates', async () => {
   const env = environment()
   const home = env.page('pages/index/index', {}); home.onLoad({}); home.onShow()
-  home.orders(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/list')
-  home.settings(); assert.equal(env.calls.navigation.at(-1).url, '/pages/settings/settings')
-  home.address(); assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
+  assert.equal(home.orders, undefined); assert.equal(home.address, undefined); assert.equal(home.settings, undefined)
   home.create({ currentTarget: { dataset: { type: 'SEND' } } }); assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
   const my = env.page('pages/my/my', {}); my.onLoad({}); await my.onShow()
   my.orders(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/list')
   my.address(); assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
-  env.authenticated(); home.address(); assert.equal(env.calls.navigation.at(-1).url, '/pages/address/address')
-  my.address(); assert.equal(env.calls.navigation.at(-1).url, '/pages/address/address')
+  env.authenticated(); my.address(); assert.equal(env.calls.navigation.at(-1).url, '/pages/address/address')
   my.profile(); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=my')
 })
 test('main pages: layouts group identity, services and order routes without exposing extra profile fields', () => {
   const home = fs.readFileSync(path.join(native, 'pages/index/index.wxml'), 'utf8')
   const my = fs.readFileSync(path.join(native, 'pages/my/my.wxml'), 'utf8')
   const orders = fs.readFileSync(path.join(native, 'pages/order/list.wxml'), 'utf8')
-  assert.ok(home.includes('class="home-orders"')); assert.ok(home.includes('MOCK')); assert.ok(home.includes('绑定手机号'))
+  assert.equal(home.includes('class="home-orders"'), false); assert.ok(home.includes('MOCK')); assert.ok(home.includes('绑定手机号'))
   assert.ok(my.includes('class="account-identity"')); assert.ok(my.includes('class="account-info"'))
   assert.ok(my.includes('class="card menu-card account-menu"')); assert.ok(my.includes('bindtap="orders"'))
   assert.ok(my.includes('wx:if="{{isRider}}"')); assert.ok(my.includes('wx:if="{{loggedIn}}"'))
@@ -1036,9 +1033,9 @@ test('address region: default updates preserve structured fields and selection e
 })
 test('address dropdown: selector fills only chosen side, including full address and coordinates, invalidates quote', async () => {
   const env = environment(); env.authenticated()
-  const page = env.page('pages/order/create', { async addressList() { return [regionAddress()] } })
+  const page = env.page('pages/order/create', { async addressList() { return [regionAddress({ isDefault: 0 })] } })
   page.onLoad({}); await page.onShow()
-  assert.ok(page.data.addressOptions[0].label.includes('[默认]'))
+  assert.ok(page.data.addressOptions[0].label.includes('王先生'))
   page.data.quote = {}; page._quotedPayload = {}
   page.addressChange({ currentTarget: { dataset: { side: 'to' } }, detail: { value: '0' } })
   assert.equal(page.data.form.toContact, '王先生'); assert.equal(page.data.form.toPhone, '13800000000')
@@ -1134,7 +1131,7 @@ test('order UI: home service hierarchy and create form keep saved-address select
   const home = fs.readFileSync(path.join(native, 'pages/index/index.wxml'), 'utf8')
   const styles = fs.readFileSync(path.join(native, 'pages/index/index.wxss'), 'utf8')
   const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8')
-  assert.ok(home.includes('class="home-shortcuts"')); assert.ok(home.includes('bindtap="address"'))
+  assert.equal(home.includes('class="home-shortcuts"'), false); assert.equal(home.includes('bindtap="address"'), false)
   assert.ok(styles.includes('.home-page .service-SEND')); assert.ok(styles.includes('width: 48.5%'))
   assert.ok(create.indexOf('data-side="from" bindchange="addressChange"') < create.indexOf('id="from-contact"'))
   assert.ok(create.indexOf('data-side="to" bindchange="addressChange"') < create.indexOf('id="to-contact"'))
@@ -1208,6 +1205,128 @@ test('order details: review and complaint form selections still submit only curr
   page.complaintChange({ detail: { value: '1' } }); page.input(event('complaintDescription', '  包装破损  ')); await page.complaint()
   assert.equal(complaint.orderId, 33); assert.equal(complaint.type, 'DAMAGE'); assert.equal(complaint.description, '包装破损')
   assert.ok(page.data.ticket.includes('66')); assert.equal(page.data.complaintDescription, '')
+})
+test('simple publish: home keeps only distinct service entries and routes shared tools to existing navigation', () => {
+  const home = fs.readFileSync(path.join(native, 'pages/index/index.wxml'), 'utf8')
+  assert.equal(home.includes('home-shortcuts'), false)
+  for (const handler of ['orders', 'address', 'settings']) assert.equal(home.includes('bindtap="' + handler + '"'), false)
+  assert.equal((home.match(/bindtap="create"/g) || []).length, 1)
+  assert.ok(home.includes('wx:for="{{types}}"')); assert.ok(home.includes('发布送件任务')); assert.ok(home.includes('MOCK'))
+  const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8')
+  assert.equal(create.includes('bindtap="calculate"'), false); assert.equal((create.match(/bindtap="next"/g) || []).length, 1)
+  assert.ok(create.includes('wx:if="{{fromContactEditing}}"')); assert.ok(create.includes('wx:if="{{moreVisible}}"'))
+  assert.ok(create.includes('重量 {{weightKg}} 公斤')); assert.ok(create.includes('默认按1公斤计费'))
+})
+test('simple publish: one continue calculates quote then opens confirmation without creating or paying', async () => {
+  const env = environment(); env.authenticated(); const calls = []
+  const page = env.page('pages/order/create', {
+    async me() { calls.push('me'); return profileValue({ mobileBound: true }) },
+    async quote(data) { calls.push('quote'); assert.equal(data.distanceM, 2000); return { totalFen: 650, items: [{ feeType: 'BASE', label: '起步费', amountFen: 650 }] } },
+    async createOrder() { assert.fail('continue must not create order') }, async payOrder() { assert.fail('continue must not pay') }
+  })
+  page.onLoad({ type: 'SEND' }); page._visible = true; fillCreate(page); page.data.quote = null
+  await page.next()
+  assert.deepEqual(calls, ['me', 'quote']); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
+  const saved = env.storage.get('native_draft'); assert.equal(saved.quote.totalText, '6.50'); assert.equal(saved.payload.goodsDesc, '文件')
+})
+test('simple publish: quote failure retains inputs and draft; repeated taps cannot double quote or navigate', async () => {
+  const env = environment(); env.authenticated(); let respond; let attempts = 0
+  const page = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) }, quote() { attempts++; if (attempts === 1) throw new Error('计价失败'); return new Promise(r => { respond = r }) } })
+  page.onLoad({}); page._visible = true; fillCreate(page)
+  await page.next(); assert.equal(env.calls.navigation.length, 0); assert.equal(page.data.form.goodsDesc, '文件'); assert.ok(env.storage.get('native_draft'))
+  const pending = page.next(); await flush(); await page.next(); assert.equal(attempts, 2)
+  respond({ totalFen: 500, items: [] }); await pending; assert.equal(env.calls.navigation.length, 1); assert.equal(page.data.busy, false)
+})
+test('simple publish: late quote cannot replace another draft or navigate after account changes or hiding', async () => {
+  for (const change of ['draft', 'account', 'hide']) {
+    const env = environment(); env.authenticated(); let respond
+    const page = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) }, quote() { return new Promise(r => { respond = r }) } })
+    page.onLoad({}); page._visible = true; fillCreate(page); const pending = page.next(); await flush()
+    if (change === 'account') env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
+    if (change !== 'hide') env.storage.set('native_draft', { owner: change === 'account' ? 2 : 1, savedAt: 999, payload: { orderType: 'BUY' }, quote: { totalText: '99.00' } })
+    else page.onHide()
+    respond({ totalFen: 500, items: [] }); await pending; assert.equal(env.calls.navigation.length, 0)
+    if (change !== 'hide') assert.equal(env.storage.get('native_draft').savedAt, 999)
+  }
+})
+test('simple publish: default pickup fills once, leaves destination empty and does not overwrite restored addresses', async () => {
+  const env = environment(); env.authenticated()
+  const page = env.page('pages/order/create', { async addressList() { return [regionAddress()] } }); page.onLoad({}); await page.onShow()
+  assert.ok(page.data.form.fromAddress.includes('青龙街道')); assert.equal(page.data.form.toAddress, '')
+  assert.equal(page.data.fromContactEditing, false); assert.equal(page.data.moreVisible, false); assert.equal(page.data.weightKg, '1')
+  page.toggleContact({ currentTarget: { dataset: { side: 'from' } } }); assert.equal(page.data.fromContactEditing, true)
+  page.goodsChoice({ currentTarget: { dataset: { value: '文件' } } }); assert.equal(page.data.form.goodsDesc, '文件')
+  page.toggleMore(); assert.equal(page.data.moreVisible, true)
+  page.data.form.fromAddress = '明确选择的其他地址'; page.data.fromAddressId = null; await page.loadAddresses(); assert.equal(page.data.form.fromAddress, '明确选择的其他地址')
+})
+test('simple publish: draft restoration belongs to current account and matching service type only', () => {
+  const env = environment(); env.authenticated()
+  const original = { orderType: 'SEND', fromContact: '甲', fromPhone: '13800000000', fromAddress: '原取件地址', toContact: '乙', toPhone: '13900000000', toAddress: '原收件地址', goodsDesc: '文件', distanceM: 3500, weightKg: 8, remark: '轻拿轻放' }
+  env.storage.set('native_draft', { owner: 1, savedAt: 123, payload: original, fromAddressId: 11, toAddressId: 12 })
+  const page = env.page('pages/order/create', {}); page.onLoad({ type: 'SEND' })
+  assert.equal(page.data.restored, true); assert.equal(page.data.distanceKm, '3.5'); assert.equal(page.data.weightKg, '8')
+  assert.equal(page.data.form.remark, '轻拿轻放'); assert.equal(page.data.fromAddressId, 11)
+  const buy = env.page('pages/order/create', {}); buy.onLoad({ type: 'BUY' }); assert.equal(buy.data.restored, false)
+  env.storage.set('feilv_user_id', 2); const other = env.page('pages/order/create', {}); other.onLoad({ type: 'SEND' }); assert.equal(other.data.restored, false)
+})
+test('simple publish: edited task cannot overwrite known or uncertain earlier order protections', async () => {
+  for (const pendingFields of [{ id: 88 }, { uncertain: true }]) {
+    const env = environment(); env.authenticated(); const previous = { owner: 1, savedAt: 111, payload: { orderType: 'SEND' }, quote: { totalText: '5.00' } }
+    env.storage.set('native_draft', previous); env.storage.set('native_pending_order', Object.assign({ owner: 1, savedAt: 111 }, pendingFields))
+    const page = env.page('pages/order/create', { async me() { assert.fail('resolve pending first') } }); page.onLoad({}); page._visible = true; fillCreate(page)
+    await page.next(); assert.equal(env.storage.get('native_draft'), previous); assert.equal(env.storage.get('native_pending_order').savedAt, 111)
+    assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
+  }
+})
+test('simple publish: final confirmation directly submits once without redundant modal and preserves failure handling', async () => {
+  const env = environment({ showModal() { assert.fail('no redundant confirmation dialog') } }); env.authenticated(); let creates = 0; let pays = 0
+  env.storage.set('native_draft', { owner: 1, savedAt: 123, payload: { orderType: 'SEND' }, quote: { totalText: '5.00' } })
+  const page = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async createOrder() { creates++; return { id: 88 } }, async payOrder() { pays++ } })
+  page.onLoad({}); page.onShow(); const pending = page.submit(); await page.submit(); await pending
+  assert.equal(creates, 1); assert.equal(pays, 1); assert.equal(env.storage.has('native_draft'), false)
+  assert.equal(env.calls.navigation.at(-1).url, '/pages/order/detail?id=88')
+})
+test('simple publish: missing distance and malformed quotes never create a fabricated fee or confirmation', async () => {
+  for (const invalid of [null, {}, { totalFen: -1, items: [] }, { totalFen: 500 }, { totalFen: '500', items: [] }]) {
+    const env = environment(); env.authenticated(); let quotes = 0
+    const page = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) }, async quote() { quotes++; return invalid } })
+    page.onLoad({}); page._visible = true; fillCreate(page); page.data.distanceKm = ''
+    await page.next(); assert.equal(quotes, 0); assert.equal(env.calls.navigation.length, 0)
+    page.data.distanceKm = '2'; await page.next()
+    assert.equal(quotes, 1); assert.equal(env.calls.navigation.length, 0); assert.equal(env.storage.get('native_draft').quote, null)
+  }
+})
+test('simple publish: default pickup is account-specific after switching users in an existing page', async () => {
+  const env = environment(); env.authenticated(); let value = regionAddress()
+  const page = env.page('pages/order/create', { async addressList() { return [value] } }); page.onLoad({}); await page.onShow()
+  assert.equal(page.data.fromAddressId, 11)
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
+  value = regionAddress({ id: 22, detailAddress: 'B的新地址', contact: 'B' }); await page.onShow()
+  assert.equal(page.data.fromAddressId, 22); assert.ok(page.data.form.fromAddress.includes('B的新地址'))
+  assert.equal(page.data.form.fromContact, 'B'); assert.equal(page.data.form.toAddress, '')
+})
+test('orders layout: compact card keeps route first, footer actions and single secondary order number', () => {
+  const template = fs.readFileSync(path.join(native, 'pages/order/list.wxml'), 'utf8')
+  const css = fs.readFileSync(path.join(native, 'pages/order/list.wxss'), 'utf8')
+  assert.ok(template.indexOf('class="order-time"') < template.indexOf('class="order-route"'))
+  assert.ok(template.indexOf('class="order-route"') < template.indexOf('class="order-card-footer"'))
+  assert.ok(template.indexOf('class="order-card-footer"') < template.indexOf('class="order-number"'))
+  assert.equal((template.match(/class="order-number"/g) || []).length, 1)
+  assert.ok(template.includes('order-status status-{{item.status}}')); assert.ok(template.includes('bindtap="detail"'))
+  assert.ok(template.includes('去模拟支付')); assert.ok(template.includes('去确认收货'))
+  assert.ok(template.includes('wx:if="{{error}}"')); assert.ok(template.includes('bindtap="retry"'))
+  assert.ok(template.includes('wx:if="{{hasMore && list.length}}"')); assert.ok(css.includes('min-height: 44px'))
+  for (const state of ['WAIT_PAY', 'WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED', 'CANCELED']) assert.ok(css.includes('.order-status.status-' + state))
+})
+test('orders layout: card navigation opens details without mutating pending payment or receipt orders', async () => {
+  for (const status of ['WAIT_PAY', 'DELIVERED', 'FINISHED', 'CANCELED']) {
+    const env = environment(); env.authenticated()
+    const page = env.page('pages/order/list', { async myOrders() { return { content: [{ id: 7, orderNo: '订单号'.repeat(30), status, fromAddress: '很长的取件地址'.repeat(30), toAddress: '送达地址', realFeeFen: 2500 }], last: true } } })
+    page.onLoad({}); await page.onShow(); page.detail({ currentTarget: { dataset: { id: 7 } } })
+    assert.equal(env.calls.navigation.at(-1).url, '/pages/order/detail?id=7')
+    assert.equal(page.data.list[0].status, status); assert.equal(page.data.list[0].feeText, '25.00')
+    assert.equal(page.data.list[0].canPay, status === 'WAIT_PAY'); assert.equal(page.data.list[0].canConfirm, status === 'DELIVERED')
+  }
 })
 ;(async () => {
   let failures = 0

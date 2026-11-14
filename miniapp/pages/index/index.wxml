@@ -22,23 +22,12 @@
       <view class="service-copy">
         <view class="service-name">{{item.label}}</view>
         <view class="service-desc">{{item.code === 'SEND' ? '文件、鲜花、日常物品，同城送达' : item.code === 'BUY' ? '商超好物，帮你买回来' : '代取件、代排队，少跑一趟'}}</view>
-        <view class="service-cta">{{item.code === 'SEND' ? '填写取送信息' : '填写需求'}} <text>↗</text></view>
+        <view class="service-cta">{{item.code === 'SEND' ? '发布送件任务' : item.code === 'BUY' ? '发布代买任务' : '发布代办任务'}} <text>↗</text></view>
       </view>
     </button>
   </view>
 
-  <view class="home-shortcuts">
-    <button class="home-orders" bindtap="orders" hover-class="tap-feedback"><view class="quick-icon">单</view><view class="quick-copy"><view class="quick-title">我的订单</view><view class="quick-caption">跟进每一程</view></view><view class="chevron"></view></button>
-    <button class="home-address" bindtap="address" hover-class="tap-feedback"><view class="quick-icon address-icon">址</view><view class="quick-copy"><view class="quick-title">常用地址</view><view class="quick-caption">下次直接选</view></view><view class="chevron"></view></button>
-  </view>
-
   <view class="mock-note home-demo"><text class="mock-badge">MOCK</text><text class="grow">当前为演示模式，支付不扣款，请勿用于真实交易。</text></view>
-  <view class="card home-guide">
-    <view class="section-head"><view class="section-title">下单前，记得这些</view><text class="section-note">服务须知</text></view>
-    <view class="guide-row"><view class="guide-dot"></view><text class="grow">下单前须保存昵称并绑定手机号，取送地址从地址簿选择，联系人可按本单调整。</text></view>
-    <view class="guide-row"><view class="guide-dot"></view><text class="grow">代买金额须与骑手另行确认；距离手工预估，费用以服务端计价为准。</text></view>
-    <view class="guide-row"><view class="guide-dot"></view><text class="grow">请勿寄送处方药、烟草等禁限寄物品。</text></view>
-    <view class="home-links"><text class="connection-caption">开发联调</text><button class="text-button" bindtap="settings">服务连接设置 →</button></view>
-  </view>
+  <view class="home-service-note">发布前需保存昵称并绑定手机号；请勿寄送处方药、烟草等禁限寄物品。代买商品金额须另行确认。</view>
   <view class="home-footer">飞毛腿 · 认真对待每一份托付</view>
 </view>
