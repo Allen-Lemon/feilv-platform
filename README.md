@@ -71,7 +71,7 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 
 ### 4）用户资料、手机号绑定及后台用户管理
 
-- `wx.login` 仅用于身份登录，不会自动提供头像、昵称和手机号。资料页使用微信 `chooseAvatar`、`type="nickname"` 让用户主动选择/填写；手机号使用独立的 `getPhoneNumber` 动态凭证由后端换号，禁止客户端直接提交号码绑定。
+- `wx.login` 仅用于身份登录，不会自动提供头像、昵称和手机号。资料页使用微信 `chooseAvatar`、`type="nickname"` 让用户主动选择/填写；手机号可通过既有 `POST /api/v1/user/wechat-phone` 兑换 `getPhoneNumber` 动态凭证绑定，或使用下述独立短信验证接口，禁止绕过验证直接提交号码绑定。小程序登录资料区和“我的 → 手机号绑定”均可切换到手动填写＋短信验证；不能只填写号码直接绑定。
 - `GET /api/v1/user/me` 返回持久化 `avatarUrl` 和 `mobileBound`；昵称通过 `PUT /api/v1/user/profile` 保存，头像通过 `POST /api/v1/user/avatar` 的 `file` multipart 字段上传。仅支持不超过5MB的真实PNG/JPEG；后端校验像素、缩放并重新编码为PNG，不保存临时路径或原始文件名。
 - 用户可以登录浏览；**下单前必须绑定手机号**，创建订单接口也会核验，未绑定返回业务码 `4091`。拒绝手机号授权不会清除现有登录态。已绑定其他账号的手机号不自动合并，请走客服处理。
 - 后台新增 `/users` 用户管理，支持昵称模糊搜索、完整手机号精准查询、账户状态及绑定状态筛选、分页、资料详情、冻结/解冻。手机号仅脱敏展示，ADMIN账号不在C端管理范围；冻结会阻止已签发JWT继续调用业务接口。用户管理和订单查询分别进行实时菜单权限校验。
@@ -80,6 +80,17 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 - 头像保存在 `AVATAR_DIRECTORY`（默认相对启动目录的 `./data/avatars`）；两个Compose文件已配置持久卷 `avatar-data`，重建容器不会丢失文件。不要执行 `docker compose down -v` 删除头像数据。多实例部署需配置共享存储/对象存储；备份数据库时也需备份头像文件。
 - 头像通过同域 `/api/v1/avatars/<UUID>.png` 公开展示，请勿上传敏感图片。微信后台除 request 合法域名外，还需配置同域 uploadFile/downloadFile 合法域名和隐私声明。项目Nginx上传上限已设为6MB；外层代理也应允许至少6MB。
 - 真实头像选择、昵称填写与手机号授权仍需真实AppID、微信能力资格及真机验证。现有短信登录为演示实现，生产上线前必须接入真实短信并关闭验证码回传，或停用短信登录；否则会削弱手机号账户的认证安全。
+
+#### 手动填写手机号 + 绑定短信验证码（后端接口）
+
+两个接口均须 `Authorization: Bearer <平台JWT>`，仅允许正常状态的 USER/RIDER，始终绑定当前登录账户，不接受 `userId`、`role` 或其他额外字段。沿用统一响应 `{code,msg,data}`（业务异常通常 HTTP 200，以 `code` 判断）：
+
+- `POST /api/v1/user/phone/sms-code`，JSON `{"mobile":"13800138000"}`。显式开启本地 mock 后成功 `data` 为 `{"retryAfterSeconds":60,"mock":true,"demoCode":"六位验证码"}`；`demoCode` 契约为可空字符串，只有 mock 才能返回明文。**当前没有真实短信网关，默认 `feilv.sms.binding-mock-enabled: ${SMS_BINDING_MOCK_ENABLED:false}` 关闭，此时返回业务码 `503`，明确提示短信未配置、可使用微信授权，不生成验证码、不发送短信、不返回成功 data。**
+- `POST /api/v1/user/phone`，JSON `{"mobile":"13800138000","code":"六位验证码"}`。成功返回完整 `ProfileVO`：`userId`、`nickname`、`role`、脱敏 `mobile`（如 `138****8000`）、`mobileBound`、`avatarUrl`，立即持久化生效，可继续下单。手机号须为11位大陆手机号（1开头、第二位3至9），验证码须为6位数字。
+- 绑定凭证与旧 `/api/v1/auth/sms-code` 登录凭证完全独立，绑定 userId + mobile + PHONE_BINDING 用途；有效期5分钟，用户和手机号两个维度各60秒冷却、每日最多10次（北京时间自然日），连续错误5次作废，验证成功一次消费。错误/过期返回 `4011`/`4010`，不是平台登录失效 `401`，前端勿因此清除平台会话。
+- 已绑定不同号码、号码属于其他账户均返回业务 `409`；同号也须重新验证后才幂等成功，不自动合并账户或换号。数据库行锁与既有微信绑定共用，唯一索引竞争回滚后返回 `409`。
+- 本地联调显式设置 `SMS_BINDING_MOCK_ENABLED=true` 后启动后端（例如 `SMS_BINDING_MOCK_ENABLED=true mvn -f backend/pom.xml spring-boot:run`）。此模式只调用现有 `MessageService` 日志模拟，并使用脱敏号码、不将验证码写入日志；验证码仅在 mock 响应 `demoCode` 中供本地填写。**生产必须保持关闭；开启 mock 不等于发送真实短信，接入真实网关前手动短信绑号不可用，请使用微信授权。**
+- 凭证与限流当前为单实例内存状态，重启失效；mock 仅用于本地联调。未来接真实短信及多实例部署时须迁移到共享存储、原子限流/消费并取消明文验证码回传。既有短信登录仍是历史 demo，本次不改变其行为，也不能把其登录验证码用于绑定。
 
 ### 5）后台微信登录/支付参数管理
 

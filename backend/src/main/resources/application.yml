@@ -31,6 +31,9 @@ spring:
 feilv:
   avatar-directory: ${AVATAR_DIRECTORY:./data/avatars}
   config-encryption-key: ${CONFIG_ENCRYPTION_KEY:}
+  sms:
+    # 仅本地联调显式开启；未接真实短信时生产保持 false，手动绑号返回业务503。
+    binding-mock-enabled: ${SMS_BINDING_MOCK_ENABLED:false}
   wechat:
     app-id: ${WECHAT_APP_ID:}
     app-secret: ${WECHAT_APP_SECRET:}

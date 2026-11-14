@@ -1437,6 +1437,38 @@ test('manual phone: native reusable template exists in both binding entry points
     assert.ok(template.includes('is="manualPhoneForm"')); assert.ok(template.includes('bindtap="togglePhoneMethod"'))
   }
 })
+test('manual phone: non-mock send never displays server demo payload and invalid send responses fail closed', async () => {
+  for (const result of [
+    { retryAfterSeconds: 60, mock: false, demoCode: 'must-not-display' },
+    { retryAfterSeconds: 60, mock: true, demoCode: '' },
+    { retryAfterSeconds: -1, mock: false },
+    null
+  ]) {
+    const env = environment()
+    const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { return result } })
+    manualFill(page); await page.sendPhoneSms(); assert.equal(page.data.phoneDemoCode, '')
+    if (result && result.mock === false && result.retryAfterSeconds === 60) {
+      assert.equal(page.data.phoneCooling, 60); assert.ok(env.calls.toast.includes('验证码已发送，请查看短信'))
+    } else { assert.ok(page.data.phoneError); assert.equal(page.data.phoneCooling, 0) }
+  }
+})
+test('manual phone: code expiry is not platform session expiry; switched mode retains WeChat authorization support', async () => {
+  const env = environment()
+  const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { return { retryAfterSeconds: 60, mock: true, demoCode: '123456' } }, async bindPhone() { throw Object.assign(new Error('验证码已过期，请重新获取'), { code: 4010 }) }, async bindWechatPhone() { return profileValue({ mobileBound: true }) } })
+  manualFill(page); await page.sendPhoneSms(); page.manualPhoneInput(event('manualCode', '123456')); await page.bindManualPhone()
+  assert.equal(page.data.mobileBound, false); assert.equal(env.storage.get('feilv_token'), 'token-1')
+  page.togglePhoneMethod(); page.preparePhone(); await page.bindPhone(phoneEvent('fresh-wechat-code'))
+  assert.equal(page.data.mobileBound, true); assert.equal(page.data.manualMobile, '')
+})
+test('manual phone: HTTP 401 during inline send restores login instead of leaving stale phone credentials', async () => {
+  const env = environment(); env.authenticated(); env.setPages([{ route: 'pages/login/login' }])
+  const page = env.page('pages/login/login'); page.onLoad({}); const showing = page.onShow()
+  env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await showing
+  page.togglePhoneMethod(); manualFill(page); const pending = page.sendPhoneSms()
+  env.calls.requests[1].success({ statusCode: 401, data: { code: 401 } }); await pending
+  assert.equal(page.data.profileStage, false); assert.equal(page.data.manualMobile, ''); assert.equal(page.data.phoneSending, false)
+  assert.equal(env.storage.has('feilv_token'), false)
+})
 ;(async () => {
   let failures = 0
   for (const { name, fn } of tests) {
