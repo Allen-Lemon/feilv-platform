@@ -1,55 +1,236 @@
+/* 登录页局部样式：暖白与橙色承载品牌，绿色仅用于微信入口。 */
+page {
+  background: #FAF7F2;
+  color: #302A25;
+}
+
 .login-page {
-  padding-top: 36rpx;
+  width: 100%;
+  max-width: 960rpx;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 28rpx 36rpx 48rpx;
+  padding-bottom: calc(48rpx + constant(safe-area-inset-bottom));
+  padding-bottom: calc(48rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  background: linear-gradient(180deg, #FFF4E8 0%, #FAF7F2 420rpx);
+  color: #302A25;
 }
 
-.login-intro {
-  margin: 0 12rpx 36rpx;
-}
-
-.login-mark {
+/* 覆盖 app.wxss 与原生 button 的默认尺寸、间距及主题色。 */
+.login-page button {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 104rpx;
-  height: 104rpx;
-  margin-bottom: 30rpx;
-  border-radius: 32rpx;
-  background: #C94320;
-  color: #FFFFFF;
-  font-size: 56rpx;
-  font-weight: 700;
-  box-shadow: 12rpx 12rpx 0 #FFF0E8;
+  width: 100%;
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 22rpx 28rpx;
+  border: 0;
+  border-radius: 20rpx;
+  background: #FFF0E3;
+  color: #A3431F;
+  font-size: 28rpx;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: normal;
+  box-shadow: none;
+  box-sizing: border-box;
 }
 
-.login-card {
-  padding-top: 32rpx;
+.login-page button::after {
+  border: 0;
 }
 
-.legal-links {
+.login-page .button-hover {
+  opacity: 0.82;
+}
+
+.login-header,
+.brand-lockup {
   display: flex;
-  margin: -4rpx 0 12rpx 54rpx;
+  align-items: center;
 }
 
-.legal-links .link {
-  margin-right: 26rpx;
+.login-header {
+  justify-content: space-between;
 }
 
-/* 微信登录使用原生 button + wx.login，绿色仅用于平台身份入口。 */
-.wechat-button {
-  background: #087F40;
+.brand-lockup {
+  flex: 1;
+  min-width: 0;
+  margin-right: 16rpx;
+}
+
+.brand-logo {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 80rpx;
+  height: 80rpx;
+  margin-right: 18rpx;
+  border-radius: 25rpx;
+  background: #D85A2C;
   color: #FFFFFF;
+  font-size: 46rpx;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 8rpx 20rpx rgba(180, 75, 34, 0.12);
 }
 
-.wechat-button[disabled] {
-  background: #EAECF0;
-  color: #667085;
+.brand-name,
+.brand-caption {
+  display: block;
+}
+
+.brand-name {
+  color: #352C25;
+  font-size: 30rpx;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.brand-caption {
+  margin-top: 4rpx;
+  color: #85756A;
+  font-size: 21rpx;
+  line-height: 1.5;
+}
+
+.login-page .browse-button {
+  flex-shrink: 0;
+  width: auto;
+  padding: 14rpx 18rpx;
+  border: 1rpx solid #E9DCCF;
+  border-radius: 999rpx;
+  background: #FFFCF8;
+  color: #746153;
+  font-size: 24rpx;
+  font-weight: 500;
+}
+
+.login-intro {
+  margin: 64rpx 4rpx 36rpx;
+}
+
+.intro-kicker {
+  display: block;
+  margin-bottom: 16rpx;
+  color: #B84A24;
+  font-size: 23rpx;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 2rpx;
+}
+
+.login-page .intro-title,
+.login-page .title {
+  display: block;
+  margin: 0;
+  color: #302A25;
+  font-size: 48rpx;
+  font-weight: 700;
+  line-height: 1.35;
+  word-wrap: break-word;
+  white-space: pre-line;
+}
+
+.intro-description {
+  display: block;
+  margin-top: 18rpx;
+  color: #7A6D62;
+  font-size: 27rpx;
+  line-height: 1.85;
+  word-wrap: break-word;
+}
+
+.login-page .card,
+.login-page .login-card,
+.login-page .sms-card,
+.login-page .inline-profile {
+  margin: 0 0 24rpx;
+  padding: 32rpx;
+  border: 1rpx solid #EDE4DA;
+  border-radius: 30rpx;
+  background: #FFFFFF;
+  box-shadow: 0 12rpx 36rpx rgba(83, 56, 31, 0.045);
+}
+
+.card-heading,
+.profile-heading {
+  display: block;
+  margin: 0;
+  color: #302A25;
+  font-size: 32rpx;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.card-description,
+.profile-caption {
+  display: block;
+  margin-top: 12rpx;
+  color: #7A6D62;
+  font-size: 25rpx;
+  line-height: 1.8;
+  word-wrap: break-word;
+}
+
+.identity-preview {
+  display: flex;
+  align-items: center;
+  margin: 28rpx 0;
+  padding: 20rpx;
+  border: 1rpx solid #F0E8DE;
+  border-radius: 20rpx;
+  background: #FCF9F5;
+}
+
+.preview-avatar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 76rpx;
+  height: 76rpx;
+  margin-right: 20rpx;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #F8E5D6;
+  color: #AC512D;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.preview-caption {
+  flex: 1;
+  min-width: 0;
+  color: #7A6D62;
+  font-size: 24rpx;
+  line-height: 1.7;
+  word-wrap: break-word;
+}
+
+.login-page .wechat-button {
+  min-height: 100rpx;
+  margin-top: 28rpx;
+  padding: 24rpx;
+  border-radius: 20rpx;
+  background: #148348;
+  color: #FFFFFF;
+  font-size: 30rpx;
+  box-shadow: 0 8rpx 20rpx rgba(20, 131, 72, 0.12);
 }
 
 .wechat-symbol {
   position: relative;
+  display: inline-block;
+  flex-shrink: 0;
   width: 48rpx;
-  height: 38rpx;
-  margin-right: 18rpx;
+  height: 40rpx;
+  margin-right: 16rpx;
 }
 
 .wechat-bubble {
@@ -57,37 +238,537 @@
   top: 0;
   left: 0;
   width: 32rpx;
-  height: 26rpx;
-  border: 2rpx solid #FFFFFF;
+  height: 27rpx;
+  border: 2rpx solid currentColor;
   border-radius: 50%;
+  box-sizing: border-box;
 }
 
 .bubble-small {
-  top: 13rpx;
+  top: 14rpx;
   left: 19rpx;
   width: 28rpx;
-  height: 23rpx;
-  background: #087F40;
+  height: 24rpx;
+  background: #148348;
 }
 
-.sms-toggle {
-  margin: 16rpx auto -8rpx;
+.login-page .consent-label {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  margin-top: 20rpx;
+  padding: 10rpx 0;
+  color: #74685E;
+  font-size: 24rpx;
+  line-height: 1.75;
 }
 
-.sms-row .small {
-  max-width: 240rpx;
+.login-page .consent-label checkbox {
+  flex-shrink: 0;
+  margin-right: 12rpx;
+}
+
+.legal-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 4rpx;
+}
+
+.login-page .legal-link,
+.login-page .legal-links .link,
+.login-page .privacy-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0 16rpx 0 0;
+  padding: 8rpx 4rpx;
+  border-radius: 8rpx;
+  background: transparent;
+  color: #AD4723;
+  font-size: 24rpx;
+  font-weight: 500;
+  line-height: 1.6;
+  vertical-align: middle;
+}
+
+.login-page button.privacy-link {
+  width: auto;
+}
+
+.login-page .sms-toggle {
+  width: 100%;
+  margin: 12rpx 0 -8rpx;
+  padding: 18rpx 12rpx;
+  background: transparent;
+  color: #7A6D62;
+  font-size: 25rpx;
+  font-weight: 400;
+}
+
+.login-page input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  height: 100rpx;
+  margin: 0;
+  padding: 0 24rpx;
+  border: 1rpx solid #E8DFD5;
+  border-radius: 18rpx;
+  background: #FCFAF7;
+  color: #302A25;
+  font-size: 28rpx;
+  line-height: normal;
+  box-sizing: border-box;
+}
+
+.login-page .input-placeholder {
+  color: #94867A;
+  font-size: 26rpx;
+}
+
+.sms-row {
+  display: flex;
+  align-items: center;
+}
+
+.login-page .sms-row input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  margin-right: 16rpx;
+}
+
+.login-page .sms-row button {
+  flex-shrink: 0;
+  width: 206rpx;
+  max-width: 44%;
+  min-height: 44px;
+  height: 100rpx;
+  padding: 12rpx;
+  border: 1rpx solid #F2DCC8;
+  border-radius: 18rpx;
+  background: #FFF1E4;
+  color: #A3431F;
   font-size: 24rpx;
 }
 
-.login-footnote {
-  padding: 0 16rpx;
-  color: #667085;
-  font-size: 24rpx;
-  line-height: 1.85;
+/* 已登录状态不再复用大幅欢迎语，首屏优先展示资料表单。 */
+.login-page-profile {
+  background: linear-gradient(180deg, #FFF4E8 0%, #FAF7F2 300rpx);
 }
 
-.footnote-title {
-  margin-bottom: 8rpx;
-  color: #202939;
+.profile-welcome {
+  margin: 36rpx 4rpx 24rpx;
+}
+
+.profile-login-state {
+  display: flex;
+  align-items: center;
+  color: #27734B;
+  font-size: 23rpx;
+  line-height: 1.5;
+}
+
+.login-state-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30rpx;
+  height: 30rpx;
+  margin-right: 10rpx;
+  border-radius: 50%;
+  background: #E4F1E9;
+  font-size: 21rpx;
+}
+
+.profile-welcome-title {
+  margin-top: 12rpx;
+  color: #302A25;
+  font-size: 40rpx;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.profile-welcome-description {
+  margin-top: 8rpx;
+  color: #74685E;
+  font-size: 25rpx;
+  line-height: 1.7;
+}
+
+.login-page .inline-profile {
+  margin-top: 0;
+}
+
+.profile-section-heading,
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.profile-optional-note {
+  color: #7A6D62;
+  font-size: 22rpx;
+}
+
+.inline-profile .profile-caption {
+  margin-top: 4rpx;
+  font-size: 24rpx;
+}
+
+.inline-profile .identity-preview {
+  margin: 24rpx 0;
+  padding: 24rpx 18rpx;
+  background: #FCF9F5;
+}
+
+.avatar-choice-title {
+  color: #57483C;
+  font-size: 26rpx;
   font-weight: 600;
+}
+
+.field-help {
+  margin-top: 8rpx;
+  color: #7A6D62;
+  font-size: 23rpx;
+  font-weight: 400;
+  line-height: 1.65;
+  word-wrap: break-word;
+}
+
+.login-page .avatar-revert {
+  justify-content: flex-start;
+  width: auto;
+  margin-top: 4rpx;
+  padding: 8rpx 0;
+  background: transparent;
+  color: #A3431F;
+  font-size: 24rpx;
+  font-weight: 500;
+}
+
+.field-label-row {
+  margin-bottom: 12rpx;
+}
+
+.field-label-row .profile-label {
+  margin: 0 12rpx 0 0;
+}
+
+.field-required {
+  color: #9B512D;
+  font-size: 22rpx;
+  line-height: 1.7;
+}
+
+.field-verified {
+  color: #27734B;
+}
+
+.phone-field {
+  padding-top: 26rpx;
+  border-top: 1rpx solid #F0E8DE;
+}
+
+.login-page .phone-field .secondary {
+  border: 1rpx solid #F0D8C6;
+  background: #FFF3E9;
+  color: #A3431F;
+}
+
+.phone-bound-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 48rpx;
+  height: 48rpx;
+  margin-right: 18rpx;
+  border-radius: 50%;
+  background: #DCEEE2;
+  color: #27734B;
+  font-size: 28rpx;
+}
+
+.bound-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.bound-number {
+  color: #27553C;
+  font-size: 30rpx;
+  font-weight: 600;
+  letter-spacing: 1rpx;
+  overflow-wrap: break-word;
+}
+
+.save-caption {
+  margin-bottom: 14rpx;
+  color: #7A6D62;
+  font-size: 23rpx;
+  text-align: center;
+}
+
+.profile-privacy-note {
+  padding-top: 18rpx;
+  border-top: 1rpx solid #F0E8DE;
+  color: #7A6D62;
+  font-size: 22rpx;
+  line-height: 1.75;
+  text-align: left;
+}
+
+.login-page .profile-avatar-button {
+  position: relative;
+  display: flex;
+  width: 140rpx;
+  height: 140rpx;
+  margin: 32rpx auto 42rpx;
+  padding: 0;
+  overflow: visible;
+  border: 6rpx solid #FFF4E9;
+  border-radius: 50%;
+  background: #FAE7D7;
+  color: #AC512D;
+}
+
+.identity-preview .profile-avatar-button {
+  flex-shrink: 0;
+  margin: 0 24rpx 12rpx 0;
+}
+
+.profile-avatar-image,
+.avatar-placeholder {
+  display: block;
+  width: 128rpx;
+  height: 128rpx;
+  border-radius: 50%;
+}
+
+.avatar-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #FAE7D7;
+  color: #AC512D;
+  font-size: 36rpx;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.avatar-edit-label {
+  position: absolute;
+  right: -24rpx;
+  bottom: -12rpx;
+  padding: 6rpx 14rpx;
+  border: 3rpx solid #FFFFFF;
+  border-radius: 999rpx;
+  background: #FFF0E3;
+  color: #A3431F;
+  font-size: 20rpx;
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.profile-field {
+  margin-top: 26rpx;
+}
+
+.profile-label {
+  display: block;
+  margin-bottom: 12rpx;
+  color: #57483C;
+  font-size: 26rpx;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.login-page .profile-input {
+  background: #FCFAF7;
+  color: #302A25;
+}
+
+.profile-save-actions {
+  display: flex;
+  flex-direction: column;
+  margin-top: 32rpx;
+}
+
+.login-page .primary,
+.login-page .profile-submit {
+  min-height: 100rpx;
+  margin-top: 24rpx;
+  background: #CC5126;
+  color: #FFFFFF;
+  box-shadow: 0 8rpx 18rpx rgba(180, 75, 34, 0.12);
+}
+
+.login-page .profile-save-actions .profile-submit {
+  width: 100%;
+  margin: 0;
+}
+
+.login-page .profile-skip {
+  width: 100%;
+  margin: 10rpx 0 0;
+  padding: 18rpx 12rpx;
+  background: transparent;
+  color: #7A6D62;
+  font-size: 25rpx;
+  font-weight: 400;
+}
+
+.bound-state {
+  display: flex;
+  align-items: center;
+  margin-top: 12rpx;
+  padding: 22rpx;
+  border: 1rpx solid #DCEBDF;
+  border-radius: 18rpx;
+  background: #F1F8F3;
+  color: #27734B;
+  font-size: 24rpx;
+  line-height: 1.7;
+  word-wrap: break-word;
+}
+
+.bound-state .field-help {
+  margin-top: 4rpx;
+  color: #53735D;
+}
+
+.login-page .inline-notice {
+  margin: 24rpx 0 0;
+  padding: 18rpx 20rpx;
+  border: 1rpx solid #F0DECB;
+  border-radius: 16rpx;
+  background: #FFF7ED;
+  color: #8B5937;
+  font-size: 24rpx;
+  line-height: 1.8;
+  word-wrap: break-word;
+}
+
+.login-page .loading-note,
+.login-page .error-note {
+  display: block;
+  margin: 16rpx 0 0;
+  padding: 14rpx 16rpx;
+  font-size: 24rpx;
+  line-height: 1.75;
+  text-align: left;
+  word-wrap: break-word;
+}
+
+.login-page .loading-note {
+  color: #7A6D62;
+}
+
+.login-page .error-note {
+  border-radius: 14rpx;
+  background: #FFF0EB;
+  color: #AE3824;
+}
+
+.login-footnote,
+.profile-footnote {
+  display: block;
+  margin: 24rpx 0 0;
+  padding: 0 12rpx;
+  color: #87786A;
+  font-size: 23rpx;
+  line-height: 1.85;
+  word-wrap: break-word;
+}
+
+.profile-footnote {
+  text-align: center;
+}
+
+/* 禁用态放在按钮变体之后，避免被全局 primary / secondary 覆盖。 */
+.login-page button[disabled],
+.login-page .wechat-button[disabled],
+.login-page .profile-submit[disabled],
+.login-page .phone-field button[disabled],
+.login-page .sms-row button[disabled] {
+  border-color: #E8E6DF;
+  background: #ECEAE4;
+  color: #918B81;
+  opacity: 1;
+  box-shadow: none;
+}
+
+.login-page .wechat-button[disabled] .bubble-small {
+  background: #ECEAE4;
+}
+
+.login-page input[disabled] {
+  border-color: #EAE5DE;
+  background: #F2EFEA;
+  color: #82786E;
+}
+
+@media (max-width: 350px) {
+  .login-page {
+    padding-right: 24rpx;
+    padding-left: 24rpx;
+  }
+
+  .brand-logo {
+    width: 72rpx;
+    height: 72rpx;
+    margin-right: 12rpx;
+    font-size: 42rpx;
+  }
+
+  .brand-name {
+    font-size: 28rpx;
+  }
+
+  .brand-caption {
+    font-size: 20rpx;
+  }
+
+  .login-page .browse-button {
+    padding-right: 14rpx;
+    padding-left: 14rpx;
+    font-size: 23rpx;
+  }
+
+  .login-intro {
+    margin-top: 48rpx;
+    margin-bottom: 28rpx;
+  }
+
+  .login-page .intro-title,
+  .login-page .title {
+    font-size: 42rpx;
+  }
+
+  .login-page .card,
+  .login-page .login-card,
+  .login-page .sms-card,
+  .login-page .inline-profile {
+    padding: 26rpx;
+    border-radius: 26rpx;
+  }
+
+  .login-page .sms-row input {
+    margin-right: 12rpx;
+    padding-right: 16rpx;
+    padding-left: 16rpx;
+  }
+
+  .login-page .sms-row button {
+    width: 190rpx;
+    font-size: 23rpx;
+  }
 }

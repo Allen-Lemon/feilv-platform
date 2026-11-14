@@ -89,6 +89,10 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 
 默认/local/docker启动新增表 `t_wechat_config` 及“微信配置”菜单，默认授权SUPER_ADMIN；其他管理员需明确菜单授权。账号角色授权接口仅超级管理员可操作。详见 `backend/WECHAT_CONFIG.md`。
 
+### 6）地址簿接口兼容
+
+`GET/POST /api/v1/user/address`、`PUT/DELETE /api/v1/user/address/{id}` 保持原路径和联系人、电话、`poiName`、经纬度、默认地址契约；保存请求新增可选字符串 `province`、`city`、`district`、`detailAddress`，查询也返回这四项。四项全部为空（含空白）时按旧客户端处理，仍须提供非空完整 `address`（最多255字符），不拆分旧地址；任一项非空则四项必须齐全，去除首尾空白后省/市/区各最多64字符、街道门牌等详细地址最多160字符，服务端以 `province + city + district + detailAddress` 组合完整地址（最多255字符），忽略请求中冲突的 `address`，不强制匹配行政区数据库。旧客户端更新会清空原结构化字段，避免与更新后的完整地址不一致。地址仅允许本人修改/删除，最多50条，设置默认会取消本用户其他默认地址。默认/local/docker启动会在 schema 之后执行 MySQL 幂等迁移 `db/migrations/20261115_address_region.sql`，只追加可空列，不改写历史完整地址；升级后旧地址可继续选用于下单。
+
 ## 三、Docker 部署
 
 本项目 Docker 部署只启动后端和管理后台容器，数据库使用外部 MySQL，不会启动数据库容器。

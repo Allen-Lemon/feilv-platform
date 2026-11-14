@@ -1,8 +1,8 @@
 <view class="page profile-page">
-  <view class="page-head"><view class="eyebrow">我的账号 · 资料完善</view><view class="title">{{fromLogin ? '欢迎加入飞毛腿' : '编辑账号资料'}}</view><view class="page-desc">头像和昵称由您主动选择或填写，不会自动获取。下单前需保存非空昵称并绑定手机号；头像可保留默认，暂未完善也可返回浏览。</view></view>
+  <view class="page-head"><view class="eyebrow">我的账号 · 资料完善</view><view class="title">{{phoneOnly ? '授权绑定手机号' : fromLogin ? '欢迎加入飞毛腿' : '编辑账号资料'}}</view><view class="page-desc">{{phoneOnly ? '主动授权后，由微信验证号码并绑定当前账号。只展示脱敏号码，不自动合并其他账号。' : '头像和昵称由您主动选择或填写，不会自动获取。下单前需保存非空昵称并绑定手机号；头像可保留默认，暂未完善也可返回浏览。'}}</view></view>
   <view class="loading-note" wx:if="{{loading}}">正在读取账号资料与授权状态…</view>
   <view class="card" wx:if="{{error}}"><view class="error">{{error}}</view><button class="secondary" disabled="{{loading || saving || uploading || binding || checkingPrivacy || openingPrivacy}}" bindtap="load">重新读取资料与授权状态</button></view>
-  <view class="card" wx:if="{{loaded}}">
+  <view class="card" wx:if="{{loaded && !phoneOnly}}">
     <view class="section-title">头像 <text class="optional">可保留默认</text></view>
     <image wx:if="{{avatarDraft || avatarUrl}}" class="profile-avatar" src="{{avatarDraft || avatarUrl}}" mode="aspectFill"/>
     <view wx:else class="profile-avatar avatar-default">头像</view>
@@ -12,7 +12,7 @@
     <button wx:if="{{avatarDraft}}" class="secondary" bindtap="saveAvatar" loading="{{uploading}}" disabled="{{loading || saving || uploading || binding || checkingPrivacy || openingPrivacy}}">保存头像</button>
     <button wx:if="{{avatarDraft}}" class="text-button" bindtap="discardAvatar" disabled="{{loading || saving || uploading || binding || checkingPrivacy || openingPrivacy}}">不保存，保留原头像</button>
   </view>
-  <view class="card" wx:if="{{loaded}}">
+  <view class="card" wx:if="{{loaded && !phoneOnly}}">
     <view class="section-title">平台昵称 <text class="optional">下单必填</text></view>
     <view class="field"><label class="label" for="profile-nickname">你希望大家如何称呼你</label><input id="profile-nickname" type="nickname" maxlength="64" value="{{nickname}}" bindinput="input" bindblur="input" disabled="{{loading || saving || uploading || binding || checkingPrivacy || openingPrivacy}}" placeholder="主动填写或选择昵称后保存"/></view>
     <view class="hint">保存时去除首尾空格，限1至32个字符，不含控制字符。微信默认昵称不代表已完善，只有点击保存才会更新昵称。</view>
@@ -20,21 +20,22 @@
   </view>
   <view class="card" wx:if="{{loaded}}">
     <view class="section-title">绑定手机号 <text class="optional">下单必填</text></view>
-    <view class="phone-status" wx:if="{{mobileBound}}"><view class="success">手机号已绑定</view><view class="hint">{{mobile || '号码已脱敏保护'}}</view></view>
+    <view class="phone-status" wx:if="{{mobileBound}}"><view class="success">手机号已绑定</view><view class="hint">{{mobile || '号码已脱敏保护'}}</view><view class="hint">绑定立即生效，暂不支持直接更换手机号。</view></view>
     <block wx:else>
       <view class="hint">仅在您主动点击下方按钮并授权后，将微信返回的临时凭证发送至服务端绑定手机号。拒绝授权保留登录态，可返回浏览，但不能下单。</view>
-      <view class="notice" wx:if="{{nickname !== savedNickname}}">昵称修改尚未保存。绑定手机号不会自动保存昵称，请单独点击“保存昵称”。</view>
+      <view class="phone-error error" wx:if="{{phoneError}}">{{phoneError}}。请重新点击授权按钮，勿重复使用旧凭证。</view>
+      <view class="notice" wx:if="{{!phoneOnly && nickname !== savedNickname}}">昵称修改尚未保存。绑定手机号不会自动保存昵称，请单独点击“保存昵称”。</view>
       <view class="hint" wx:if="{{!phoneSupported}}">当前微信版本不支持安全绑定手机号，请升级微信后重试；可返回浏览。</view>
       <block wx:elif="{{privacyNeeded}}">
         <button class="text-button privacy-link" bindtap="openPrivacy" disabled="{{loading || saving || uploading || binding || checkingPrivacy || openingPrivacy}}">查看{{privacyTitle}}</button>
         <button wx:if="{{privacyGateSupported}}" id="agree-profile-privacy" open-type="agreePrivacyAuthorization" bindagreeprivacyauthorization="agreePrivacy" class="secondary" loading="{{checkingPrivacy}}" disabled="{{loading || saving || uploading || binding || checkingPrivacy || openingPrivacy}}">同意隐私指引，继续手机号授权</button>
         <view class="hint" wx:else>请升级微信以完成隐私授权，也可返回浏览。</view>
       </block>
-      <button wx:elif="{{privacyReady}}" class="primary" open-type="getPhoneNumber" bindtap="preparePhone" bindgetphonenumber="bindPhone" loading="{{binding}}" disabled="{{loading || saving || uploading || binding || checkingPrivacy || openingPrivacy}}">授权并绑定微信手机号</button>
+      <button wx:elif="{{privacyReady}}" class="primary" open-type="getPhoneNumber" bindtap="preparePhone" bindgetphonenumber="bindPhone" loading="{{binding}}" disabled="{{loading || saving || uploading || binding || checkingPrivacy || openingPrivacy}}">{{binding ? '正在验证并绑定…' : '授权并绑定微信手机号'}}</button>
       <view class="hint" wx:else>隐私状态尚未确认，可重试读取或返回浏览。</view>
     </block>
     <view class="hint">绑定信息不会自动填入订单联系人电话，也不会自动合并短信账号。若号码已用于其他账号，请按服务端提示处理。</view>
   </view>
-  <view class="profile-actions"><button class="primary" bindtap="complete" disabled="{{!loaded || loading || saving || uploading || binding || checkingPrivacy || openingPrivacy}}">完成并继续</button><button class="text-button" bindtap="leave" disabled="{{saving || uploading || binding}}">返回浏览（未保存修改不生效）</button></view>
+  <view class="profile-actions"><button class="primary" bindtap="complete" disabled="{{!loaded || loading || saving || uploading || binding || checkingPrivacy || openingPrivacy}}">{{phoneOnly ? '完成，返回我的' : '完成并继续'}}</button><button class="text-button" bindtap="leave" disabled="{{saving || uploading || binding}}">返回浏览（未保存修改不生效）</button></view>
   <view class="footer-note">可随时从“我的 → 账号资料”回来修改。下单时会重新核验服务端手机号和昵称状态。</view>
 </view>

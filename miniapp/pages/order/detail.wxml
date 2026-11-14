@@ -1,9 +1,222 @@
-<view class="page"><view class="notice" wx:if="{{invalid}}">订单ID无效，请从订单列表进入。</view><view class="card" wx:if="{{error}}"><view class="error">{{error}}</view><button bindtap="load" disabled="{{loading || busy}}">重新加载</button></view>
-<view class="empty" wx:if="{{loading && !order}}">正在加载订单…</view>
-<block wx:if="{{order}}"><view class="card"><view class="row"><view class="title">{{order.statusText}}</view><text>{{order.typeText}}</text></view><view class="muted mono">{{order.orderNo}}</view><view class="line">取：{{order.fromAddress}}</view><view class="line">送：{{order.toAddress}}</view><view class="line">物品：{{order.goodsDesc || '无'}}</view><view class="line" wx:if="{{order.pickupCode}}">取件码：<text class="mono">{{order.pickupCode}}</text><view class="hint">请向承运骑手核对，不要泄露给无关人员。</view></view><view class="row line"><text>订单金额</text><text class="price">¥{{order.feeText}}</text></view><view class="hint">下单时间：{{order.createdText}}</view><button class="secondary" bindtap="track">查看真实配送轨迹</button><button class="secondary" bindtap="load" disabled="{{loading || busy}}">刷新订单状态</button></view>
-<view class="card" wx:if="{{order.canPay}}"><view class="notice">MOCK 模拟支付，不是真实微信支付。</view><button class="primary" loading="{{busy}}" disabled="{{busy || loading}}" bindtap="pay">MOCK 模拟支付</button></view>
-<view class="card" wx:if="{{order.canCancel}}"><view class="title">取消订单</view><input value="{{cancelReason}}" data-field="cancelReason" bindinput="input" maxlength="200" placeholder="取消原因（选填）" disabled="{{busy}}"/><view class="hint">接单前取消免费；接单后按服务端规则可能计收取消费。退款仅为模拟。</view><button class="danger" disabled="{{busy || loading}}" bindtap="cancel">取消订单</button></view>
-<view class="card" wx:if="{{order.canConfirm}}"><view class="title">物品已送达</view><button class="primary" disabled="{{busy || loading}}" loading="{{busy}}" bindtap="confirm">确认收货</button></view>
-<view class="card" wx:if="{{order.canReview}}"><view class="title">评价骑手</view><view class="hint" wx:if="{{reviewed}}">本机记录：已提交评价，感谢反馈。</view><block wx:else><picker range="{{stars}}" value="{{starIndex}}" bindchange="starsChange" disabled="{{busy}}"><view class="picker">评分：{{stars[starIndex]}} 星</view></picker><textarea class="field" value="{{content}}" data-field="content" bindinput="input" maxlength="500" placeholder="说说这次服务（选填）" disabled="{{busy}}"/><button class="primary" disabled="{{busy || loading}}" bindtap="review">提交评价</button><view class="hint">一单一评，以服务端记录为准，支持完成后7天内评价。</view></block></view>
-<view class="card" wx:if="{{order.canComplain}}"><view class="title">售后与投诉</view><picker range="{{complaintTypes}}" range-key="label" value="{{complaintIndex}}" bindchange="complaintChange" disabled="{{busy}}"><view class="picker">问题类型：{{complaintTypes[complaintIndex].label}}</view></picker><textarea class="field" value="{{complaintDescription}}" data-field="complaintDescription" bindinput="input" maxlength="1000" placeholder="请描述问题与诉求，不要填写密码等敏感信息" disabled="{{busy}}"/><button class="danger" disabled="{{busy || loading}}" bindtap="complaint">提交投诉</button><view class="hint" wx:if="{{ticket}}">{{ticket}}</view></view>
-</block></view>
+<view class="page detail-page">
+  <view class="notice" wx:if="{{invalid}}">
+    订单ID无效，请从订单列表进入。
+  </view>
+
+  <view class="card order-panel" wx:if="{{error}}">
+    <view class="panel-title">订单暂未更新</view>
+    <view class="error error-message">{{error}}</view>
+    <button class="outline-button" bindtap="load" disabled="{{loading || busy}}">
+      重新加载
+    </button>
+  </view>
+
+  <view class="empty" wx:if="{{loading && !order}}">正在加载订单…</view>
+
+  <block wx:if="{{order}}">
+    <view class="card service-header service-state-{{order.status}}">
+      <view class="header-topline">
+        <view class="status-caption">
+          <text class="status-dot"></text>
+          <text>服务状态</text>
+        </view>
+        <text class="service-type">{{order.typeText}}</text>
+      </view>
+      <view class="service-status">{{order.statusText}}</view>
+      <view class="status-refreshing" wx:if="{{loading}}">正在更新订单状态…</view>
+      <view class="status-description" wx:if="{{order.status === 'WAIT_PAY'}}">
+        本单待支付，仅支持 MOCK 模拟支付，不发生真实扣款。
+      </view>
+      <view class="status-description" wx:elif="{{order.status === 'WAIT_GRAB'}}">
+        请关注骑手接单状态，可刷新查看最新进度。
+      </view>
+      <view class="status-description" wx:elif="{{order.status === 'ACCEPTED'}}">
+        骑手已接单，可查看配送轨迹与最新进度。
+      </view>
+      <view class="status-description" wx:elif="{{order.status === 'PICKING'}}">
+        骑手取件中，请留意取件信息。
+      </view>
+      <view class="status-description" wx:elif="{{order.status === 'DELIVERING'}}">
+        配送进行中，可查看骑手已上报的轨迹。
+      </view>
+      <view class="status-description" wx:elif="{{order.status === 'DELIVERED'}}">
+        请核对物品，收到后再确认收货。
+      </view>
+      <view class="status-description" wx:elif="{{order.status === 'FINISHED'}}">
+        服务已完成，可评价骑手或反馈问题。
+      </view>
+      <view class="status-description" wx:elif="{{order.status === 'CANCELED'}}">
+        本单已取消，退款仅为模拟流程。
+      </view>
+      <view class="status-description" wx:else>
+        订单进度以服务端最新状态为准。
+      </view>
+      <view class="status-tools">
+        <button class="quiet-button" bindtap="track" disabled="{{loading || busy}}">查看配送轨迹</button>
+        <button class="quiet-button" bindtap="load" disabled="{{loading || busy}}">
+          刷新订单状态
+        </button>
+      </view>
+    </view>
+
+    <view class="card order-panel primary-panel" wx:if="{{order.canPay}}">
+      <view class="panel-title">完成模拟支付</view>
+      <view class="payment-notice">
+        <text class="mock-badge">MOCK</text>
+        <text class="notice-content">模拟支付，不是真实微信支付，不发生真实扣款。</text>
+      </view>
+      <button class="primary" loading="{{busy}}" disabled="{{busy || loading}}" bindtap="pay">
+        MOCK 模拟支付
+      </button>
+    </view>
+
+    <view class="card order-panel primary-panel" wx:if="{{order.canConfirm}}">
+      <view class="panel-title">物品已送达</view>
+      <view class="panel-description">请确认已收到物品，确认收货后订单完成。</view>
+      <button class="primary" disabled="{{busy || loading}}" loading="{{busy}}" bindtap="confirm">
+        确认收货
+      </button>
+    </view>
+
+    <view class="card order-panel">
+      <view class="panel-title">配送路线</view>
+      <view class="delivery-route">
+        <view class="route-node route-origin">
+          <text class="route-marker">取</text>
+          <view class="route-content">
+            <view class="route-label">取件地址</view>
+            <view class="address-text">{{order.fromAddress}}</view>
+          </view>
+        </view>
+        <view class="route-node">
+          <text class="route-marker destination-marker">送</text>
+          <view class="route-content">
+            <view class="route-label">送达地址</view>
+            <view class="address-text">{{order.toAddress}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="card order-panel">
+      <view class="panel-title">物品信息</view>
+      <view class="info-row">
+        <text class="info-label">物品 / 事项</text>
+        <text class="info-value">{{order.goodsDesc || '无'}}</text>
+      </view>
+      <view class="pickup-panel" wx:if="{{order.pickupCode}}">
+        <view class="pickup-topline">
+          <text class="pickup-label">取件码</text>
+          <text class="pickup-code mono">{{order.pickupCode}}</text>
+        </view>
+        <view class="privacy-note">请向承运骑手核对，不要泄露给无关人员。</view>
+      </view>
+    </view>
+
+    <view class="card order-panel">
+      <view class="panel-title">费用与订单</view>
+      <view class="amount-row">
+        <text class="amount-label">订单金额</text>
+        <text class="order-amount"><text class="amount-currency">¥</text>{{order.feeText}}</text>
+      </view>
+      <view class="order-metadata">
+        <view class="info-row">
+          <text class="info-label">订单编号</text>
+          <text class="info-value mono">{{order.orderNo}}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">下单时间</text>
+          <text class="info-value">{{order.createdText}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="card order-panel" wx:if="{{order.canReview}}">
+      <view class="panel-title">评价骑手</view>
+      <view class="feedback-result" wx:if="{{reviewed}}">
+        本机记录：已提交评价，感谢反馈。
+      </view>
+      <block wx:else>
+        <view class="form-field">
+          <view class="form-label">服务评分</view>
+          <picker range="{{stars}}" value="{{starIndex}}" bindchange="starsChange" disabled="{{busy}}">
+            <view class="picker selection-row">
+              <text>{{stars[starIndex]}} 星</text>
+              <text class="selection-hint">点击选择</text>
+            </view>
+          </picker>
+        </view>
+        <view class="form-field">
+          <view class="form-label">评价内容<text class="optional">（选填）</text></view>
+          <textarea
+            class="feedback-input"
+            value="{{content}}"
+            data-field="content"
+            bindinput="input"
+            maxlength="500"
+            placeholder="说说这次服务（选填）"
+            disabled="{{busy}}"
+          />
+        </view>
+        <view class="form-note">一单一评，以服务端记录为准，支持完成后7天内评价。</view>
+        <button class="primary" disabled="{{busy || loading}}" bindtap="review">提交评价</button>
+      </block>
+    </view>
+
+    <view class="card order-panel secondary-panel" wx:if="{{order.canCancel}}">
+      <view class="panel-title">取消订单</view>
+      <view class="form-field">
+        <view class="form-label">取消原因<text class="optional">（选填）</text></view>
+        <input
+          value="{{cancelReason}}"
+          data-field="cancelReason"
+          bindinput="input"
+          maxlength="200"
+          placeholder="取消原因（选填）"
+          disabled="{{busy}}"
+        />
+      </view>
+      <view class="form-note">
+        接单前取消免费；接单后按服务端规则可能计收取消费。退款仅为模拟。
+      </view>
+      <button class="danger outline-danger" disabled="{{busy || loading}}" bindtap="cancel">
+        取消订单
+      </button>
+    </view>
+
+    <view class="card order-panel secondary-panel" wx:if="{{order.canComplain}}">
+      <view class="panel-title">售后与投诉</view>
+      <view class="form-field">
+        <view class="form-label">问题类型</view>
+        <picker
+          range="{{complaintTypes}}"
+          range-key="label"
+          value="{{complaintIndex}}"
+          bindchange="complaintChange"
+          disabled="{{busy}}"
+        >
+          <view class="picker selection-row">
+            <text>{{complaintTypes[complaintIndex].label}}</text>
+            <text class="selection-hint">点击选择</text>
+          </view>
+        </picker>
+      </view>
+      <view class="form-field">
+        <view class="form-label">问题与诉求</view>
+        <textarea
+          class="feedback-input"
+          value="{{complaintDescription}}"
+          data-field="complaintDescription"
+          bindinput="input"
+          maxlength="1000"
+          placeholder="请描述问题与诉求，不要填写密码等敏感信息"
+          disabled="{{busy}}"
+        />
+      </view>
+      <button class="outline-button" disabled="{{busy || loading}}" bindtap="complaint">
+        提交投诉
+      </button>
+      <view class="feedback-result" wx:if="{{ticket}}">{{ticket}}</view>
+    </view>
+  </block>
+</view>

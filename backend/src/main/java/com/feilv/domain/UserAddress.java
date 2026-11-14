@@ -27,8 +27,20 @@ public class UserAddress {
     @Column(name = "poi_name")
     private String poiName;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 255)
     private String address;
+
+    @Column(length = 64)
+    private String province;
+
+    @Column(length = 64)
+    private String city;
+
+    @Column(length = 64)
+    private String district;
+
+    @Column(name = "detail_address", length = 160)
+    private String detailAddress;
 
     private BigDecimal lng;
     private BigDecimal lat;

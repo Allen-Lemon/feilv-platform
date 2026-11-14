@@ -20,5 +20,6 @@ definePage({
     wx.navigateTo({ url: '/pages/order/create?type=' + type })
   },
   orders() { wx.switchTab({ url: '/pages/order/list' }) },
+  address() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/address/address' }) },
   settings() { wx.navigateTo({ url: '/pages/settings/settings' }) }
 })

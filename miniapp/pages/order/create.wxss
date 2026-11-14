@@ -1,57 +1,48 @@
-.create-page .section-head {
-  margin-bottom: 8rpx;
-}
-
-.create-page .section-title {
-  display: flex;
-  align-items: center;
-}
-
-.form-step {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 48rpx;
-  height: 48rpx;
-  margin-right: 14rpx;
-  border-radius: 16rpx;
-  background: #FFF0E8;
-  color: #AA381B;
-  font-size: 24rpx;
-}
-
-.form-step.end {
-  background: #EDF0F5;
-  color: #344054;
-}
-
-.create-page .card > .field:last-child {
-  margin-bottom: 0;
-}
-
-.measure-fields {
-  display: flex;
-}
-
-.measure-fields .field {
-  flex: 1;
-  min-width: 0;
-}
-
-.measure-fields .field:first-child {
-  margin-right: 20rpx;
-}
-
-.measure-hint {
-  margin-top: 10rpx;
-  color: #667085;
-  font-size: 23rpx;
-}
-
-.quote-card {
-  border-color: #FFDCCB;
-}
-
-.quote-total {
-  padding: 26rpx 0 10rpx;
+page { background: #F7F8FA; }
+.create-page { max-width: 960rpx; margin: 0 auto; }
+.create-heading .title { font-size: 40rpx; }
+.create-heading .page-desc { font-size: 25rpx; line-height: 1.7; }
+.create-tip { display: flex; align-items: flex-start; margin-bottom: 24rpx; padding: 18rpx 22rpx; border: 1rpx solid #F0DCCE; border-radius: 18rpx; background: #FFF6EF; color: #8F4931; font-size: 23rpx; line-height: 1.75; }
+.tip-mark { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 30rpx; height: 30rpx; margin: 4rpx 14rpx 0 0; border-radius: 50%; background: #F8E2D3; color: #AA381B; font-size: 21rpx; font-weight: 700; }
+.address-error .small { margin-top: 14rpx; }
+.create-page .card { padding: 26rpx; border-radius: 26rpx; }
+.create-page .section-head { margin-bottom: 20rpx; }
+.create-page .section-title { display: flex; align-items: center; font-size: 29rpx; }
+.create-page .section-note { font-size: 22rpx; }
+.form-step { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44rpx; height: 44rpx; margin-right: 14rpx; border-radius: 14rpx; background: #FFF0E8; color: #AA381B; font-size: 22rpx; }
+.form-step.end { background: #EEF4FF; color: #344E86; }
+.create-page .field { margin-top: 20rpx; margin-bottom: 20rpx; }
+.create-page .label { margin-bottom: 10rpx; font-size: 24rpx; }
+.create-page input { height: 90rpx; padding-left: 18rpx; padding-right: 18rpx; border-color: #E7EAF0; border-radius: 16rpx; font-size: 27rpx; }
+.create-page textarea { height: 160rpx; border-color: #E7EAF0; font-size: 27rpx; }
+.location-card .address-field { margin-top: 0; margin-bottom: 8rpx; }
+.order-address-picker { min-height: 100rpx; padding: 20rpx; border-color: #E4E7EC; border-radius: 17rpx; background: #F8F9FB; color: #344054; font-size: 27rpx; line-height: 1.7; }
+.order-address-picker .grow { min-width: 0; word-break: break-all; }
+.order-address-picker .picker-arrow { font-size: 30rpx; }
+.order-address-picker.address-placeholder { color: #667085; }
+.create-page .address-add { justify-content: flex-start; width: auto; min-height: 44px; margin-top: 2rpx; padding: 12rpx 0; color: #AA381B; font-size: 23rpx; }
+.contact-fields { display: flex; align-items: flex-start; padding-top: 14rpx; border-top: 1rpx solid #F0F2F5; }
+.contact-fields .field { min-width: 0; margin-top: 0; margin-bottom: 0; }
+.contact-name { flex: 2; margin-right: 18rpx; }
+.contact-phone { flex: 3; }
+.measure-fields { display: flex; }
+.measure-fields .field { flex: 1; min-width: 0; margin-bottom: 12rpx; }
+.measure-fields .field:first-child { margin-right: 18rpx; }
+.measure-hint { margin-top: 8rpx; color: #667085; font-size: 22rpx; line-height: 1.65; }
+.distance-note { padding: 14rpx 16rpx; border-radius: 12rpx; background: #F2F4F7; color: #667085; font-size: 22rpx; line-height: 1.7; }
+.form-footnote { color: #667085; font-size: 22rpx; line-height: 1.7; }
+.calculate-button { margin-top: 24rpx; }
+.create-page .quote-card { border-color: #F5D4C1; background: #FFFCF9; }
+.quote-card .line { color: #475467; font-size: 25rpx; }
+.quote-total { flex-wrap: wrap; padding: 24rpx 0 8rpx; }
+.total-label { font-size: 27rpx; font-weight: 600; }
+.total-caption { margin-top: 4rpx; color: #667085; font-size: 22rpx; }
+.quote-total .price { max-width: 100%; margin-left: 14rpx; word-break: break-all; }
+@media (max-width: 350px) {
+  .create-heading .title { font-size: 36rpx; }
+  .create-page .card { padding: 22rpx; }
+  .contact-fields { flex-direction: column; }
+  .contact-fields .field { width: 100%; }
+  .contact-fields .contact-name { margin-right: 0; margin-bottom: 18rpx; }
+  .measure-fields .field:first-child { margin-right: 14rpx; }
 }

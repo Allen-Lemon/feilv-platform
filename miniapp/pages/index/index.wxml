@@ -1,17 +1,44 @@
 <view class="page home-page">
-  <view class="home-brand"><text class="brand-mark">飞</text><text class="brand-name">飞毛腿</text><text class="brand-city">德江同城跑腿</text></view>
-  <view class="home-hero">
-    <view class="hero-decoration hero-orbit"></view><view class="hero-decoration hero-sun"></view>
-    <view class="hero-content"><view class="eyebrow">让日常，轻松一点</view><view class="hero-title">你的同城小事<view>交给飞毛腿</view></view><view class="hero-desc">送物 · 代买 · 代办，从这里开始</view></view>
-    <view class="hero-stamp">同城<view>跑腿</view></view>
+  <view class="home-brand">
+    <view class="brand-mark">飞</view>
+    <view class="brand-lockup"><view class="brand-name">飞毛腿</view><view class="brand-subtitle">把奔波交给我们</view></view>
+    <view class="brand-city"><view class="city-dot"></view><text>德江同城</text></view>
   </view>
-  <view class="mock-note"><text class="mock-badge">MOCK</text><text class="grow">演示模式 · 支付不扣款，请勿用于真实交易。</text></view>
-  <view class="section-head home-section"><view><view class="section-title">今天，需要什么帮助？</view><view class="page-desc">选一个服务，填写你的需求</view></view></view>
+
+  <view class="home-hero">
+    <view class="hero-orbit"></view>
+    <view class="hero-content">
+      <view class="eyebrow">让日常，轻松一点</view>
+      <view class="hero-title">生活里的小事<view>交给我们跑一趟。</view></view>
+      <view class="hero-desc">送物、代买、代办，按你的需要出发</view>
+    </view>
+    <view class="hero-emblem" aria-hidden="true">飞<text>↗</text></view>
+  </view>
+
+  <view class="section-head home-section"><view class="section-title">你需要，我们就出发</view><text class="section-note">选择服务</text></view>
   <view class="service-list">
-    <button class="service-entry service-{{item.code}}" wx:for="{{types}}" wx:key="code" data-type="{{item.code}}" bindtap="create" hover-class="tap-feedback">
+    <button wx:for="{{types}}" wx:key="code" class="service-entry service-{{item.code}}" data-type="{{item.code}}" bindtap="create" hover-class="tap-feedback">
       <view class="service-icon">{{item.code === 'SEND' ? '送' : item.code === 'BUY' ? '买' : '办'}}</view>
-      <view class="grow"><view class="service-name">{{item.label}}</view><view class="service-desc">{{item.desc}}</view></view><view class="service-arrow">↗</view>
+      <view class="service-copy">
+        <view class="service-name">{{item.label}}</view>
+        <view class="service-desc">{{item.code === 'SEND' ? '文件、鲜花、日常物品，同城送达' : item.code === 'BUY' ? '商超好物，帮你买回来' : '代取件、代排队，少跑一趟'}}</view>
+        <view class="service-cta">{{item.code === 'SEND' ? '填写取送信息' : '填写需求'}} <text>↗</text></view>
+      </view>
     </button>
   </view>
-  <view class="card home-guide"><view class="section-head"><view class="section-title">下单前，了解一下</view><text class="section-note">服务须知</text></view><view class="guide-row"><text class="guide-dot"></text><text class="grow">手填取送联系人与电话，微信登录无需授权手机号。距离手工预估，费用以服务端计价为准。</text></view><view class="guide-row"><text class="guide-dot"></text><text class="grow">请勿寄送处方药、烟草等禁限寄物品。贵重、易碎物品请事先确认配送条件。</text></view><view class="home-links"><button class="text-button" bindtap="orders">我的订单 →</button><button class="text-button" bindtap="settings">连接服务设置</button></view></view>
+
+  <view class="home-shortcuts">
+    <button class="home-orders" bindtap="orders" hover-class="tap-feedback"><view class="quick-icon">单</view><view class="quick-copy"><view class="quick-title">我的订单</view><view class="quick-caption">跟进每一程</view></view><view class="chevron"></view></button>
+    <button class="home-address" bindtap="address" hover-class="tap-feedback"><view class="quick-icon address-icon">址</view><view class="quick-copy"><view class="quick-title">常用地址</view><view class="quick-caption">下次直接选</view></view><view class="chevron"></view></button>
+  </view>
+
+  <view class="mock-note home-demo"><text class="mock-badge">MOCK</text><text class="grow">当前为演示模式，支付不扣款，请勿用于真实交易。</text></view>
+  <view class="card home-guide">
+    <view class="section-head"><view class="section-title">下单前，记得这些</view><text class="section-note">服务须知</text></view>
+    <view class="guide-row"><view class="guide-dot"></view><text class="grow">下单前须保存昵称并绑定手机号，取送地址从地址簿选择，联系人可按本单调整。</text></view>
+    <view class="guide-row"><view class="guide-dot"></view><text class="grow">代买金额须与骑手另行确认；距离手工预估，费用以服务端计价为准。</text></view>
+    <view class="guide-row"><view class="guide-dot"></view><text class="grow">请勿寄送处方药、烟草等禁限寄物品。</text></view>
+    <view class="home-links"><text class="connection-caption">开发联调</text><button class="text-button" bindtap="settings">服务连接设置 →</button></view>
+  </view>
+  <view class="home-footer">飞毛腿 · 认真对待每一份托付</view>
 </view>

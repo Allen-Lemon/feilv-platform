@@ -1,23 +1,53 @@
 <view class="page create-page">
-  <view class="page-head"><view class="eyebrow">{{typeText}} · 填写需求</view><view class="title">这次，帮你跑一趟</view><view class="page-desc">完善取送信息，再查看服务端预估费用</view></view>
-  <view class="notice">请手动填写实际联系人。距离为手工预估，不是地图测距；报价由服务端计算。</view>
-  <view class="card"><view class="section-head"><view class="section-title"><text class="form-step">取</text>取件 / 起点</view><button class="secondary small" data-side="from" bindtap="address" disabled="{{busy}}">选地址簿</button></view>
-    <view class="field"><text class="label">取件联系人</text><input value="{{form.fromContact}}" data-field="fromContact" bindinput="input" maxlength="30" disabled="{{busy}}" placeholder="请输入姓名"/></view>
-    <view class="field"><text class="label">取件手机号</text><input type="number" value="{{form.fromPhone}}" data-field="fromPhone" bindinput="input" maxlength="11" disabled="{{busy}}" placeholder="请输入11位手机号"/></view>
-    <view class="field"><text class="label">取件详细地址</text><input value="{{form.fromAddress}}" data-field="fromAddress" bindinput="input" maxlength="200" disabled="{{busy}}" placeholder="街道、楼栋、门牌号"/></view>
+  <view class="page-head create-heading"><view class="eyebrow">{{typeText}} · 填写需求</view><view class="title">这一趟，怎么帮你？</view><view class="page-desc">先选取送地址，再告诉我们要做的事</view></view>
+  <view class="create-tip"><text class="tip-mark">!</text><text class="grow">取送地址从地址簿选择，联系人自动带出，也可按本单需要修改。</text></view>
+  <view class="notice error address-error" wx:if="{{addressError}}">{{addressError}}<button class="secondary small" bindtap="loadAddresses" disabled="{{busy || addressLoading}}">重新读取地址</button></view>
+  <view class="loading-note" wx:if="{{addressLoading}}">正在读取可选地址…</view>
+
+  <view class="card location-card">
+    <view class="section-head"><view class="section-title"><text class="form-step">取</text>从哪里取件</view><text class="section-note">起点</text></view>
+    <view class="field address-field">
+      <text class="label">取件地址</text>
+      <picker mode="selector" range="{{addressOptions}}" range-key="label" value="{{fromAddressIndex}}" data-side="from" bindchange="addressChange" disabled="{{busy || addressLoading || !addressOptions.length}}"><view class="picker order-address-picker {{form.fromAddress ? '' : 'address-placeholder'}}"><text class="grow">{{form.fromAddress ? form.fromAddress : addressOptions.length ? '下拉选择取件地址' : '暂无地址，请先新增'}}</text><text class="picker-arrow">⌄</text></view></picker>
+      <button class="text-button address-add" data-side="from" bindtap="address" disabled="{{busy || addressLoading}}">新增或管理取件地址 →</button>
+    </view>
+    <view class="contact-fields">
+      <view class="field contact-name"><label class="label" for="from-contact">取件联系人</label><input id="from-contact" value="{{form.fromContact}}" data-field="fromContact" bindinput="input" maxlength="30" disabled="{{busy || addressLoading}}" placeholder="姓名"/></view>
+      <view class="field contact-phone"><label class="label" for="from-phone">联系电话</label><input id="from-phone" type="number" value="{{form.fromPhone}}" data-field="fromPhone" bindinput="input" maxlength="11" disabled="{{busy || addressLoading}}" placeholder="11位手机号"/></view>
+    </view>
   </view>
-  <view class="card"><view class="section-head"><view class="section-title"><text class="form-step end">送</text>送达 / 终点</view><button class="secondary small" data-side="to" bindtap="address" disabled="{{busy}}">选地址簿</button></view>
-    <view class="field"><text class="label">收件联系人</text><input value="{{form.toContact}}" data-field="toContact" bindinput="input" maxlength="30" disabled="{{busy}}" placeholder="请输入姓名"/></view>
-    <view class="field"><text class="label">收件手机号</text><input type="number" value="{{form.toPhone}}" data-field="toPhone" bindinput="input" maxlength="11" disabled="{{busy}}" placeholder="请输入11位手机号"/></view>
-    <view class="field"><text class="label">送达详细地址</text><input value="{{form.toAddress}}" data-field="toAddress" bindinput="input" maxlength="200" disabled="{{busy}}" placeholder="街道、楼栋、门牌号"/></view>
+
+  <view class="card location-card">
+    <view class="section-head"><view class="section-title"><text class="form-step end">送</text>送到哪里</view><text class="section-note">终点</text></view>
+    <view class="field address-field">
+      <text class="label">送达地址</text>
+      <picker mode="selector" range="{{addressOptions}}" range-key="label" value="{{toAddressIndex}}" data-side="to" bindchange="addressChange" disabled="{{busy || addressLoading || !addressOptions.length}}"><view class="picker order-address-picker {{form.toAddress ? '' : 'address-placeholder'}}"><text class="grow">{{form.toAddress ? form.toAddress : addressOptions.length ? '下拉选择送达地址' : '暂无地址，请先新增'}}</text><text class="picker-arrow">⌄</text></view></picker>
+      <button class="text-button address-add" data-side="to" bindtap="address" disabled="{{busy || addressLoading}}">新增或管理送达地址 →</button>
+    </view>
+    <view class="contact-fields">
+      <view class="field contact-name"><label class="label" for="to-contact">收件联系人</label><input id="to-contact" value="{{form.toContact}}" data-field="toContact" bindinput="input" maxlength="30" disabled="{{busy || addressLoading}}" placeholder="姓名"/></view>
+      <view class="field contact-phone"><label class="label" for="to-phone">联系电话</label><input id="to-phone" type="number" value="{{form.toPhone}}" data-field="toPhone" bindinput="input" maxlength="11" disabled="{{busy || addressLoading}}" placeholder="11位手机号"/></view>
+    </view>
   </view>
-  <view class="card"><view class="section-title">物品与要求</view>
-    <view class="field"><text class="label">物品 / 代办事项</text><input value="{{form.goodsDesc}}" data-field="goodsDesc" bindinput="input" maxlength="128" disabled="{{busy}}" placeholder="例如：文件、鲜花、代取快递"/></view>
-    <view class="measure-fields"><view class="field"><text class="label">预估距离 <text class="optional">公里</text></text><input type="digit" value="{{distanceKm}}" data-field="distanceKm" bindinput="number" disabled="{{busy}}" placeholder="例如：2.5"/><view class="measure-hint">手填，大于0且不超过200</view></view><view class="field"><text class="label">物品重量 <text class="optional">公斤</text></text><input type="number" value="{{weightKg}}" data-field="weightKg" bindinput="number" disabled="{{busy}}" maxlength="3"/><view class="measure-hint">1至100的整数</view></view></view>
-    <view class="field"><text class="label">备注 <text class="optional">选填</text></text><textarea value="{{form.remark}}" data-field="remark" bindinput="input" maxlength="255" disabled="{{busy}}" placeholder="配送时间、轻拿轻放等"/></view>
-    <view class="hint">照片上传与 OCR 尚未接入，不会将本地选图当作已上传。</view>
-    <button class="{{quote ? 'secondary' : 'primary'}}" loading="{{busy}}" disabled="{{busy}}" bindtap="calculate">{{quote ? '重新计算费用' : '计算预估费用'}}</button>
+
+  <view class="card requirements-card">
+    <view class="section-head"><view class="section-title">物品与服务要求</view><text class="section-note">请如实填写</text></view>
+    <view class="field"><label class="label" for="goods-desc">物品 / 代办事项</label><input id="goods-desc" value="{{form.goodsDesc}}" data-field="goodsDesc" bindinput="input" maxlength="128" disabled="{{busy || addressLoading}}" placeholder="例如：文件、鲜花、代取快递"/></view>
+    <view class="measure-fields">
+      <view class="field"><label class="label" for="distance-km">预估距离 <text class="optional">公里</text></label><input id="distance-km" type="digit" value="{{distanceKm}}" data-field="distanceKm" bindinput="number" disabled="{{busy || addressLoading}}" placeholder="例如：2.5"/><view class="measure-hint">大于0且不超过200</view></view>
+      <view class="field"><label class="label" for="weight-kg">物品重量 <text class="optional">公斤</text></label><input id="weight-kg" type="number" value="{{weightKg}}" data-field="weightKg" bindinput="number" disabled="{{busy || addressLoading}}" maxlength="3"/><view class="measure-hint">1至100的整数</view></view>
+    </view>
+    <view class="distance-note">距离为手工预估，并非地图测距；实际报价由服务端计算。</view>
+    <view class="field"><label class="label" for="order-remark">备注 <text class="optional">选填</text></label><textarea id="order-remark" value="{{form.remark}}" data-field="remark" bindinput="input" maxlength="255" disabled="{{busy || addressLoading}}" placeholder="配送时间、轻拿轻放等特别要求"/></view>
+    <view class="form-footnote">未接入送达照片凭证与 OCR，不会将本地选图当作已上传。</view>
+    <button class="{{quote ? 'secondary' : 'primary'}} calculate-button" loading="{{busy}}" disabled="{{busy || addressLoading}}" bindtap="calculate">{{quote ? '重新计算费用' : '查看预估费用'}}</button>
   </view>
-  <view class="card quote-card" wx:if="{{quote}}"><view class="section-title">费用明细</view><view class="row line" wx:for="{{quote.items}}" wx:key="key"><text class="grow">{{item.label}}</text><text>¥{{item.amountText}}</text></view><view class="row quote-total"><text>预估合计</text><text class="price"><text class="currency">¥</text>{{quote.totalText}}</text></view><button class="primary" disabled="{{busy}}" bindtap="next">下一步，确认订单 →</button></view>
+
+  <view class="card quote-card" wx:if="{{quote}}">
+    <view class="section-head"><view class="section-title">费用明细</view><text class="section-note">服务端报价</text></view>
+    <view class="row line" wx:for="{{quote.items}}" wx:key="key"><text class="grow">{{item.label}}</text><text>¥{{item.amountText}}</text></view>
+    <view class="row quote-total"><view><view class="total-label">预估合计</view><view class="total-caption">请到下一步核对完整订单</view></view><text class="price"><text class="currency">¥</text>{{quote.totalText}}</text></view>
+    <button class="primary" disabled="{{busy || addressLoading}}" bindtap="next">核对订单 →</button>
+  </view>
   <view class="footer-note">请核对联系人和地址后再提交</view>
 </view>

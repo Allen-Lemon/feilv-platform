@@ -202,6 +202,8 @@ test('login: agreement required; wx.login code contract, no mobile or client ope
   assert.equal(req.data.code, 'temporary-wx-code'); assert.equal(req.data.agreed, true)
   assert.equal('mobile' in req.data, false); assert.equal('openid' in req.data, false)
   req.success({ statusCode: 200, data: { code: 0, data: { token: 'wx-token', userId: 9, role: 'USER', nickname: '微信用户' } } })
+  await flush()
+  env.calls.requests[1].success({ statusCode: 200, data: { code: 0, data: profileValue({ userId: 9, nickname: '微信用户' }) } })
   await pending
   assert.equal(env.storage.get('feilv_token'), 'wx-token'); assert.equal(env.storage.get('feilv_role'), 'USER')
 })
@@ -213,6 +215,8 @@ test('login: returning WeChat rider keeps server role while admin response is re
     page.consent({ detail: { value: ['yes'] } })
     const pending = page.wechat(); await flush()
     env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: { token: 'wx-token', userId: 9, role, nickname: '用户' } } })
+    await flush()
+    if (role === 'RIDER') env.calls.requests[1].success({ statusCode: 200, data: { code: 0, data: profileValue({ userId: 9, role }) } })
     await pending
     assert.equal(env.storage.get('feilv_role'), role === 'RIDER' ? 'RIDER' : undefined)
     if (role === 'ADMIN') assert.equal(env.storage.has('feilv_token'), false)
@@ -256,7 +260,7 @@ test('address: manual address edits clear old coordinates instead of reusing ano
   Object.assign(page.data.form, { address: '旧地址', poiName: '旧地点', lng: 108, lat: 28 })
   page.input(event('contact', '新联系人'))
   assert.equal(page.data.form.lng, 108)
-  page.input(event('address', '新地址'))
+  page.input(event('detailAddress', '新地址'))
   assert.equal(page.data.form.lng, null); assert.equal(page.data.form.lat, null)
   Object.assign(page.data.form, { lng: 109, lat: 29 })
   page.input(event('poiName', '新地点'))
@@ -465,7 +469,7 @@ async function readyProfile(env, api, from = 'my') {
   page.onLoad({ from }); await page.onShow()
   return page
 }
-test('profile: WeChat redirects replacement login then GET uses the new session scope', async () => {
+test('login: WeChat keeps profile inline and GET uses the new authenticated session scope', async () => {
   const env = environment()
   env.setPages([{ route: 'pages/order/create' }, { route: 'pages/login/login' }])
   const login = env.page('pages/login/login')
@@ -473,19 +477,15 @@ test('profile: WeChat redirects replacement login then GET uses the new session 
   const session = env.load(path.join(native, 'utils/session.js')); const before = session.revision()
   const pending = login.wechat(); await flush()
   env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: { token: 'new-wechat-token', userId: 1, role: 'USER', nickname: '平台昵称' } } })
-  await pending
+  await flush()
   assert.equal(session.revision(), before + 1)
-  assert.equal(env.calls.requests.length, 1, 'login must never call me using the obsolete run scope')
-  assert.equal(env.calls.navigation.length, 1)
-  assert.equal(env.calls.navigation[0].url, '/pages/profile/profile?from=login')
-  assert.equal(env.calls.navigation[0].back, undefined)
-  const profile = env.page('pages/profile/profile')
-  profile.onLoad({ from: 'login' }); const loading = profile.onShow()
+  assert.equal(env.calls.requests.length, 2, 'me must use a new scope after session.save')
+  assert.equal(env.calls.navigation.length, 0, 'profile must remain on the login page')
   const req = env.calls.requests[1]
   assert.ok(req.url.endsWith('/user/me')); assert.equal(req.header.Authorization, 'Bearer new-wechat-token')
-  req.success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await loading
-  assert.equal(profile.data.loaded, true)
-  profile.leave(); assert.equal(env.calls.navigation.at(-1).back, true)
+  req.success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await pending
+  assert.equal(login.data.loaded, true); assert.equal(login.data.profileStage, true)
+  login.browse(); assert.equal(env.calls.navigation.at(-1).back, true)
 })
 test('profile: complete returning WeChat profile continues; from=my always allows editing', async () => {
   for (const from of ['login', 'my']) {
@@ -671,23 +671,25 @@ test('profile: My entry and refresh preserve draft nickname without resetting re
   const profile = await readyProfile(env, { async me() { return profileValue() } })
   profile.input({ detail: { value: '未保存编辑' } }); await profile.load(); assert.equal(profile.data.nickname, '未保存编辑')
 })
-test('login: SMS redirects to profile to read me using the new authenticated session', async () => {
+test('login: SMS reads inline profile using the new authenticated session', async () => {
   for (const count of [1, 2]) {
     const env = environment(); env.setPages(Array.from({ length: count }, () => ({ route: 'pages/login/login' })))
     const page = env.page('pages/login/login'); page.onLoad({}); page.onShow()
     page.consent({ detail: { value: ['yes'] } }); page.input(event('mobile', '13800000000')); page.input(event('code', '123456'))
     const pending = page.smsLogin(); const req = env.calls.requests[0]
     assert.ok(req.url.endsWith('/auth/login')); assert.equal(req.data.mobile, '13800000000'); assert.equal(req.data.code, '123456')
-    req.success({ statusCode: 200, data: { code: 0, data: { token: 'sms-token', userId: 1, role: 'USER', nickname: '短信用户' } } }); await pending
+    req.success({ statusCode: 200, data: { code: 0, data: { token: 'sms-token', userId: 1, role: 'USER', nickname: '短信用户' } } }); await flush()
     assert.equal(env.storage.get('feilv_token'), 'sms-token')
-    assert.equal(env.calls.navigation[0].url, '/pages/profile/profile?from=login')
-    assert.equal(env.calls.requests.length, 1, 'me must be loaded by the new profile session, not the login scope')
+    assert.equal(env.calls.navigation.length, 0)
+    assert.equal(env.calls.requests[1].header.Authorization, 'Bearer sms-token')
+    env.calls.requests[1].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await pending
+    assert.equal(page.data.profileStage, true); assert.equal(page.data.loaded, true)
   }
 })
 test('profile: native privacy APIs never use getUserProfile or declare getPhoneNumber as requiredPrivateInfos', () => {
   const app = JSON.parse(fs.readFileSync(path.join(native, 'app.json'), 'utf8'))
   assert.ok(app.pages.includes('pages/profile/profile')); assert.equal(app.requiredPrivateInfos.includes('getPhoneNumber'), false)
-  const source = fs.readFileSync(path.join(native, 'pages/profile/profile.js'), 'utf8')
+  const source = fs.readFileSync(path.join(native, 'utils/profile-page.js'), 'utf8')
   const template = fs.readFileSync(path.join(native, 'pages/profile/profile.wxml'), 'utf8')
   assert.equal(/wx\.(?:getUserProfile|login)\s*\(/.test(source), false)
   assert.ok(template.includes('type="nickname"')); assert.ok(template.includes('open-type="getPhoneNumber"')); assert.ok(template.includes('open-type="agreePrivacyAuthorization"'))
@@ -816,9 +818,9 @@ test('orders: create and confirm query real me, block incomplete profiles, retai
   for (const route of ['create', 'confirm']) {
     for (const incomplete of [{ mobileBound: false }, { mobileBound: true, nickname: '' }, { mobileBound: true, nickname: '微信用户' }]) {
       const env = environment(); env.authenticated(); let bound = false; let reads = 0; let creates = 0
-      const api = { async me() { reads++; return profileValue(bound ? { mobileBound: true } : incomplete) }, async createOrder() { creates++; return { id: 88 } }, async payOrder() {} }
+      const api = { async addressList() { return [] }, async me() { reads++; return profileValue(bound ? { mobileBound: true } : incomplete) }, async createOrder() { creates++; return { id: 88 } }, async payOrder() {} }
       env.storage.set('native_draft', { owner: 1, savedAt: 12, payload: { orderType: 'SEND' }, quote: {} })
-      const page = env.page('pages/order/' + route, api); page.onLoad({}); page.onShow()
+      const page = env.page('pages/order/' + route, api); page.onLoad({}); await page.onShow()
       if (route === 'create') fillCreate(page)
       const submit = () => route === 'create' ? page.next() : page.submit()
       await submit()
@@ -836,8 +838,8 @@ test('orders: me network failure and switched-account response never create, nav
     for (const mode of ['failure', 'switch']) {
       const env = environment(); env.authenticated(); let respond; let creates = 0
       env.storage.set('native_draft', { owner: 1, savedAt: 12, payload: { orderType: 'SEND' }, quote: {} })
-      const page = env.page('pages/order/' + route, { me() { if (mode === 'failure') throw new Error('me失败'); return new Promise(r => { respond = r }) }, async createOrder() { creates++ } })
-      page.onLoad({}); page.onShow(); if (route === 'create') fillCreate(page)
+      const page = env.page('pages/order/' + route, { async addressList() { return [] }, me() { if (mode === 'failure') throw new Error('me失败'); return new Promise(r => { respond = r }) }, async createOrder() { creates++ } })
+      page.onLoad({}); await page.onShow(); if (route === 'create') fillCreate(page)
       const pending = route === 'create' ? page.next() : page.submit()
       if (mode === 'switch') {
         env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
@@ -871,6 +873,341 @@ test('copy: avatar selection and required phone are explicit; no legacy no-avata
   const source = ['pages/profile/profile.wxml', 'pages/login/login.wxml', 'pages/my/my.wxml', 'pages/legal/legal.js', 'README.md', 'WECHAT_DEPLOYMENT.md'].map(f => fs.readFileSync(path.join(native, f), 'utf8')).join('\n')
   assert.equal(/无需另设用户名或头像|不设置独立用户名或采集头像|绑定手机号为可选|尚未绑定手机号（可选）/.test(source), false)
   assert.ok(source.includes('open-type="chooseAvatar"')); assert.ok(source.includes('下单必填')); assert.ok(source.includes('生产'))
+})
+async function inlineLogin(env, api) {
+  env.authenticated()
+  const page = env.page('pages/login/login', api)
+  page.onLoad({}); await page.onShow()
+  return page
+}
+test('login inline: returning complete account leaves directly without another profile route', async () => {
+  const env = environment(); env.setPages([{ route: 'pages/index/index' }, { route: 'pages/login/login' }])
+  const page = await inlineLogin(env, { async me() { return profileValue({ mobileBound: true, avatarUrl: AVATAR }) } })
+  assert.equal(page.data.profileStage, true)
+  assert.equal(env.calls.navigation.length, 1); assert.equal(env.calls.navigation[0].back, true)
+})
+test('login inline: one save uploads chosen avatar and nickname then verifies me before leaving', async () => {
+  const env = environment(); const calls = []; let value = profileValue({ nickname: '微信用户' })
+  const page = await inlineLogin(env, {
+    async me() { calls.push('me'); return value },
+    async bindWechatPhone(code) { calls.push(code); value = Object.assign({}, value, { mobileBound: true, mobile: '138****8000' }); return value },
+    async uploadAvatar(file) { calls.push(file); value = Object.assign({}, value, { avatarUrl: AVATAR }); return value },
+    async updateProfile(nickname) { calls.push(nickname); value = Object.assign({}, value, { nickname }); return value }
+  })
+  page.nicknameInput({ detail: { value: '  新昵称  ' } }); selectAvatar(page)
+  page.preparePhone(); await page.bindPhone(phoneEvent('phone-once'))
+  assert.equal(page.data.nickname, '  新昵称  '); assert.equal(env.calls.navigation.length, 0)
+  const saving = page.complete(); await page.complete(); await saving
+  assert.deepEqual(calls, ['me', 'phone-once', 'wxfile://tmp/avatar', '新昵称', 'me'])
+  assert.equal(env.storage.get('feilv_avatar_url'), AVATAR); assert.equal(env.storage.get('feilv_nickname'), '新昵称')
+  assert.equal(env.calls.navigation.at(-1).url, '/pages/my/my')
+  assert.equal(page.data.avatarDraft, ''); assert.equal(page.data.saving, false)
+})
+test('login inline: save validates phone and nickname; partial upload success is reused on retry', async () => {
+  const env = environment(); let value = profileValue({ nickname: '微信用户' }); let uploads = 0; let saves = 0
+  const page = await inlineLogin(env, {
+    async me() { return value },
+    async uploadAvatar() { uploads++; value = Object.assign({}, value, { avatarUrl: AVATAR }); return value },
+    async updateProfile(nickname) { if (++saves === 1) throw new Error('昵称保存失败'); value = Object.assign({}, value, { nickname }); return value }
+  })
+  await page.complete(); assert.equal(saves, 0)
+  page.nicknameInput({ detail: { value: '新昵称' } }); selectAvatar(page)
+  await page.complete(); assert.equal(uploads, 0, 'no writes until phone is bound')
+  value = Object.assign({}, value, { mobileBound: true }); page.applyProfile(value, page._profileRevision, page._profileUserId, true)
+  await page.complete(); assert.equal(uploads, 1); assert.equal(page.data.avatarDraft, '')
+  assert.equal(page.data.nickname, '新昵称'); assert.equal(env.calls.navigation.length, 0)
+  await page.complete(); assert.equal(uploads, 1); assert.equal(saves, 2); assert.equal(env.calls.navigation.length, 1)
+})
+test('login inline: failed me can retry without repeating login or discarding account', async () => {
+  const env = environment(); let attempts = 0
+  const page = await inlineLogin(env, { async me() { if (++attempts === 1) throw new Error('读取失败'); return profileValue() } })
+  assert.equal(page.data.profileStage, true); assert.equal(page.data.loaded, false); assert.equal(page.data.error, '读取失败')
+  assert.equal(env.storage.get('feilv_token'), 'token-1'); await page.load()
+  assert.equal(page.data.loaded, true); assert.equal(page.data.error, ''); assert.equal(env.calls.navigation.length, 0)
+})
+test('login inline: account switch during upload prevents nickname writes and late navigation', async () => {
+  const env = environment(); let resolve; let writes = 0
+  const page = await inlineLogin(env, { async me() { return profileValue({ nickname: '微信用户', mobileBound: true }) },
+    uploadAvatar() { return new Promise(r => { resolve = r }) }, async updateProfile() { writes++; return profileValue() } })
+  page.nicknameInput({ detail: { value: '新昵称' } }); selectAvatar(page)
+  const pending = page.complete(); await flush()
+  const session = env.load(path.join(native, 'utils/session.js'))
+  session.save({ token: 'other-token', userId: 2, role: 'USER', nickname: '其他用户' })
+  resolve(profileValue({ avatarUrl: AVATAR })); await pending
+  assert.equal(writes, 0); assert.equal(env.storage.get('feilv_nickname'), '其他用户'); assert.equal(env.calls.navigation.length, 0)
+})
+test('login inline: expired inline session restores login entry instead of stranding profile form', async () => {
+  const env = environment(); env.setPages([{ route: 'pages/login/login' }])
+  const page = env.page('pages/login/login'); page.onLoad({}); page.onShow(); page.consent({ detail: { value: ['yes'] } })
+  const pending = page.wechat(); await flush()
+  env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: { token: 'new', userId: 1, role: 'USER', nickname: '微信用户' } } })
+  await flush()
+  env.calls.requests[1].success({ statusCode: 401, data: { code: 401, msg: '过期' } }); await pending
+  assert.equal(page.data.profileStage, false); assert.equal(page.data.busy, false); assert.equal(env.storage.has('feilv_token'), false)
+  assert.equal(env.calls.navigation.length, 0)
+  page.consent({ detail: { value: ['yes'] } }); const retry = page.wechat(); await flush()
+  assert.equal(env.calls.requests.length, 3)
+  env.calls.requests[2].fail({}); await retry
+})
+test('login inline: native UI uses explicit avatar and nickname choices without obsolete profile APIs', () => {
+  const template = fs.readFileSync(path.join(native, 'pages/login/login.wxml'), 'utf8')
+  const source = fs.readFileSync(path.join(native, 'pages/login/login.js'), 'utf8')
+  assert.ok(template.includes('open-type="chooseAvatar"')); assert.ok(template.includes('type="nickname"'))
+  assert.ok(template.includes('open-type="getPhoneNumber"')); assert.ok(template.includes('保存并继续'))
+  assert.equal(/getUserProfile|getUserInfo|redirectTo/.test(source), false)
+})
+test('login layout: signed-in form has compact welcome, grouped fields and separate save actions', () => {
+  const template = fs.readFileSync(path.join(native, 'pages/login/login.wxml'), 'utf8')
+  const styles = fs.readFileSync(path.join(native, 'pages/login/login.wxss'), 'utf8')
+  assert.ok(template.includes('wx:if="{{!profileStage}}" class="login-intro"'))
+  assert.ok(template.includes('wx:else class="profile-welcome"'))
+  assert.ok(template.includes('class="profile-field nickname-field"'))
+  assert.ok(template.includes('class="profile-field phone-field"'))
+  assert.ok(template.includes('class="profile-save-actions"'))
+  assert.ok(template.includes('class="profile-privacy-note"'))
+  assert.ok(template.includes('class="bound-number"'))
+  assert.ok(styles.includes('.field-label-row .profile-label'))
+  assert.ok(styles.includes('.identity-preview .profile-avatar-button'))
+  assert.ok(styles.includes('@media (max-width: 350px)'))
+})
+test('main pages: home and account quick links preserve native navigation and login gates', async () => {
+  const env = environment()
+  const home = env.page('pages/index/index', {}); home.onLoad({}); home.onShow()
+  home.orders(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/list')
+  home.settings(); assert.equal(env.calls.navigation.at(-1).url, '/pages/settings/settings')
+  home.address(); assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
+  home.create({ currentTarget: { dataset: { type: 'SEND' } } }); assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
+  const my = env.page('pages/my/my', {}); my.onLoad({}); await my.onShow()
+  my.orders(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/list')
+  my.address(); assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
+  env.authenticated(); home.address(); assert.equal(env.calls.navigation.at(-1).url, '/pages/address/address')
+  my.address(); assert.equal(env.calls.navigation.at(-1).url, '/pages/address/address')
+  my.profile(); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=my')
+})
+test('main pages: layouts group identity, services and order routes without exposing extra profile fields', () => {
+  const home = fs.readFileSync(path.join(native, 'pages/index/index.wxml'), 'utf8')
+  const my = fs.readFileSync(path.join(native, 'pages/my/my.wxml'), 'utf8')
+  const orders = fs.readFileSync(path.join(native, 'pages/order/list.wxml'), 'utf8')
+  assert.ok(home.includes('class="home-orders"')); assert.ok(home.includes('MOCK')); assert.ok(home.includes('绑定手机号'))
+  assert.ok(my.includes('class="account-identity"')); assert.ok(my.includes('class="account-info"'))
+  assert.ok(my.includes('class="card menu-card account-menu"')); assert.ok(my.includes('bindtap="orders"'))
+  assert.ok(my.includes('wx:if="{{isRider}}"')); assert.ok(my.includes('wx:if="{{loggedIn}}"'))
+  assert.ok(orders.includes('class="order-route"')); assert.ok(orders.includes('status-{{item.status}}'))
+  assert.ok(orders.includes('data-id="{{item.id}}"')); assert.ok(orders.includes('class="amount-value"'))
+  assert.equal(/me\.(?:openid|mobileRaw|sessionKey)|item\.userMobile/.test(my + orders), false)
+})
+const regionAddress = (patch = {}) => Object.assign({ id: 11, contact: '王先生', phone: '13800000000', province: '贵州省', city: '铜仁市', district: '德江县', detailAddress: '青龙街道一号楼', address: '客户端旧地址', poiName: '南门', lng: 108, lat: 28, isDefault: 1 }, patch)
+function regionEvent(value) { return { detail: { value } } }
+test('address region: new addresses require confirmed region and detail and compose full payload', async () => {
+  const env = environment(); env.authenticated(); let saved
+  const page = env.page('pages/address/address', { async addAddress(data) { saved = data }, async addressList() { return [] } })
+  page.onLoad({}); page._visible = true
+  page.input(event('contact', '张三')); page.input(event('phone', '13800000000'))
+  page.input(event('detailAddress', '一号楼')); await page.save(); assert.equal(saved, undefined)
+  assert.equal(page.data.regionText, '', 'default picker cursor must not count as user selection')
+  page.regionChange(regionEvent(['贵州省', '铜仁市', '德江县']))
+  assert.equal(page.data.form.detailAddress, '', 'changing region must clear stale street detail')
+  page.input(event('detailAddress', ' 青龙街道一号楼 ')); await page.save()
+  assert.equal(saved.province, '贵州省'); assert.equal(saved.city, '铜仁市'); assert.equal(saved.district, '德江县')
+  assert.equal(saved.detailAddress, '青龙街道一号楼'); assert.equal(saved.address, '贵州省铜仁市德江县青龙街道一号楼')
+  assert.equal(saved.lng, null); assert.equal(saved.lat, null); assert.equal(page.data.regionText, '')
+})
+test('address region: edit restores structured fields; legacy remains readable and needs deliberate completion', () => {
+  const env = environment(); const page = env.page('pages/address/address', {}); page.onLoad({})
+  page.data.list = [regionAddress(), { id: 12, contact: '旧用户', address: '原街道未知地区', lng: 109, lat: 29 }]
+  page.edit({ currentTarget: { dataset: { id: 11 } } })
+  assert.equal(page.data.regionText, '贵州省 / 铜仁市 / 德江县'); assert.equal(page.data.form.detailAddress, '青龙街道一号楼')
+  page.regionChange(regionEvent(['贵州省', '铜仁市', '德江县'])); assert.equal(page.data.form.lng, 108)
+  page.regionChange(regionEvent(['贵州省', '铜仁市', '思南县'])); assert.equal(page.data.form.lng, null); assert.equal(page.data.form.detailAddress, '')
+  page.edit({ currentTarget: { dataset: { id: 12 } } })
+  assert.equal(page.data.legacyAddress, '原街道未知地区'); assert.equal(page.data.regionText, ''); assert.equal(page.data.form.detailAddress, '')
+  page.regionChange(regionEvent(['贵州省', '铜仁市'])); assert.equal(page.data.regionText, '')
+})
+test('address region: default updates preserve structured fields and selection exposes no owner metadata', async () => {
+  const env = environment(); env.authenticated(); let submitted; let emitted
+  const value = regionAddress({ userId: 999, extraSecret: 'not-for-client' })
+  const page = env.page('pages/address/address', { async updateAddress(id, data) { submitted = data }, async addressList() { return [value] } })
+  page.onLoad({ select: '1' }); page._visible = true; page.data.list = [value]
+  await page.setDefault({ currentTarget: { dataset: { id: 11 } } })
+  assert.equal(submitted.province, '贵州省'); assert.equal(submitted.detailAddress, '青龙街道一号楼')
+  page.getOpenerEventChannel = () => ({ emit(name, value) { emitted = value } })
+  page.select({ currentTarget: { dataset: { id: 11 } } })
+  assert.equal(emitted.id, 11); assert.equal(emitted.province, '贵州省'); assert.equal(emitted.userId, undefined); assert.equal(emitted.extraSecret, undefined)
+})
+test('address dropdown: selector fills only chosen side, including full address and coordinates, invalidates quote', async () => {
+  const env = environment(); env.authenticated()
+  const page = env.page('pages/order/create', { async addressList() { return [regionAddress()] } })
+  page.onLoad({}); await page.onShow()
+  assert.ok(page.data.addressOptions[0].label.includes('[默认]'))
+  page.data.quote = {}; page._quotedPayload = {}
+  page.addressChange({ currentTarget: { dataset: { side: 'to' } }, detail: { value: '0' } })
+  assert.equal(page.data.form.toContact, '王先生'); assert.equal(page.data.form.toPhone, '13800000000')
+  assert.equal(page.data.form.toAddress, '南门 贵州省铜仁市德江县青龙街道一号楼'); assert.equal(page.data.form.toLng, 108)
+  assert.equal(page.data.form.fromAddress, ''); assert.equal(page.data.quote, null); assert.equal(page.data.toAddressId, 11)
+  page.input(event('toAddress', '不能手工覆盖')); assert.ok(page.data.form.toAddress.includes('青龙街道'))
+  page.addressChange({ currentTarget: { dataset: { side: 'from' } }, detail: { value: '99' } }); assert.equal(page.data.form.fromAddress, '')
+})
+test('address dropdown: reloading edited/deleted saved address invalidates stale quote without overwriting contact edits', async () => {
+  const env = environment(); env.authenticated(); let list = [regionAddress()]
+  const page = env.page('pages/order/create', { async addressList() { return list } }); page.onLoad({}); await page.onShow()
+  page.addressChange({ currentTarget: { dataset: { side: 'from' } }, detail: { value: '0' } })
+  page.input(event('fromContact', '本单联系人')); page.data.quote = {}
+  list = [regionAddress({ detailAddress: '二号楼', lng: null, lat: null })]; await page.loadAddresses()
+  assert.equal(page.data.form.fromContact, '本单联系人'); assert.ok(page.data.form.fromAddress.endsWith('二号楼')); assert.equal(page.data.form.fromLng, null); assert.equal(page.data.quote, null)
+  page.data.quote = {}; list = []; await page.loadAddresses()
+  assert.equal(page.data.form.fromAddress, ''); assert.equal(page.data.fromAddressId, null); assert.equal(page.data.quote, null)
+})
+test('address dropdown: failure is retryable; old address-list and selection callbacks cannot cross accounts', async () => {
+  const env = environment(); env.authenticated(); let resolve; let fail = true
+  const page = env.page('pages/order/create', { addressList() { if (fail) throw new Error('读取地址失败'); return new Promise(r => { resolve = r }) } })
+  page.onLoad({}); await page.onShow(); assert.equal(page.data.addressError, '读取地址失败'); assert.equal(page.data.addressLoading, false)
+  fail = false; page.address({ currentTarget: { dataset: { side: 'to' } } }); const eventChannel = env.calls.navigation.at(-1).events
+  const pending = page.loadAddresses()
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'other', userId: 2, role: 'USER', nickname: '其他人' })
+  eventChannel.addressSelected(regionAddress()); resolve([regionAddress()]); await pending
+  assert.equal(page.data.form.toAddress, ''); assert.equal(page.data.addressOptions.length, 0)
+})
+test('address UI: region picker plus street detail and saved-address dropdown replace freeform order addresses', () => {
+  const address = fs.readFileSync(path.join(native, 'pages/address/address.wxml'), 'utf8')
+  const order = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8')
+  assert.ok(address.includes('mode="region"')); assert.ok(address.includes('data-field="detailAddress"'))
+  assert.ok(order.includes('range-key="label"')); assert.ok(order.includes('data-side="from" bindchange="addressChange"'))
+  assert.ok(order.includes('data-side="to" bindchange="addressChange"'))
+  assert.equal(/<input[^>]*data-field="(?:fromAddress|toAddress|address)"/.test(address + order), false)
+})
+test('phone binding: My exposes explicit entry and phone-only completion never changes nickname or avatar', async () => {
+  const env = environment(); env.authenticated(); env.setPages([{ route: 'pages/my/my' }, { route: 'pages/profile/profile' }])
+  const my = env.page('pages/my/my', { async me() { return profileValue() } }); my.onLoad({}); await my.onShow()
+  assert.equal(my.data.me.mobileBound, false); my.phone(); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=my&mode=phone')
+  let binds = 0
+  const page = env.page('pages/profile/profile', { async me() { return profileValue({ nickname: '微信用户' }) }, async bindWechatPhone() { binds++; return profileValue({ nickname: '微信用户', mobileBound: true, mobile: '138****8000' }) } })
+  page.onLoad({ from: 'my', mode: 'phone' }); await page.onShow(); assert.equal(page.data.phoneOnly, true)
+  const before = env.calls.navigation.length; page.complete(); assert.equal(env.calls.navigation.length, before)
+  page.preparePhone(); await page.bindPhone(phoneEvent('verified-once'))
+  assert.equal(binds, 1); assert.equal(page.data.mobileBound, true); assert.equal(page.data.phoneError, '')
+  page.complete(); assert.equal(env.calls.navigation.at(-1).back, true); assert.equal(env.storage.get('feilv_nickname'), '微信用户')
+})
+test('phone binding: unconfirmed server response cannot show success; fresh authorization permits retry', async () => {
+  const env = environment(); let attempts = 0
+  const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { attempts++; return profileValue({ mobileBound: attempts > 1, mobile: attempts > 1 ? '138****8000' : '' }) } })
+  page.preparePhone(); await page.bindPhone(phoneEvent('first'))
+  assert.equal(page.data.mobileBound, false); assert.ok(page.data.phoneError.includes('尚未确认'))
+  assert.equal(env.calls.toast.includes('手机号已绑定'), false)
+  page.preparePhone(); await page.bindPhone(phoneEvent('second'))
+  assert.equal(page.data.mobileBound, true); assert.equal(page.data.phoneError, ''); assert.equal(attempts, 2)
+})
+test('phone binding: missing capability/code and denial have actionable errors without raw event leakage', async () => {
+  const env = environment(); let binds = 0
+  const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { binds++ } })
+  page.preparePhone(); await page.bindPhone({ detail: { errMsg: 'getPhoneNumber:fail internal-private-value', phoneNumber: '13800138000' } })
+  assert.ok(page.data.phoneError.includes('开通手机号能力')); assert.equal(page.data.phoneError.includes('internal-private-value'), false)
+  page.preparePhone(); await page.bindPhone(phoneEvent('', 'getPhoneNumber:fail user deny'))
+  assert.ok(page.data.phoneError.includes('仍可返回浏览')); assert.equal(binds, 0); assert.equal(env.storage.get('feilv_token'), 'token-1')
+})
+test('phone binding: server conflict, capacity and expired authorization preserve account and display binding error', async () => {
+  for (const code of [400, 409, 429, 503]) {
+    const env = environment()
+    const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { throw Object.assign(new Error('授权未完成-' + code), { code }) } })
+    page.preparePhone(); await page.bindPhone(phoneEvent('code-' + code))
+    assert.equal(page.data.mobileBound, false); assert.equal(page.data.binding, false)
+    assert.equal(page.data.phoneError, '授权未完成-' + code); assert.equal(env.storage.get('feilv_token'), 'token-1')
+  }
+})
+test('phone binding: phone-only UI hides nickname/avatar forms and exposes native authorization and feedback', () => {
+  const profile = fs.readFileSync(path.join(native, 'pages/profile/profile.wxml'), 'utf8')
+  const my = fs.readFileSync(path.join(native, 'pages/my/my.wxml'), 'utf8')
+  assert.ok(my.includes('bindtap="phone"')); assert.ok(my.includes('手机号绑定'))
+  assert.ok(profile.includes('wx:if="{{loaded && !phoneOnly}}"'))
+  assert.ok(profile.includes('open-type="getPhoneNumber"')); assert.ok(profile.includes('phoneError'))
+  assert.ok(profile.includes('完成，返回我的'))
+})
+test('phone binding: expired inline binding session returns to login, not a false bound state', async () => {
+  const env = environment(); env.authenticated(); env.setPages([{ route: 'pages/login/login' }])
+  const page = env.page('pages/login/login'); page.onLoad({}); const showing = page.onShow()
+  env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await showing
+  page.preparePhone(); const binding = page.bindPhone(phoneEvent('expired-session-code'))
+  env.calls.requests[1].success({ statusCode: 401, data: { code: 401 } }); await binding
+  assert.equal(page.data.profileStage, false); assert.equal(page.data.mobileBound, false); assert.equal(page.data.binding, false)
+  assert.equal(env.storage.has('feilv_token'), false)
+})
+test('order UI: home service hierarchy and create form keep saved-address selectors ahead of contacts', () => {
+  const home = fs.readFileSync(path.join(native, 'pages/index/index.wxml'), 'utf8')
+  const styles = fs.readFileSync(path.join(native, 'pages/index/index.wxss'), 'utf8')
+  const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8')
+  assert.ok(home.includes('class="home-shortcuts"')); assert.ok(home.includes('bindtap="address"'))
+  assert.ok(styles.includes('.home-page .service-SEND')); assert.ok(styles.includes('width: 48.5%'))
+  assert.ok(create.indexOf('data-side="from" bindchange="addressChange"') < create.indexOf('id="from-contact"'))
+  assert.ok(create.indexOf('data-side="to" bindchange="addressChange"') < create.indexOf('id="to-contact"'))
+  assert.ok(create.includes('距离为手工预估')); assert.ok(create.includes('disabled="{{busy || addressLoading}}"'))
+})
+test('order UI: details prioritize next action and retain all state branches, privacy and MOCK notices', () => {
+  const detail = fs.readFileSync(path.join(native, 'pages/order/detail.wxml'), 'utf8')
+  for (const state of ['WAIT_PAY', 'WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED', 'CANCELED']) {
+    assert.ok(detail.includes("order.status === '" + state + "'"))
+  }
+  for (const flag of ['canPay', 'canConfirm', 'canCancel', 'canReview', 'canComplain']) assert.ok(detail.includes('wx:if="{{order.' + flag + '}}"'))
+  assert.ok(detail.indexOf('bindtap="pay"') < detail.indexOf('配送路线'))
+  assert.ok(detail.indexOf('bindtap="confirm"') < detail.indexOf('配送路线'))
+  assert.ok(detail.includes('wx:if="{{order.pickupCode}}"')); assert.ok(detail.includes('不要泄露给无关人员'))
+  assert.ok(detail.includes('不发生真实扣款')); assert.ok(detail.includes('退款仅为模拟'))
+  assert.ok(detail.includes('disabled="{{busy || loading}}"')); assert.ok(detail.includes('service-state-{{order.status}}'))
+})
+test('order UI: confirmation keeps retry and uncertain-submit protections visible and native', () => {
+  const confirm = fs.readFileSync(path.join(native, 'pages/order/confirm.wxml'), 'utf8')
+  assert.ok(confirm.includes('wx:if="{{invalid}}"')); assert.ok(confirm.includes('wx:if="{{uncertain}}"'))
+  assert.ok(confirm.includes('wx:elif="{{orderId}}"')); assert.ok(confirm.includes('disabled="{{busy || uncertain}}"'))
+  assert.ok(confirm.includes('服务端未提供幂等键')); assert.ok(confirm.includes('不会重复创建'))
+  assert.ok(confirm.includes('不发生真实扣款')); assert.ok(confirm.includes('MOCK 支付'))
+  assert.ok(confirm.includes('{{draft.fromContact}}')); assert.ok(confirm.includes('{{draft.toPhone}}'))
+  for (const page of ['create', 'list', 'confirm', 'detail']) {
+    const css = fs.readFileSync(path.join(native, 'pages/order/' + page + '.wxss'), 'utf8')
+    assert.ok(css.includes('max-width: 960rpx')); assert.ok(css.includes('@media (max-width: 350px)'))
+  }
+})
+test('order details: MOCK pay, cancel and receipt actions retain correct APIs and refresh state', async () => {
+  for (const action of ['pay', 'cancel', 'confirm']) {
+    const env = environment(); env.authenticated(); const calls = []
+    let value = { id: 25, orderNo: 'LONG-ORDER-25', orderType: 'SEND', status: action === 'confirm' ? 'DELIVERED' : 'WAIT_PAY', realFeeFen: 1200, fromAddress: '长地址'.repeat(40), toAddress: '送达地址' }
+    const page = env.page('pages/order/detail', {
+      async orderDetail(id) { assert.equal(id, 25); return value },
+      async payOrder(id) { calls.push(['pay', id]); value = Object.assign({}, value, { status: 'WAIT_GRAB' }) },
+      async cancelOrder(id, reason) { calls.push(['cancel', id, reason]); return Object.assign({}, value, { status: 'CANCELED' }) },
+      async confirmOrder(id) { calls.push(['confirm', id]); return Object.assign({}, value, { status: 'FINISHED' }) }
+    })
+    page.onLoad({ id: '25' }); await page.onShow()
+    page.input(event('cancelReason', '  计划改变  ')); await page[action]()
+    assert.equal(calls.length, 1); assert.equal(calls[0][0], action); assert.equal(calls[0][1], 25)
+    if (action === 'cancel') assert.equal(calls[0][2], '计划改变')
+    assert.equal(page.data.order.status, { pay: 'WAIT_GRAB', cancel: 'CANCELED', confirm: 'FINISHED' }[action])
+    assert.equal(page.data.order.feeText, '12.00'); assert.equal(page.data.busy, false)
+    page.track(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/track?id=25')
+  }
+})
+test('order details: cancelled confirmations do not mutate orders and failed actions recover loading state', async () => {
+  for (const action of ['pay', 'cancel', 'confirm']) {
+    const env = environment({ showModal(options) { options.success({ confirm: false, cancel: true }) } }); env.authenticated(); let calls = 0
+    const api = { async orderDetail() { return { id: 9, status: 'DELIVERED' } }, async payOrder() { calls++; throw new Error('操作失败') }, async cancelOrder() { calls++; throw new Error('操作失败') }, async confirmOrder() { calls++; throw new Error('操作失败') } }
+    const page = env.page('pages/order/detail', api); page.onLoad({ id: '9' }); await page.onShow()
+    await page[action](); assert.equal(calls, 0); assert.equal(page.data.busy, false)
+    env.wx.showModal = options => options.success({ confirm: true })
+    await page[action](); assert.equal(calls, 1); assert.equal(page.data.order.status, 'DELIVERED'); assert.equal(page.data.busy, false)
+    assert.ok(env.calls.toast.includes('操作失败'))
+  }
+})
+test('order details: review and complaint form selections still submit only current order data', async () => {
+  const env = environment(); env.authenticated(); let review; let complaint
+  const page = env.page('pages/order/detail', {
+    async orderDetail() { return { id: 33, status: 'FINISHED' } },
+    async review(data) { review = data }, async complaint(data) { complaint = data; return { ticketId: 66, sla: '等待客服处理' } }
+  })
+  page.onLoad({ id: '33' }); await page.onShow()
+  page.starsChange({ detail: { value: '3' } }); page.input(event('content', '  服务很好  ')); await page.review()
+  assert.equal(review.orderId, 33); assert.equal(review.stars, 4); assert.equal(review.content, '服务很好')
+  assert.equal(page.data.reviewed, true); assert.equal(env.storage.get('native_review_1_33'), true)
+  await page.complaint(); assert.equal(complaint, undefined)
+  page.complaintChange({ detail: { value: '1' } }); page.input(event('complaintDescription', '  包装破损  ')); await page.complaint()
+  assert.equal(complaint.orderId, 33); assert.equal(complaint.type, 'DAMAGE'); assert.equal(complaint.description, '包装破损')
+  assert.ok(page.data.ticket.includes('66')); assert.equal(page.data.complaintDescription, '')
 })
 ;(async () => {
   let failures = 0

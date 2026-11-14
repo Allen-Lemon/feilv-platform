@@ -1,4 +1,28 @@
-<view class="page"><view class="card" wx:if="{{loggedIn}}"><image wx:if="{{avatarUrl}}" class="profile-avatar" src="{{avatarUrl}}" mode="aspectFill"/><view wx:else class="profile-avatar avatar-default">头像</view><view class="title">{{nickname}}</view><text class="tag">{{roleText}}</text><view class="hint" wx:if="{{me}}">{{me.mobile}}</view><view class="error" wx:if="{{error}}">{{error}}</view><button class="secondary" wx:if="{{error}}" bindtap="load" disabled="{{loading}}">重新读取资料</button><button class="secondary" bindtap="profile" disabled="{{loading}}">账号资料 · 头像 / 昵称 / 手机号</button><view class="hint">下单前须绑定手机号并保存昵称；头像可保留默认。配送联系人电话仍需在订单表单填写。</view></view><view class="card" wx:else><view class="title">您好，欢迎来到飞毛腿</view><button class="primary" bindtap="login">登录 / 注册</button></view>
-<view class="card"><view class="title">我的服务</view><button class="secondary" bindtap="address">地址簿管理</button><button wx:if="{{isRider}}" class="primary" bindtap="workbench">进入骑手工作台</button><button wx:else class="secondary" bindtap="rider">申请骑手入驻</button></view>
-<view class="card"><button class="secondary" bindtap="settings">服务连接设置</button><button class="secondary" bindtap="privacy">隐私与使用说明</button><button class="danger" wx:if="{{loggedIn}}" bindtap="logout" disabled="{{loading}}">退出登录</button><view class="hint">原生微信小程序 · 支付为 MOCK 演示；支持主动上传头像；未接入真实支付、送达照片凭证或 OCR。短信登录仍为演示，生产须接入真实短信或禁用入口。</view></view>
+<view class="page account-page">
+  <view class="page-head account-head"><view class="eyebrow">我的飞毛腿</view><view class="title">把生活，安排妥当</view><view class="page-desc">账号资料与常用服务，都在这里</view></view>
+  <view class="card account-card" wx:if="{{loggedIn}}">
+    <view class="account-identity"><image wx:if="{{avatarUrl}}" class="account-avatar" src="{{avatarUrl}}" mode="aspectFill"/><view wx:else class="account-avatar account-avatar-default">飞</view><view class="account-info"><view class="account-name">{{nickname}}</view><text class="account-role">{{roleText}}</text><view class="account-mobile" wx:if="{{me}}">{{me.mobile}}</view><view class="account-mobile" wx:elif="{{loading}}">正在同步账号资料…</view></view></view>
+    <view class="account-error" wx:if="{{error}}"><view class="error">{{error}}</view><button class="text-button retry-button" bindtap="load" disabled="{{loading}}">重新读取资料</button></view>
+    <button wx:if="{{me && !me.mobileBound}}" class="account-phone-bind" bindtap="phone" disabled="{{loading}}">授权绑定手机号，完成下单准备 →</button>
+    <button class="account-profile-link" bindtap="profile" disabled="{{loading}}" hover-class="tap-feedback"><view class="grow"><view class="profile-link-title">管理账号资料</view><view class="profile-link-caption">头像、昵称与手机号</view></view><view class="chevron"></view></button>
+  </view>
+  <view class="card account-card guest-card" wx:else><view class="account-identity"><view class="account-avatar account-avatar-default">飞</view><view class="account-info"><view class="account-name">欢迎来到飞毛腿</view><view class="account-mobile">登录后查看资料与订单</view></view></view><button class="primary" bindtap="login">登录 / 注册</button></view>
+
+  <view class="account-section-title">常用服务</view>
+  <view class="card menu-card account-menu">
+    <button class="menu-button" bindtap="orders" hover-class="tap-feedback"><view class="menu-icon">单</view><view class="grow"><view class="menu-title">我的订单</view><view class="menu-caption">查看配送进度与历史订单</view></view><view class="chevron"></view></button>
+    <button class="menu-button" bindtap="address" hover-class="tap-feedback"><view class="menu-icon address-icon">址</view><view class="grow"><view class="menu-title">地址簿</view><view class="menu-caption">管理常用取件、收件地址</view></view><view class="chevron"></view></button>
+    <button wx:if="{{isRider}}" class="menu-button" bindtap="workbench" hover-class="tap-feedback"><view class="menu-icon rider-icon">骑</view><view class="grow"><view class="menu-title">骑手工作台</view><view class="menu-caption">接单与配送工作入口</view></view><view class="chevron"></view></button>
+    <button wx:else class="menu-button" bindtap="rider" hover-class="tap-feedback"><view class="menu-icon rider-icon">骑</view><view class="grow"><view class="menu-title">成为骑手</view><view class="menu-caption">了解并申请骑手入驻</view></view><view class="chevron"></view></button>
+  </view>
+
+  <view class="account-section-title">设置与说明</view>
+  <view class="card menu-card account-menu">
+    <button wx:if="{{loggedIn}}" class="menu-button" bindtap="phone" disabled="{{loading}}" hover-class="tap-feedback"><view class="menu-icon neutral-icon">绑</view><view class="grow"><view class="menu-title">手机号绑定</view><view class="menu-caption">{{me ? me.mobile : '查看或授权绑定微信手机号'}}</view></view><view class="chevron"></view></button>
+    <button class="menu-button" bindtap="privacy" hover-class="tap-feedback"><view class="menu-icon neutral-icon">隐</view><view class="grow"><view class="menu-title">隐私与使用说明</view><view class="menu-caption">了解资料使用与服务边界</view></view><view class="chevron"></view></button>
+    <button class="menu-button" bindtap="settings" hover-class="tap-feedback"><view class="menu-icon neutral-icon">设</view><view class="grow"><view class="menu-title">服务连接设置</view><view class="menu-caption">服务地址与联调配置</view></view><view class="chevron"></view></button>
+  </view>
+  <view class="account-tip" wx:if="{{loggedIn}}">下单前须绑定手机号并保存昵称；头像可保留默认，配送联系电话需在订单中另行填写。</view>
+  <button class="account-logout" wx:if="{{loggedIn}}" bindtap="logout" disabled="{{loading}}">退出当前账号</button>
+  <view class="account-demo"><text class="demo-label">演示说明</text><view>支付为 MOCK，不发生真实扣款。短信与骑手审核仍有演示逻辑，生产须接入真实短信或停用入口；未接入送达照片凭证、OCR。</view></view>
 </view>

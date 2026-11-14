@@ -18,12 +18,14 @@ definePage({
         if (!session.updateProfile(me, userId, revision)) throw new Error('账户资料响应无效，请重试')
         // 未绑定可浏览；下单使用实时 me 门禁。号码只展示脱敏值，不写入本机。
         const masked = typeof me.mobile === 'string' && /^\d{3}\*{4}\d{4}$/.test(me.mobile) ? me.mobile : ''
-        this.safeSet({ me: { userId: me.userId, mobile: me.mobileBound ? (masked || '手机号已绑定') : '尚未绑定手机号（下单必填）' }, nickname: me.nickname || this.data.nickname, avatarUrl: avatarURL(me.avatarUrl), error: '' })
+        this.safeSet({ me: { userId: me.userId, mobileBound: me.mobileBound === true, mobile: me.mobileBound ? (masked || '手机号已绑定') : '尚未绑定手机号（下单必填）' }, nickname: me.nickname || this.data.nickname, avatarUrl: avatarURL(me.avatarUrl), error: '' })
       } catch (e) { this.safeSet({ error: e.message }); throw e }
     })
   },
   login() { session.login() },
+  orders() { wx.switchTab({ url: '/pages/order/list' }) },
   profile() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/profile/profile?from=my' }) },
+  phone() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/profile/profile?from=my&mode=phone' }) },
   address() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/address/address' }) },
   rider() { wx.navigateTo({ url: '/pages/rider/register' }) },
   workbench() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/rider/workbench' }) },

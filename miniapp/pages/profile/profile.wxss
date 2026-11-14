@@ -9,6 +9,8 @@
   background: #EDF7F2;
 }
 
+.phone-error { margin: 16rpx 0; padding: 18rpx; border-radius: 14rpx; background: #FEF3F2; font-size: 24rpx; line-height: 1.7; }
+
 .phone-status .hint {
   margin-bottom: 0;
 }

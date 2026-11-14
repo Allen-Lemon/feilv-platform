@@ -54,6 +54,8 @@ public class WechatPhoneClient {
             }
             // A phone authorization code is independent of the platform login session: never business 401.
             if (error == 40029 || error == 40163 || error == 41008 || error == 41024) throw invalidAuthorization();
+            if (error == 48001) throw BizException.of(503, "微信手机号服务权限未开通，请联系管理员");
+            if (error == 45009 || error == 45011) throw BizException.of(429, "微信手机号服务调用额度已达上限或请求过于频繁，请稍后重试");
             if (error != 0) throw invalidResponse();
             JsonNode phone = body.path("phone_info");
             JsonNode mobile = phone.path("purePhoneNumber");

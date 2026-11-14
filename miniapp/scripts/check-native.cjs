@@ -69,6 +69,8 @@ for (const page of app.pages) {
       require(name) {
         if (name.endsWith('/page')) return { definePage(value) { definition = value } }
         if (name.endsWith('/format')) return require(path.join(root, 'utils/format.js'))
+        if (name.endsWith('/profile-page')) return require(path.join(root, 'utils/profile-page.js'))
+        if (name.endsWith('/address')) return require(path.join(root, 'utils/address.js'))
         return {}
       }
     }, { filename: js })
