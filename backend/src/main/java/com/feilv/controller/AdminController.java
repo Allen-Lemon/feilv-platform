@@ -11,7 +11,9 @@ import com.feilv.repository.UserRepository;
 import com.feilv.service.ComplaintService;
 import com.feilv.service.OrderService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
+import com.feilv.service.AdminMenuAccess;
+import com.feilv.service.AdminOrderService;
+import com.feilv.service.AdminQueryParameters;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -40,6 +42,8 @@ public class AdminController {
     private final PayRecordRepository payRecordRepository;
     private final ComplaintRepository complaintRepository;
     private final UserRepository userRepository;
+    private final AdminOrderService adminOrderService;
+    private final AdminMenuAccess adminMenuAccess;
 
     /** 经营看板（对应功能设计文档7.6） */
     @GetMapping("/stats")
@@ -61,18 +65,18 @@ public class AdminController {
 
     /** 订单监控：全量订单分页 */
     @GetMapping("/orders")
-    public Result<?> orders(@RequestParam(defaultValue = "0") int page,
-                             @RequestParam(required = false) String status) {
-        var pageable = PageRequest.of(page, 15);
-        var pageData = (status == null || status.isBlank())
-                ? orderRepository.findAllByOrderByCreatedTimeDesc(pageable)
-                : orderRepository.findByStatus(OrderStatus.valueOf(status), pageable);
-        return Result.ok(pageData.map(orderService::toVO));
+    public Result<?> orders(@RequestParam(defaultValue = "0") String page,
+                             @RequestParam(required = false) String status,
+                             @RequestParam(required = false) String userId) {
+        adminMenuAccess.requireMenu("orders");
+        return Result.ok(adminOrderService.list(AdminQueryParameters.page(page),
+                userId == null ? null : AdminQueryParameters.id(userId), AdminQueryParameters.orderStatus(status)));
     }
 
     /** 人工取消（订单干预，必填原因，生产落审计日志） */
     @PostMapping("/orders/{id}/cancel")
     public Result<?> cancelOrder(@PathVariable long id, @RequestBody Map<String, String> body) {
+        adminMenuAccess.requireMenu("orders");
         OrderMain order = orderService.mustGet(id);
         String reason = body == null ? "" : body.getOrDefault("reason", "");
         if (reason.isBlank()) return Result.fail(400, "干预取消原因不能为空");
@@ -83,6 +87,7 @@ public class AdminController {
 
     @PostMapping("/orders/{id}/complete")
     public Result<?> forceComplete(@PathVariable long id, @RequestBody Map<String, String> body) {
+        adminMenuAccess.requireMenu("orders");
         OrderMain order = orderService.mustGet(id);
         if (order.getStatus() != OrderStatus.DELIVERED) return Result.fail(4090, "只有已送达订单可以强制完成");
         String reason = body == null ? "" : body.getOrDefault("reason", "");

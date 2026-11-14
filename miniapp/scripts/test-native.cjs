@@ -9,7 +9,7 @@ const test = (name, fn) => tests.push({ name, fn })
 const flush = () => new Promise(resolve => setImmediate(resolve))
 function environment(overrides = {}) {
   const storage = new Map()
-  const calls = { requests: [], toast: [], navigation: [], locations: 0 }
+  const calls = { requests: [], uploads: [], toast: [], navigation: [], locations: 0 }
   const timers = new Map()
   let timerId = 0
   let definition
@@ -17,6 +17,9 @@ function environment(overrides = {}) {
   const wx = {
     getStorageSync: k => storage.get(k), setStorageSync: (k, v) => storage.set(k, v), removeStorageSync: k => storage.delete(k),
     request(options) { calls.requests.push(options) },
+    uploadFile(options) { calls.uploads.push(options) },
+    getFileInfo(options) { options.success({ size: 1024 }) },
+    getImageInfo(options) { options.success({ type: 'jpeg' }) },
     showToast(value) { calls.toast.push(value.title) },
     navigateTo(value) { calls.navigation.push(value); if (value.complete) value.complete() },
     redirectTo(value) { calls.navigation.push(value) }, navigateBack() { calls.navigation.push({ back: true }) }, switchTab(value) { calls.navigation.push(value) },
@@ -233,8 +236,8 @@ test('address: select event returns whitelisted data and native create populates
   address.getOpenerEventChannel = () => ({ emit(name, data) { assert.equal(name, 'addressSelected'); selected = data } })
   address.select({ currentTarget: { dataset: { id: 11 } } })
   assert.equal(selected.contact, '王先生'); assert.equal('userId' in selected, false)
-  const create = env.page('pages/order/create', {})
-  create.onLoad({ type: 'SEND' })
+  const create = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) } })
+  create.onLoad({ type: 'SEND' }); create._visible = true
   create.address({ currentTarget: { dataset: { side: 'to' } } })
   env.calls.navigation.at(-1).events.addressSelected(selected)
   assert.equal(create.data.form.toContact, '王先生'); assert.equal(create.data.form.toAddress, '南门 一号楼'); assert.equal(create.data.form.toLng, 108)
@@ -303,8 +306,8 @@ test('orders: known create success + pay failure retries same order without dupl
   const env = environment(); env.authenticated()
   env.storage.set('native_draft', { owner: 1, savedAt: 123, payload: { orderType: 'SEND' }, quote: { totalText: '5.00' } })
   let creates = 0; let pays = 0
-  const page = env.page('pages/order/confirm', { async orderDetail() { return { id: 88, status: 'WAIT_PAY' } }, async createOrder() { creates++; return { id: 88 } }, async payOrder(id) { assert.equal(id, 88); if (++pays === 1) throw new Error('network') } })
-  page.onLoad({}); await page.submit(); assert.equal(page.data.orderId, 88)
+  const page = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async orderDetail() { return { id: 88, status: 'WAIT_PAY' } }, async createOrder() { creates++; return { id: 88 } }, async payOrder(id) { assert.equal(id, 88); if (++pays === 1) throw new Error('network') } })
+  page.onLoad({}); page.onShow(); await page.submit(); assert.equal(page.data.orderId, 88)
   await page.submit(); assert.equal(creates, 1); assert.equal(pays, 2)
   assert.equal(env.storage.has('native_draft'), false)
 })
@@ -312,8 +315,8 @@ test('orders: uncertain create response blocks blind resubmit and persists acros
   const env = environment(); env.authenticated()
   env.storage.set('native_draft', { owner: 1, savedAt: 123, payload: { orderType: 'SEND' }, quote: {} })
   let creates = 0
-  const api = { async createOrder() { creates++; throw new Error('timeout') } }
-  const page = env.page('pages/order/confirm', api); page.onLoad({})
+  const api = { async me() { return profileValue({ mobileBound: true }) }, async createOrder() { creates++; throw new Error('timeout') } }
+  const page = env.page('pages/order/confirm', api); page.onLoad({}); page.onShow()
   await page.submit(); assert.equal(page.data.uncertain, true)
   await page.submit(); assert.equal(creates, 1)
   const reopened = env.page('pages/order/confirm', api); reopened.onLoad({})
@@ -326,7 +329,7 @@ test('orders: paginated list advances on success and stops on last page', async 
   assert.equal(pages.join(','), '0,1'); assert.equal(page.data.list.length, 2); assert.equal(page.data.hasMore, false)
 })
 test('quote: changes invalidate old quote and validate contacts/distance/weight', () => {
-  const env = environment(); const page = env.page('pages/order/create', {})
+  const env = environment(); const page = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) } })
   page.onLoad({ type: 'BUY' })
   assert.throws(() => page.buildPayload(), /联系人/)
   Object.assign(page.data.form, { fromContact: '甲', fromPhone: '13800000000', fromAddress: 'A', toContact: '乙', toPhone: '13900000000', toAddress: 'B', goodsDesc: '文件' })
@@ -338,17 +341,17 @@ test('quote: changes invalidate old quote and validate contacts/distance/weight'
 test('orders: returning to unchanged create form preserves known and uncertain pending order', async () => {
   for (const pendingFields of [{ id: 88 }, { uncertain: true }]) {
     const env = environment(); env.authenticated()
-    const create = env.page('pages/order/create', {})
-    create.onLoad({ type: 'SEND' })
+    const create = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) } })
+    create.onLoad({ type: 'SEND' }); create._visible = true
     Object.assign(create.data.form, { fromContact: '甲', fromPhone: '13800000000', fromAddress: 'A', toContact: '乙', toPhone: '13900000000', toAddress: 'B', goodsDesc: '文件' })
     create.data.distanceKm = '2'; create.data.weightKg = '5'
     create._quotedPayload = create.buildPayload(); create.data.quote = { totalText: '5.00' }
-    create.next()
+    await create.next()
     const first = env.storage.get('native_draft')
     env.storage.set('native_pending_order', Object.assign({ owner: 1, savedAt: first.savedAt }, pendingFields))
-    create.next()
+    await create.next()
     assert.equal(env.storage.get('native_draft').savedAt, first.savedAt)
-    const confirm = env.page('pages/order/confirm', {})
+    const confirm = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) },})
     confirm.onLoad({})
     assert.equal(confirm.data.orderId, pendingFields.id || null)
     assert.equal(confirm.data.uncertain, !!pendingFields.uncertain)
@@ -358,8 +361,8 @@ test('orders: old payment callback cannot delete replacement draft and pending m
   const env = environment(); env.authenticated()
   env.storage.set('native_draft', { owner: 1, savedAt: 100, payload: { orderType: 'SEND' }, quote: {} })
   let paid
-  const page = env.page('pages/order/confirm', { async createOrder() { return { id: 88 } }, payOrder: () => new Promise(resolve => { paid = resolve }) })
-  page.onLoad({}); const pending = page.submit(); await flush()
+  const page = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async createOrder() { return { id: 88 } }, payOrder: () => new Promise(resolve => { paid = resolve }) })
+  page.onLoad({}); page.onShow(); const pending = page.submit(); await flush()
   assert.equal(typeof paid, 'function')
   page.onUnload()
   env.storage.set('native_draft', { owner: 1, savedAt: 200, payload: { orderType: 'BUY' }, quote: {} })
@@ -373,8 +376,8 @@ test('orders: old create success cannot overwrite a new draft pending marker', a
   const env = environment(); env.authenticated()
   env.storage.set('native_draft', { owner: 1, savedAt: 100, payload: { orderType: 'SEND' }, quote: {} })
   let created; let pays = 0
-  const page = env.page('pages/order/confirm', { createOrder: () => new Promise(resolve => { created = resolve }), async payOrder() { pays++ } })
-  page.onLoad({}); const pending = page.submit(); await flush()
+  const page = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, createOrder: () => new Promise(resolve => { created = resolve }), async payOrder() { pays++ } })
+  page.onLoad({}); page.onShow(); const pending = page.submit(); await flush()
   page.onUnload()
   env.storage.set('native_draft', { owner: 1, savedAt: 200, payload: { orderType: 'BUY' }, quote: {} })
   env.storage.set('native_pending_order', { owner: 1, savedAt: 200, uncertain: true })
@@ -388,8 +391,8 @@ test('orders: payment retry detects accepted order instead of paying again forev
   env.storage.set('native_draft', { owner: 1, savedAt: 100, payload: { orderType: 'SEND' }, quote: {} })
   env.storage.set('native_pending_order', { owner: 1, savedAt: 100, id: 88 })
   let pays = 0
-  const page = env.page('pages/order/confirm', { async orderDetail(id) { return { id, status: 'ACCEPTED' } }, async payOrder() { pays++ } })
-  page.onLoad({}); page._visible = true; await page.submit()
+  const page = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async orderDetail(id) { return { id, status: 'ACCEPTED' } }, async payOrder() { pays++ } })
+  page.onLoad({}); page.onShow(); page._visible = true; await page.submit()
   assert.equal(pays, 0)
   assert.equal(env.storage.has('native_pending_order'), false)
   assert.equal(env.storage.has('native_draft'), false)
@@ -668,7 +671,7 @@ test('profile: My entry and refresh preserve draft nickname without resetting re
   const profile = await readyProfile(env, { async me() { return profileValue() } })
   profile.input({ detail: { value: '未保存编辑' } }); await profile.load(); assert.equal(profile.data.nickname, '未保存编辑')
 })
-test('login: SMS finish remains back-or-My and never redirects to profile', async () => {
+test('login: SMS redirects to profile to read me using the new authenticated session', async () => {
   for (const count of [1, 2]) {
     const env = environment(); env.setPages(Array.from({ length: count }, () => ({ route: 'pages/login/login' })))
     const page = env.page('pages/login/login'); page.onLoad({}); page.onShow()
@@ -677,9 +680,8 @@ test('login: SMS finish remains back-or-My and never redirects to profile', asyn
     assert.ok(req.url.endsWith('/auth/login')); assert.equal(req.data.mobile, '13800000000'); assert.equal(req.data.code, '123456')
     req.success({ statusCode: 200, data: { code: 0, data: { token: 'sms-token', userId: 1, role: 'USER', nickname: '短信用户' } } }); await pending
     assert.equal(env.storage.get('feilv_token'), 'sms-token')
-    if (count === 2) assert.equal(env.calls.navigation[0].back, true)
-    else assert.equal(env.calls.navigation[0].url, '/pages/my/my')
-    assert.equal(env.calls.navigation.some(item => item.url && item.url.includes('/profile/')), false)
+    assert.equal(env.calls.navigation[0].url, '/pages/profile/profile?from=login')
+    assert.equal(env.calls.requests.length, 1, 'me must be loaded by the new profile session, not the login scope')
   }
 })
 test('profile: native privacy APIs never use getUserProfile or declare getPhoneNumber as requiredPrivateInfos', () => {
@@ -689,6 +691,186 @@ test('profile: native privacy APIs never use getUserProfile or declare getPhoneN
   const template = fs.readFileSync(path.join(native, 'pages/profile/profile.wxml'), 'utf8')
   assert.equal(/wx\.(?:getUserProfile|login)\s*\(/.test(source), false)
   assert.ok(template.includes('type="nickname"')); assert.ok(template.includes('open-type="getPhoneNumber"')); assert.ok(template.includes('open-type="agreePrivacyAuthorization"'))
+})
+const AVATAR = '/api/v1/avatars/12345678-1234-1234-1234-123456789abc.png'
+function selectAvatar(page, path = 'wxfile://tmp/avatar') { page.prepareAvatar(); page.chooseAvatar({ detail: { avatarUrl: path } }) }
+function fillCreate(page) {
+  Object.assign(page.data.form, { fromContact: '甲', fromPhone: '13800000000', fromAddress: 'A', toContact: '乙', toPhone: '13900000000', toAddress: 'B', goodsDesc: '文件' })
+  page.data.distanceKm = '2'; page.data.weightKg = '5'
+  page._quotedPayload = page.buildPayload(); page.data.quote = { totalText: '5.00' }
+}
+test('avatar: multipart bearer upload parses string Result; API /api suffix and avatar origin resolve correctly', async () => {
+  const env = environment(); env.authenticated()
+  env.load(path.join(native, 'config.js')).BASE_URL = 'https://service.example/api/'
+  const transport = env.load(path.join(native, 'utils/request.js'))
+  assert.equal(transport.apiURL('/api/v1/user/me'), 'https://service.example/api/v1/user/me')
+  assert.equal(transport.avatarURL(AVATAR), 'https://service.example' + AVATAR)
+  for (const bad of ['wxfile://tmp/avatar', 'https://other.example' + AVATAR, '//other.example/a.png', '/api/v1/avatars/../secret']) assert.equal(transport.avatarURL(bad), '')
+  const pending = env.load(path.join(native, 'utils/api.js')).uploadAvatar('wxfile://tmp/avatar')
+  await flush()
+  const req = env.calls.uploads[0]
+  assert.equal(req.url, 'https://service.example/api/v1/user/avatar'); assert.equal(req.name, 'file')
+  assert.equal(req.filePath, 'wxfile://tmp/avatar'); assert.deepEqual(Object.keys(req.header), ['Authorization'])
+  assert.equal(req.header.Authorization, 'Bearer token-1')
+  req.success({ statusCode: 200, data: JSON.stringify({ code: 0, data: profileValue({ avatarUrl: AVATAR }) }) })
+  assert.equal((await pending).avatarUrl, AVATAR)
+})
+test('avatar: file validation rejects oversized, empty, unsupported and unreadable files before upload', async () => {
+  for (const override of [
+    { getFileInfo(o) { o.success({ size: 5 * 1024 * 1024 + 1 }) } },
+    { getFileInfo(o) { o.success({ size: 0 }) } },
+    { getFileInfo(o) { o.fail({}) } },
+    { getImageInfo(o) { o.success({ type: 'gif' }) } },
+    { getImageInfo(o) { o.fail({}) } }
+  ]) {
+    const env = environment(override); env.authenticated()
+    await assert.rejects(env.load(path.join(native, 'utils/api.js')).uploadAvatar('wxfile://tmp/file'))
+    assert.equal(env.calls.uploads.length, 0); assert.equal(env.storage.get('feilv_token'), 'token-1')
+  }
+})
+test('avatar: HTTP/business 401 clear session; other upload errors retain it', async () => {
+  for (const response of [
+    { statusCode: 401, data: '{}' }, { statusCode: 200, data: '{"code":401}' },
+    { statusCode: 413, data: '{"code":413,"msg":"too large"}' },
+    { statusCode: 200, data: '{"code":400,"msg":"invalid image"}' },
+    { statusCode: 200, data: 'not json' }, null
+  ]) {
+    const env = environment(); env.authenticated()
+    const pending = env.load(path.join(native, 'utils/api.js')).uploadAvatar('wxfile://tmp/file'); await flush()
+    if (response) env.calls.uploads[0].success(response); else env.calls.uploads[0].fail({ errMsg: 'timeout' })
+    await assert.rejects(pending)
+    const unauthorized = response && (response.statusCode === 401 || response.data === '{"code":401}')
+    assert.equal(env.storage.has('feilv_token'), !unauthorized)
+    assert.equal(env.calls.navigation.length, unauthorized ? 1 : 0)
+  }
+})
+test('avatar: late success, 401 and failure from switched account cannot clear or overwrite new session', async () => {
+  for (const outcome of ['success', '401', 'fail']) {
+    const env = environment(); env.authenticated()
+    const pending = env.load(path.join(native, 'utils/api.js')).uploadAvatar('wxfile://tmp/file'); await flush()
+    const session = env.load(path.join(native, 'utils/session.js'))
+    session.save({ token: 'B-token', userId: 2, role: 'USER', nickname: 'B' })
+    if (outcome === 'fail') env.calls.uploads[0].fail({})
+    else env.calls.uploads[0].success({ statusCode: 200, data: JSON.stringify(outcome === '401' ? { code: 401 } : { code: 0, data: profileValue({ avatarUrl: AVATAR }) }) })
+    await assert.rejects(pending, e => e.silent === true)
+    assert.equal(env.storage.get('feilv_token'), 'B-token'); assert.equal(env.storage.has('feilv_avatar_url'), false); assert.equal(env.calls.navigation.length, 0)
+  }
+})
+test('avatar: account switch during file inspection prevents upload with either account token', async () => {
+  let inspect
+  const env = environment({ getFileInfo(o) { inspect = o } }); env.authenticated()
+  const api = env.load(path.join(native, 'utils/api.js')); const session = env.load(path.join(native, 'utils/session.js'))
+  const scoped = api.forSession(session.revision()); const pending = scoped.uploadAvatar('wxfile://tmp/file')
+  session.save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
+  inspect.success({ size: 100 }); await assert.rejects(pending, e => e.silent === true)
+  await assert.rejects(scoped.uploadAvatar('wxfile://tmp/file'), e => e.silent === true)
+  assert.equal(env.calls.uploads.length, 0)
+})
+test('profile: chooseAvatar is explicit; successful save persists only server path and preserves nickname draft', async () => {
+  const env = environment(); let uploaded = 0
+  const page = await readyProfile(env, { async me() { return profileValue() }, async uploadAvatar(p) { uploaded++; assert.equal(p, 'wxfile://tmp/avatar'); return profileValue({ avatarUrl: AVATAR }) } })
+  page.chooseAvatar({ detail: { avatarUrl: 'ignored' } }); assert.equal(page.data.avatarDraft, '')
+  page.input({ detail: { value: '尚未保存' } }); selectAvatar(page)
+  assert.equal(uploaded, 0); assert.equal(env.storage.has('feilv_avatar_url') && !!env.storage.get('feilv_avatar_url'), false)
+  const session = env.load(path.join(native, 'utils/session.js')); const revision = session.revision()
+  env.storage.set('native_draft', { owner: 1 }); await page.saveAvatar()
+  assert.equal(page.data.avatarDraft, ''); assert.equal(page.data.nickname, '尚未保存')
+  assert.equal(page.data.avatarUrl, 'https://xt.allms.cn' + AVATAR); assert.equal(env.storage.get('feilv_avatar_url'), AVATAR)
+  assert.equal(session.revision(), revision); assert.equal(env.storage.has('native_draft'), true)
+  for (const value of env.storage.values()) assert.notEqual(value, 'wxfile://tmp/avatar')
+  const my = env.page('pages/my/my', { async me() { return profileValue({ avatarUrl: AVATAR }) } }); my.onLoad({}); await my.onShow()
+  assert.equal(my.data.avatarUrl, 'https://xt.allms.cn' + AVATAR)
+  const reopened = await readyProfile(env, { async me() { return profileValue({ avatarUrl: AVATAR }) } })
+  assert.equal(reopened.data.avatarUrl, 'https://xt.allms.cn' + AVATAR)
+  session.clear(); assert.equal(env.storage.has('feilv_avatar_url'), false)
+})
+test('profile: failed avatar upload retains preview for retry without changing saved avatar', async () => {
+  const env = environment(); let attempts = 0
+  const page = await readyProfile(env, { async me() { return profileValue({ avatarUrl: AVATAR }) }, async uploadAvatar() { if (++attempts === 1) throw new Error('上传失败'); return profileValue({ avatarUrl: AVATAR }) } })
+  selectAvatar(page); await page.saveAvatar()
+  assert.equal(page.data.avatarDraft, 'wxfile://tmp/avatar'); assert.equal(page.data.error, '上传失败'); assert.equal(env.storage.get('feilv_avatar_url'), AVATAR)
+  await page.saveAvatar(); assert.equal(page.data.avatarDraft, ''); assert.equal(attempts, 2)
+})
+test('profile: late avatar events and upload results cannot cross accounts or hidden pages', async () => {
+  for (const state of ['switch', 'hide', 'unload']) {
+    const env = environment(); let resolve
+    const page = await readyProfile(env, { async me() { return profileValue() }, uploadAvatar() { return new Promise(r => { resolve = r }) } })
+    selectAvatar(page); const pending = page.saveAvatar()
+    if (state === 'switch') env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
+    else if (state === 'hide') page.onHide(); else page.onUnload()
+    resolve(profileValue({ avatarUrl: AVATAR })); await pending
+    assert.notEqual(env.storage.get('feilv_avatar_url'), AVATAR); assert.equal(page.data.avatarUrl, '')
+    page.chooseAvatar({ detail: { avatarUrl: 'late-temp' } }); assert.notEqual(page.data.avatarDraft, 'late-temp')
+  }
+})
+test('profile: complete requires loaded saved non-default nickname and bound phone but never requires avatar', async () => {
+  const env = environment()
+  const page = await readyProfile(env, { async me() { return profileValue({ nickname: '微信用户' }) }, async updateProfile(nickname) { return profileValue({ nickname }) }, async bindWechatPhone() { return profileValue({ nickname: '主动昵称', mobileBound: true }) } }, 'login')
+  assert.equal(env.calls.navigation.length, 0); page.complete(); assert.equal(env.calls.navigation.length, 0)
+  page.input({ detail: { value: '主动昵称' } }); page.complete(); assert.equal(env.calls.navigation.length, 0)
+  await page.save(); page.complete(); assert.equal(env.calls.navigation.length, 0)
+  page.preparePhone(); await page.bindPhone(phoneEvent('phone-code')); page.complete()
+  assert.equal(env.calls.navigation.at(-1).url, '/pages/my/my'); assert.equal(page.data.avatarUrl, '')
+})
+test('orders: create and confirm query real me, block incomplete profiles, retain drafts and allow retry after binding', async () => {
+  for (const route of ['create', 'confirm']) {
+    for (const incomplete of [{ mobileBound: false }, { mobileBound: true, nickname: '' }, { mobileBound: true, nickname: '微信用户' }]) {
+      const env = environment(); env.authenticated(); let bound = false; let reads = 0; let creates = 0
+      const api = { async me() { reads++; return profileValue(bound ? { mobileBound: true } : incomplete) }, async createOrder() { creates++; return { id: 88 } }, async payOrder() {} }
+      env.storage.set('native_draft', { owner: 1, savedAt: 12, payload: { orderType: 'SEND' }, quote: {} })
+      const page = env.page('pages/order/' + route, api); page.onLoad({}); page.onShow()
+      if (route === 'create') fillCreate(page)
+      const submit = () => route === 'create' ? page.next() : page.submit()
+      await submit()
+      assert.equal(reads, 1); assert.equal(creates, 0); assert.equal(env.storage.has('native_draft'), true)
+      assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=order'); assert.equal(env.storage.get('feilv_token'), 'token-1')
+      const saved = env.storage.get('native_draft'); bound = true; await submit()
+      assert.equal(reads, 2)
+      if (route === 'create') { assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm'); assert.equal(env.storage.get('native_draft').savedAt, saved.savedAt) }
+      else { assert.equal(creates, 1); assert.equal(env.storage.has('native_draft'), false) }
+    }
+  }
+})
+test('orders: me network failure and switched-account response never create, navigate or discard another draft', async () => {
+  for (const route of ['create', 'confirm']) {
+    for (const mode of ['failure', 'switch']) {
+      const env = environment(); env.authenticated(); let respond; let creates = 0
+      env.storage.set('native_draft', { owner: 1, savedAt: 12, payload: { orderType: 'SEND' }, quote: {} })
+      const page = env.page('pages/order/' + route, { me() { if (mode === 'failure') throw new Error('me失败'); return new Promise(r => { respond = r }) }, async createOrder() { creates++ } })
+      page.onLoad({}); page.onShow(); if (route === 'create') fillCreate(page)
+      const pending = route === 'create' ? page.next() : page.submit()
+      if (mode === 'switch') {
+        env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
+        env.storage.set('native_draft', { owner: 2, savedAt: 99 })
+        respond(profileValue({ mobileBound: true }))
+      }
+      await pending
+      assert.equal(creates, 0); assert.equal(env.calls.navigation.length, 0)
+      assert.equal(env.storage.get('native_draft').owner, mode === 'switch' ? 2 : 1)
+    }
+  }
+})
+test('orders: backend 4091 redirects to profile with draft intact and no uncertain-create deadlock', async () => {
+  const env = environment(); env.authenticated()
+  env.storage.set('native_draft', { owner: 1, savedAt: 12, payload: { orderType: 'SEND' }, quote: {} })
+  const page = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async createOrder() { throw Object.assign(new Error('请绑定手机号'), { code: 4091 }) } })
+  page.onLoad({}); page.onShow(); await page.submit()
+  assert.equal(page.data.uncertain, false); assert.equal(env.storage.has('native_pending_order'), false)
+  assert.equal(env.storage.get('native_draft').savedAt, 12); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=order')
+})
+test('login: home order intent resumes after profile return without trapping browsing on cancellation', async () => {
+  const env = environment(); const home = env.page('pages/index/index', {})
+  home.onLoad({}); home.onShow(); home.create({ currentTarget: { dataset: { type: 'BUY' } } })
+  assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
+  home.onHide(); home.onShow(); assert.equal(env.calls.navigation.length, 1)
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'new', userId: 1, role: 'USER', nickname: '微信用户' })
+  home.onShow(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=BUY')
+  home.onHide(); home.onShow(); assert.equal(env.calls.navigation.length, 2)
+})
+test('copy: avatar selection and required phone are explicit; no legacy no-avatar or optional-phone claims', () => {
+  const source = ['pages/profile/profile.wxml', 'pages/login/login.wxml', 'pages/my/my.wxml', 'pages/legal/legal.js', 'README.md', 'WECHAT_DEPLOYMENT.md'].map(f => fs.readFileSync(path.join(native, f), 'utf8')).join('\n')
+  assert.equal(/无需另设用户名或头像|不设置独立用户名或采集头像|绑定手机号为可选|尚未绑定手机号（可选）/.test(source), false)
+  assert.ok(source.includes('open-type="chooseAvatar"')); assert.ok(source.includes('下单必填')); assert.ok(source.includes('生产'))
 })
 ;(async () => {
   let failures = 0

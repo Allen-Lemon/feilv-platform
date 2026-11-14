@@ -14,6 +14,8 @@ services:
       DB_NAME: ${DB_NAME:-feilv}
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - avatar-data:/app/data/avatars
     ports:
       - "${SERVER_PORT:-8080}:8080"
     healthcheck:
@@ -34,3 +36,6 @@ services:
         condition: service_healthy
     ports:
       - "${ADMIN_WEB_PORT:-5173}:80"
+
+volumes:
+  avatar-data:

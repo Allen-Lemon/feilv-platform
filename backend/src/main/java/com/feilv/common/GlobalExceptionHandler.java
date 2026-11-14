@@ -32,6 +32,26 @@ public class GlobalExceptionHandler {
                 .body(Result.fail(405, "该接口不支持此请求方法，请按接口约定调用"));
     }
 
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ResponseEntity<Result<Void>> uploadTooLarge() {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(Result.fail(400, "头像不能超过5MB"));
+    }
+
+    @ExceptionHandler({org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class,
+            org.springframework.http.converter.HttpMessageNotReadableException.class,
+            org.springframework.web.bind.MissingServletRequestParameterException.class,
+            org.springframework.web.multipart.support.MissingServletRequestPartException.class})
+    public ResponseEntity<Result<Void>> invalidRequest(Exception e) {
+        return ResponseEntity.ok(Result.fail(400, "请求参数格式错误"));
+    }
+
+    @ExceptionHandler({org.springframework.web.servlet.NoHandlerFoundException.class,
+            org.springframework.web.servlet.resource.NoResourceFoundException.class})
+    public ResponseEntity<Result<Void>> notFound(Exception e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Result.fail(404, "资源不存在"));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Result<Void>> unknown(Exception e) {
         log.error("系统异常", e);

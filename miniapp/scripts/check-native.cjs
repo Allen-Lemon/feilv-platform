@@ -109,7 +109,9 @@ for (const file of runtimeFiles) {
   }
 }
 check(!/Math\.random/.test(fs.readFileSync(path.join(root, 'pages/rider/workbench.js'), 'utf8')), '骑手轨迹不得使用随机点')
-check(!/wx\.(?:requestPayment|uploadFile)\s*\(/.test(runtimeFiles.filter(f => f.endsWith('.js')).map(f => fs.readFileSync(f, 'utf8')).join('\n')), '尚未接入的支付/上传不得伪装实现')
+check(!/wx\.requestPayment\s*\(/.test(runtimeFiles.filter(f => f.endsWith('.js')).map(f => fs.readFileSync(f, 'utf8')).join('\n')), '尚未接入的真实支付不得伪装实现')
+check(/wx\.uploadFile\s*\(/.test(fs.readFileSync(path.join(root, 'utils/request.js'), 'utf8')), '头像必须使用原生 multipart 上传')
+check(fs.readFileSync(path.join(root, 'pages/profile/profile.wxml'), 'utf8').includes('open-type="chooseAvatar"'), '资料页必须提供主动选择头像')
 check(!/statusCode/.test(fs.readFileSync(path.join(root, 'utils/format.js'), 'utf8')), '用户 OrderVO 必须读取 status')
 const appidFiles = files.filter(f => f.endsWith('.json')).filter(f => { const value = readJson(f); return value && (value.appid || value['mp-weixin']) })
 check(appidFiles.length === 1 && appidFiles[0] === path.join(root, 'project.config.json'), 'AppID 应仅在 project.config.json 配置')

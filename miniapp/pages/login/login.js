@@ -30,9 +30,8 @@ definePage({
     if (this._dead || !this._visible) return
     session.save(value)
     toast('登录成功')
-    const pages = getCurrentPages()
-    if (pages.length > 1) wx.navigateBack({ delta: 1 })
-    else wx.switchTab({ url: '/pages/my/my' })
+    // 两种登录方式都由资料页使用新会话读取 me；完整资料自动返回，未绑定保留在完善页。
+    wx.redirectTo({ url: '/pages/profile/profile?from=login' })
   },
   wechat() {
     if (!this.checkConsent()) return
@@ -44,14 +43,17 @@ definePage({
       const value = await api.wechatLogin(result.code)
       if (this._dead || !this._visible || revision !== session.revision()) return
       if (!value || !['USER', 'RIDER'].includes(value.role)) throw new Error('微信登录返回的账户类型无效')
-      session.save(value)
-      // save 已更换会话版本；资料请求交给新页面，不能复用本次 run 的旧 api 作用域。
-      wx.redirectTo({ url: '/pages/profile/profile?from=login' })
+      await this.finish(value)
     })
   },
   smsLogin() {
     if (!this.checkConsent()) return
     if (!mobile(this.data.mobile) || !/^\d{4,8}$/.test(this.data.code)) return toast('请填写正确的手机号与验证码')
-    return this.run('busy', async (api) => this.finish(await api.login(this.data.mobile, this.data.code)))
+    return this.run('busy', async (api) => {
+      const revision = session.revision()
+      const value = await api.login(this.data.mobile, this.data.code)
+      if (revision !== session.revision()) return
+      await this.finish(value)
+    })
   }
 })

@@ -10,5 +10,6 @@ public final class UserProfileDtos {
     public record WechatPhoneReq(@NotBlank @Size(max = 256) String code) {
         @Override public String toString() { return "WechatPhoneReq[code=REDACTED]"; }
     }
-    public record ProfileVO(long userId, String nickname, String role, String mobile, boolean mobileBound) {}
+    public record ProfileVO(long userId, String nickname, String role, String mobile, boolean mobileBound,
+                            String avatarUrl) {}
 }

@@ -21,7 +21,7 @@ class SystemAdminAuthorizationTest {
                 mock(AdminAccountRepository.class), userRoles, roleMenus, mock(UserRepository.class), mock(AuditService.class), access);
         doThrow(BizException.of(403, "仅超级管理员可维护账号、角色和授权")).when(access).requireSystemAdmin();
         var mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler())
-                .addInterceptors(new AuthInterceptor()).build();
+                .addInterceptors(TestAuth.interceptor()).build();
         mvc.perform(post("/api/v1/admin/system/users/1/roles").header("Authorization", "Bearer " + JwtUtil.create(1L, "ADMIN"))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"roleIds\":[1]}"))
                 .andExpect(jsonPath("$.code").value(403));

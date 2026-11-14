@@ -68,9 +68,13 @@ definePage({
     const owner = wx.getStorageSync('feilv_user_id')
     const previous = wx.getStorageSync('native_draft')
     const reuse = previous && previous.owner === owner && draftState.samePayload(previous.payload, this._quotedPayload)
-    // 原草稿未改变时保留标识，以恢复已创建订单或创建结果待核实状态。
+    // 门禁之前保存草稿，拒绝/网络失败/资料页返回均不能丢失填写内容。
     const saved = { payload: this._quotedPayload, quote: this.data.quote, owner, savedAt: reuse ? previous.savedAt : draftState.timestamp() }
     wx.setStorageSync('native_draft', saved)
-    wx.navigateTo({ url: '/pages/order/confirm' })
+    return this.run('busy', async (api) => {
+      const version = this._version
+      const active = () => !this._dead && this._visible && version === this._version && draftState.current(owner, saved.savedAt)
+      if (await session.requireOrderProfile(api, active) && active()) wx.navigateTo({ url: '/pages/order/confirm' })
+    })
   }
 })

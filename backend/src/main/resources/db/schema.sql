@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS t_user (
   id            BIGINT AUTO_INCREMENT PRIMARY KEY,
   mobile        VARCHAR(20) DEFAULT NULL,
   nickname      VARCHAR(32) DEFAULT '',
+  avatar_url    VARCHAR(255) DEFAULT NULL,
   role          VARCHAR(16) NOT NULL DEFAULT 'USER',   -- USER/RIDER/ADMIN
   status        TINYINT NOT NULL DEFAULT 1,            -- 1正常 0冻结
   created_time  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -34,6 +34,7 @@ definePage({
     if (!session.requireLogin() || this.data.invalid || this.data.uncertain) return
     return this.run('busy', async (api) => {
       if (!this.activeDraft()) throw new Error('账户或订单草稿已变化，请重新打开确认页')
+      if (!await session.requireOrderProfile(api, () => !this._dead && this._visible && this.activeDraft())) return
       const answer = await modal({ title: 'MOCK 模拟支付', content: '不拉起微信支付，不发生真实扣款。确认创建订单并调用后端模拟支付？' })
       if (!answer.confirm || this._dead || !this.activeDraft()) return
       let id = this.data.orderId
@@ -49,6 +50,7 @@ definePage({
             draftState.clearPending(this._owner, this._savedAt)
             this.safeSet({ uncertain: false })
           }
+          if (e.code === 4091 && this.activeDraft() && !this._dead && this._visible) { session.openRequiredProfile(); return }
           throw e
         }
         if (!order || !Number.isSafeInteger(order.id) || order.id <= 0) throw new Error('创建结果缺少订单ID，请到订单列表核实，勿重复提交')

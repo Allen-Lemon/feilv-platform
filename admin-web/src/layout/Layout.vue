@@ -22,7 +22,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { provide, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { adminApi } from '../api'
 import AppIcon from '../components/AppIcon.vue'
@@ -31,7 +31,10 @@ const mobileOpen = ref(false)
 const nickname = ref(localStorage.getItem('feilv_admin_nickname') || '管理员')
 function storedMenus() { try { return JSON.parse(localStorage.getItem('feilv_admin_menus_data') || '[]') } catch { return [] } }
 const visibleMenus = ref(storedMenus())
-const icons = { dashboard: 'grid', orders: 'orders', riders: 'riders', settlements: 'wallet', marketing: 'marketing', content: 'content', risk: 'shield', system: 'settings', 'wechat-settings': 'shield' }
+// 跨页面入口只使用最新 profile 的授权，加载中或失败时不开放跳转。
+const authorizedMenuCodes = ref([])
+provide('adminMenuCodes', authorizedMenuCodes)
+const icons = { dashboard: 'grid', orders: 'orders', users: 'riders', riders: 'riders', settlements: 'wallet', marketing: 'marketing', content: 'content', risk: 'shield', system: 'settings', 'wechat-settings': 'shield' }
 const iconFor = (code) => icons[code] || 'grid'
 adminApi.profile().then((data) => {
   nickname.value = data.nickname || '管理员'
@@ -39,6 +42,7 @@ adminApi.profile().then((data) => {
   if ((data.roles || []).includes('SUPER_ADMIN') && !visibleMenus.value.some(m => m.code === 'wechat-settings')) {
     visibleMenus.value.push({ code: 'wechat-settings', name: '微信配置', path: '/wechat-settings' })
   }
+  authorizedMenuCodes.value = visibleMenus.value.map(m => m.code)
   localStorage.setItem('feilv_admin_nickname', nickname.value)
   localStorage.setItem('feilv_admin_menus', JSON.stringify(visibleMenus.value.map(m => m.code)))
   localStorage.setItem('feilv_admin_menus_data', JSON.stringify(visibleMenus.value))

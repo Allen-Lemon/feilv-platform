@@ -9,6 +9,10 @@ spring:
     username: ${DB_USERNAME:root}
     password: ${DB_PASSWORD:alenlove@2026}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
   jpa:
     database-platform: org.hibernate.dialect.MySQLDialect
     hibernate:
@@ -21,10 +25,11 @@ spring:
     init:
       mode: always
       encoding: UTF-8
-      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql,classpath:db/migrations/20261113_wechat_config.sql
+      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql,classpath:db/migrations/20261113_wechat_config.sql,classpath:db/migrations/20261114_user_profile.sql
 
 # 调度参数（对应功能设计文档 8.2 调度引擎 / 详细设计 3.3 计价，全部可配置化）
 feilv:
+  avatar-directory: ${AVATAR_DIRECTORY:./data/avatars}
   config-encryption-key: ${CONFIG_ENCRYPTION_KEY:}
   wechat:
     app-id: ${WECHAT_APP_ID:}

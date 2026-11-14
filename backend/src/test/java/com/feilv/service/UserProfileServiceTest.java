@@ -41,6 +41,26 @@ class UserProfileServiceTest {
     }
 
     @Test
+    void avatarOnlyAcceptsServerStoredPathAndDoesNotAlterOtherFields() {
+        String path = "/api/v1/avatars/12345678-1234-1234-1234-123456789abc.png";
+        assertEquals(path, service.updateAvatar(42L, path).avatarUrl());
+        assertEquals("微信用户", user.getNickname());
+        assertNull(user.getMobile());
+        for (String invalid : new String[]{"wxfile://temp.png", "https://external.invalid/avatar.png", "../avatar.png"}) {
+            assertThrows(BizException.class, () -> service.updateAvatar(42L, invalid));
+        }
+    }
+
+    @Test
+    void orderGateRequiresActiveUserAndBoundMobile() {
+        assertEquals(4091, assertThrows(BizException.class, () -> service.requireBoundMobile(42L)).getCode());
+        user.setMobile("13800138000");
+        assertDoesNotThrow(() -> service.requireBoundMobile(42L));
+        user.setStatus(0);
+        assertEquals(403, assertThrows(BizException.class, () -> service.requireBoundMobile(42L)).getCode());
+    }
+
+    @Test
     void nicknameIsDisplayNameAndDoesNotChangeIdentityOrRole() {
         user.setRole("RIDER");
         var profile = service.updateNickname(42L, "  新昵称  ");
@@ -136,7 +156,7 @@ class UserProfileServiceTest {
         });
         assertEquals(403, assertThrows(BizException.class, () -> service.bindWechatPhone(42L, "phone-code")).getCode());
         user.setStatus(1);
-        when(phone.exchange("phone-code", credentials)).thenReturn(new WechatPhoneClient.Phone("app-a", "13800138000"));
+        doReturn(new WechatPhoneClient.Phone("app-a", "13800138000")).when(phone).exchange("phone-code", credentials);
         when(settings.effectiveLogin()).thenReturn(credentials, new WechatConfigService.LoginCredentials("app-b", "secret-b"));
         assertEquals(409, assertThrows(BizException.class, () -> service.bindWechatPhone(42L, "phone-code")).getCode());
         verify(users, never()).saveAndFlush(any());

@@ -15,6 +15,10 @@
 # 微信开发者工具个人配置
 project.private.config.json
 
+# 本地用户上传文件
+/data/
+/backend/data/
+
 # 运行日志、进程文件和 JVM 转储
 logs/
 log/

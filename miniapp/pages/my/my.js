@@ -1,10 +1,11 @@
 const session = require('../../utils/session')
+const { avatarURL } = require('../../utils/request')
 const { definePage, modal, toast } = require('../../utils/page')
 definePage({
-  data: { me: null, loggedIn: false, isRider: false, loading: false, error: '', nickname: '', roleText: '' },
+  data: { me: null, loggedIn: false, isRider: false, loading: false, error: '', nickname: '', avatarUrl: '', roleText: '' },
   onShow() {
     const loggedIn = !!session.token()
-    this.setData({ loggedIn, isRider: wx.getStorageSync('feilv_role') === 'RIDER', nickname: wx.getStorageSync('feilv_nickname') || '用户', roleText: wx.getStorageSync('feilv_role') === 'RIDER' ? '骑手账户' : '普通用户' })
+    this.setData({ loggedIn, avatarUrl: loggedIn ? avatarURL(wx.getStorageSync('feilv_avatar_url')) : '', isRider: wx.getStorageSync('feilv_role') === 'RIDER', nickname: wx.getStorageSync('feilv_nickname') || '用户', roleText: wx.getStorageSync('feilv_role') === 'RIDER' ? '骑手账户' : '普通用户' })
     if (!loggedIn) { this.setData({ me: null, error: '' }); return }
     return this.load()
   },
@@ -14,10 +15,10 @@ definePage({
       try {
         const me = await api.me()
         if (this._dead || revision !== session.revision() || String(me.userId) !== String(userId)) return
-        if (typeof me.nickname === 'string') session.updateNickname(me.nickname, userId, revision)
-        // 微信账号允许无手机号；号码仅展示服务端脱敏值，不写入本机存储。
+        if (!session.updateProfile(me, userId, revision)) throw new Error('账户资料响应无效，请重试')
+        // 未绑定可浏览；下单使用实时 me 门禁。号码只展示脱敏值，不写入本机。
         const masked = typeof me.mobile === 'string' && /^\d{3}\*{4}\d{4}$/.test(me.mobile) ? me.mobile : ''
-        this.safeSet({ me: { userId: me.userId, mobile: me.mobileBound ? (masked || '手机号已绑定') : '尚未绑定手机号（可选）' }, nickname: me.nickname || this.data.nickname, error: '' })
+        this.safeSet({ me: { userId: me.userId, mobile: me.mobileBound ? (masked || '手机号已绑定') : '尚未绑定手机号（下单必填）' }, nickname: me.nickname || this.data.nickname, avatarUrl: avatarURL(me.avatarUrl), error: '' })
       } catch (e) { this.safeSet({ error: e.message }); throw e }
     })
   },
@@ -30,6 +31,6 @@ definePage({
   privacy() { wx.navigateTo({ url: '/pages/legal/legal?kind=privacy' }) },
   async logout() {
     if (!(await modal({ title: '退出登录', content: '将清除本机登录凭证与未完成订单草稿，确认退出？' })).confirm) return
-    session.clear(); this.setData({ me: null, loggedIn: false, isRider: false, error: '' }); toast('已退出登录')
+    session.clear(); this.setData({ me: null, loggedIn: false, isRider: false, nickname: '', avatarUrl: '', error: '' }); toast('已退出登录')
   }
 })

@@ -32,7 +32,7 @@ class HealthControllerTest {
         mvc = MockMvcBuilders.standaloneSetup(new HealthController(dataSource),
                         new AuthController(users, mock(WechatLoginService.class)))
                 .setControllerAdvice(new GlobalExceptionHandler())
-                .addInterceptors(new AuthInterceptor()).build();
+                .addInterceptors(TestAuth.interceptor()).build();
     }
 
     @Test

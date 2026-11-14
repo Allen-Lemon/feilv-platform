@@ -1,13 +1,13 @@
 <view class="page login-page">
   <view class="login-intro"><view class="login-mark">飞</view><view class="eyebrow">飞毛腿 · 同城跑腿</view><view class="title">你好，欢迎回来</view><view class="page-desc">登录后，开始安排你的同城小事</view></view>
   <view class="card login-card">
-    <view class="section-title">使用微信账号登录</view><view class="hint">微信登录无需手机号。登录后可选填平台昵称，并由您主动授权绑定手机号；也可跳过。</view>
+    <view class="section-title">使用微信账号登录</view><view class="hint">微信登录无需手机号。头像昵称由您主动选择或填写，不会自动获取。下单前需保存非空昵称并绑定手机号；拒绝授权仍可返回浏览。</view>
     <checkbox-group bindchange="consent"><label class="consent-label"><checkbox value="yes" checked="{{agreed}}" color="#C94320"/><text class="grow">我已阅读并同意服务与隐私说明</text></label></checkbox-group>
     <view class="legal-links"><text class="link" data-kind="service" bindtap="legal">服务说明</text><text class="link" data-kind="privacy" bindtap="legal">隐私说明</text></view>
     <button type="primary" class="wechat-button" loading="{{busy}}" disabled="{{busy || sending}}" bindtap="wechat"><view class="wechat-symbol" wx:if="{{!busy}}"><view class="wechat-bubble"></view><view class="wechat-bubble bubble-small"></view></view><text>微信一键登录</text></button>
     <button class="text-button sms-toggle" disabled="{{busy}}" bindtap="toggleSms">{{sms ? '收起短信登录 ↑' : '使用短信备用登录 →'}}</button>
   </view>
-  <view class="card" wx:if="{{sms}}"><view class="section-title">短信备用登录</view><view class="hint">手机号为独立账号，不会自动合并微信账号。</view>
+  <view class="card" wx:if="{{sms}}"><view class="section-title">短信备用登录</view><view class="hint">手机号为独立账号，不会自动合并微信账号。当前短信仍为演示逻辑，生产须接入真实短信并关闭演示码回传，或禁用短信登录。</view>
     <view class="field"><text class="label">手机号</text><input type="number" maxlength="11" value="{{mobile}}" data-field="mobile" bindinput="input" placeholder="请输入11位手机号" disabled="{{busy || sending}}"/></view>
     <view class="field"><text class="label">短信验证码</text><view class="row sms-row"><input class="grow" type="number" maxlength="8" value="{{code}}" data-field="code" bindinput="input" placeholder="请输入验证码" disabled="{{busy}}"/><button class="secondary small" loading="{{sending}}" disabled="{{cooling > 0 || sending || busy}}" bindtap="sendCode">{{smsLabel}}</button></view></view>
     <view class="notice" wx:if="{{demoCode}}">后端演示验证码：{{demoCode}}（非真实短信发送证明，请手动填写）</view>

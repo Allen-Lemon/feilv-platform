@@ -40,6 +40,7 @@ public class OrderService {
     private final BanWordService banWordService;
     private final MessageService messageService;
     private final RiderRepository riderRepository;
+    private final UserProfileService userProfileService;
 
     // ---------- 计价 ----------
     public QuoteVO quote(QuoteReq req) {
@@ -50,6 +51,7 @@ public class OrderService {
     // ---------- 下单（详细设计4.2：品类拦截→计价→建档） ----------
     @Transactional
     public OrderVO create(long userId, OrderCreateReq req) {
+        userProfileService.requireBoundMobile(userId);
         OrderType type = OrderType.of(req.orderType());
         banWordService.checkGoods(req.goodsDesc());   // 合规底线：禁发品类拦截
 

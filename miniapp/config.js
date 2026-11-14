@@ -1,4 +1,4 @@
-// 微信原生小程序正式服务地址，只填写 origin，不追加 /api 或 /api/v1。
+// 微信原生小程序正式服务地址，推荐填写 origin；请求层也兼容 /api 后缀，勿追加 /api/v1。
 // AppID 配置在 miniapp/project.config.json；AppSecret 只能在后端配置。
 module.exports = {
   BASE_URL: 'https://xt.allms.cn',

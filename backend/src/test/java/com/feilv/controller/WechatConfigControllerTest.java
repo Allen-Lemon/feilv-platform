@@ -16,7 +16,7 @@ class WechatConfigControllerTest {
     @Test void authenticationAndRealAuthorizationRequiredAndResponseHasNoSecret() throws Exception {
         var service = mock(WechatConfigService.class); var access = mock(WechatConfigAccess.class);
         var mvc = MockMvcBuilders.standaloneSetup(new WechatConfigController(service, access))
-                .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(new AuthInterceptor()).build();
+                .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(TestAuth.interceptor()).build();
         mvc.perform(get("/api/v1/admin/system/wechat")).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/v1/admin/system/wechat").header("Authorization", "Bearer " + JwtUtil.create(2L, "USER")))
                 .andExpect(status().isForbidden());

@@ -5,6 +5,7 @@ const routes = [
   { path: '/', component: () => import('../layout/Layout.vue'), redirect: '/dashboard', children: [
     { path: 'dashboard', name: 'dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '经营看板', menu: 'dashboard' } },
     { path: 'orders', name: 'orders', component: () => import('../views/OrderList.vue'), meta: { title: '订单管理', menu: 'orders' } },
+    { path: 'users', name: 'users', component: () => import('../views/UserList.vue'), meta: { title: '用户管理', menu: 'users' } },
     { path: 'riders', name: 'riders', component: () => import('../views/RiderList.vue'), meta: { title: '运力管理', menu: 'riders' } },
     { path: 'settlements', name: 'settlements', component: () => import('../views/Settlement.vue'), meta: { title: '结算中心', menu: 'settlements' } },
     { path: 'marketing', name: 'marketing', component: () => import('../views/Placeholder.vue'), meta: { title: '营销管理', menu: 'marketing' } },

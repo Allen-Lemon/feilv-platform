@@ -25,6 +25,11 @@ public interface OrderRepository extends JpaRepository<OrderMain, Long> {
 
     Page<OrderMain> findAllByOrderByCreatedTimeDesc(Pageable pageable);
 
+    @Query("select o from OrderMain o where (:userId is null or o.userId = :userId) " +
+            "and (:status is null or o.status = :status)")
+    Page<OrderMain> findAdminOrders(@Param("userId") Long userId,
+                                    @Param("status") OrderStatus status, Pageable pageable);
+
     /** 超时引擎扫描（对应详细设计3.2：待接单超10分钟自动处理） */
     List<OrderMain> findByStatusAndCreatedTimeBefore(OrderStatus status, LocalDateTime time);
 

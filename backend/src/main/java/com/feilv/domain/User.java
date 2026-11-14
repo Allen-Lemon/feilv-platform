@@ -21,6 +21,10 @@ public class User {
 
     private String nickname;
 
+    /** 服务端校验、重新编码后保存的头像路径，不接受客户端临时文件路径。 */
+    @Column(name = "avatar_url", length = 255)
+    private String avatarUrl;
+
     @Column(nullable = false)
     private String role = "USER"; // USER / RIDER / ADMIN
 

@@ -19,7 +19,7 @@ class WechatLoginControllerTest {
         WechatLoginService login = mock(WechatLoginService.class);
         when(login.login("verified-code", true)).thenReturn(new LoginVO("platform-token", 42L, "USER", "微信用户"));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(new AuthController(mock(UserService.class), login))
-                .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(new AuthInterceptor()).build();
+                .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(TestAuth.interceptor()).build();
         mvc.perform(post("/api/v1/auth/wechat-login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\"verified-code\",\"agreed\":true}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.code").value(0))

@@ -24,12 +24,12 @@ class UserProfileControllerTest {
 
     @BeforeEach
     void setup() {
-        var profile = new ProfileVO(42L, "昵称", "USER", "138****8000", true);
+        var profile = new ProfileVO(42L, "昵称", "USER", "138****8000", true, "");
         when(profiles.me(42L)).thenReturn(profile);
         when(profiles.updateNickname(eq(42L), anyString())).thenReturn(profile);
         when(profiles.bindWechatPhone(eq(42L), anyString())).thenReturn(profile);
         mvc = MockMvcBuilders.standaloneSetup(new UserController(profiles, mock(AddressService.class)))
-                .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(new AuthInterceptor()).build();
+                .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(TestAuth.interceptor()).build();
     }
 
     @Test

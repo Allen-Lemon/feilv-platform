@@ -45,6 +45,24 @@ public class UserProfileService {
         });
     }
 
+    public ProfileVO updateAvatar(long userId, String storedPath) {
+        if (storedPath == null || !storedPath.matches("^/api/v1/avatars/[a-f0-9-]{36}\\.png$")) {
+            throw BizException.of(400, "头像地址无效");
+        }
+        return transaction.execute(status -> {
+            User user = active(users.findByIdForUpdate(userId).orElse(null));
+            user.setAvatarUrl(storedPath);
+            return view(users.saveAndFlush(user));
+        });
+    }
+
+    public void requireBoundMobile(long userId) {
+        User user = active(users.findByIdForUpdate(userId).orElse(null));
+        if (user.getMobile() == null || user.getMobile().isBlank()) {
+            throw BizException.of(4091, "请先绑定手机号后再下单");
+        }
+    }
+
     public ProfileVO bindWechatPhone(long userId, String code) {
         if (code == null || code.isBlank() || code.length() > 256) {
             throw BizException.of(400, "请重新点击按钮授权手机号");
@@ -105,6 +123,6 @@ public class UserProfileService {
         String masked = !bound ? "" : mobile.matches("^1[3-9]\\d{9}$")
                 ? mobile.substring(0, 3) + "****" + mobile.substring(7) : "已绑定";
         return new ProfileVO(user.getId(), user.getNickname() == null ? "" : user.getNickname(),
-                user.getRole(), masked, bound);
+                user.getRole(), masked, bound, user.getAvatarUrl() == null ? "" : user.getAvatarUrl());
     }
 }

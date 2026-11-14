@@ -8,6 +8,7 @@ function createApi(r) {
     riderRegister: data => r.post(root + '/auth/rider-register', data, { public: true }),
     me: () => r.get(root + '/user/me'),
     updateProfile: nickname => r.put(root + '/user/profile', { nickname }),
+    uploadAvatar: filePath => r.uploadAvatar(filePath),
     bindWechatPhone: code => r.post(root + '/user/wechat-phone', { code }),
     addressList: () => r.get(root + '/user/address'),
     addAddress: data => r.post(root + '/user/address', data),

@@ -6,10 +6,10 @@
         <entry key="0">
           <value>
             <TabSessionState>
-              <option name="projectPath" value="C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform" />
+              <option name="projectPath" value="$PROJECT_DIR$" />
               <option name="provider" value="claude" />
-              <option name="sessionId" value="cdd129d2-675d-450c-a873-b0dda813b537" />
-              <option name="cwd" value="C:\Users\Administrator\.local\share\TeleAgent\TeleAgent的工作空间\feilv-platform" />
+              <option name="sessionId" value="3af7fbae-ee17-4cd8-a544-64b8448c4678" />
+              <option name="cwd" value="$PROJECT_DIR$" />
               <option name="model" value="claude-sonnet-5[1m]" />
               <option name="permissionMode" value="bypassPermissions" />
             </TabSessionState>
