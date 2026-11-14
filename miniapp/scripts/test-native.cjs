@@ -1328,6 +1328,115 @@ test('orders layout: card navigation opens details without mutating pending paym
     assert.equal(page.data.list[0].canPay, status === 'WAIT_PAY'); assert.equal(page.data.list[0].canConfirm, status === 'DELIVERED')
   }
 })
+async function readyManualPhone(env, api, route = 'pages/profile/profile') {
+  env.authenticated()
+  const page = env.page(route, api)
+  page.onLoad({ from: 'my', mode: 'phone' }); await page.onShow()
+  page.togglePhoneMethod()
+  return page
+}
+function manualFill(page, mobile = '13800138000', code = '') {
+  page.manualPhoneInput(event('manualMobile', mobile)); page.manualPhoneInput(event('manualCode', code))
+}
+test('manual phone: authenticated API uses separate binding purpose and never the public login SMS route', async () => {
+  const env = environment(); env.authenticated()
+  const api = env.load(path.join(native, 'utils/api.js'))
+  const sending = api.phoneSmsCode('13800138000'); const req = env.calls.requests[0]
+  assert.ok(req.url.endsWith('/user/phone/sms-code')); assert.equal(req.header.Authorization, 'Bearer token-1')
+  assert.deepEqual(Object.keys(req.data), ['mobile']); req.success({ statusCode: 200, data: { code: 0, data: { retryAfterSeconds: 60, mock: true, demoCode: '123456' } } }); await sending
+  const binding = api.bindPhone('13800138000', '123456'); const bind = env.calls.requests[1]
+  assert.ok(bind.url.endsWith('/user/phone')); assert.deepEqual(Object.keys(bind.data), ['mobile', 'code'])
+  bind.success({ statusCode: 200, data: { code: 0, data: profileValue({ mobileBound: true, mobile: '138****8000' }) } }); await binding
+})
+test('manual phone: validates entered phone, explicit request and six-digit code before any bind', async () => {
+  const env = environment(); let sends = 0; let binds = 0
+  const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { sends++; return { retryAfterSeconds: 60, mock: true, demoCode: '123456' } }, async bindPhone() { binds++; return profileValue({ mobileBound: true }) } })
+  manualFill(page, 'bad', '123456'); await page.sendPhoneSms(); await page.bindManualPhone(); assert.equal(sends, 0); assert.equal(binds, 0)
+  manualFill(page, '13800138000', '123456'); await page.bindManualPhone(); assert.equal(binds, 0)
+  await page.sendPhoneSms(); assert.equal(page.data.phoneDemoCode, '123456'); assert.equal(page.data.phoneSmsMock, true)
+  assert.equal(page.data.manualCode, '', 'demo code must not be automatically submitted')
+  page.manualPhoneInput(event('manualCode', '123')); await page.bindManualPhone(); assert.equal(binds, 0)
+  page.manualPhoneInput(event('manualCode', '123456')); await page.bindManualPhone(); assert.equal(binds, 1)
+})
+test('manual phone: binding preserves nickname draft, clears raw credentials and does not alter account or order draft', async () => {
+  const env = environment(); let payload
+  const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { return { retryAfterSeconds: 60, mock: true, demoCode: '234567' } }, async bindPhone(mobile, code) { payload = { mobile, code }; return profileValue({ mobileBound: true, mobile: '138****8000' }) } })
+  env.storage.set('native_draft', { owner: 1, savedAt: 99 }); const revision = env.load(path.join(native, 'utils/session.js')).revision()
+  page.data.nickname = '未保存昵称'; manualFill(page); await page.sendPhoneSms(); page.manualPhoneInput(event('manualCode', '234567'))
+  await page.bindManualPhone(); assert.deepEqual(payload, { mobile: '13800138000', code: '234567' })
+  assert.equal(page.data.mobileBound, true); assert.equal(page.data.mobile, '138****8000'); assert.equal(page.data.nickname, '未保存昵称')
+  assert.equal(page.data.manualMobile, ''); assert.equal(page.data.manualCode, ''); assert.equal(page.data.phoneDemoCode, '')
+  assert.equal(env.storage.get('feilv_token'), 'token-1'); assert.equal(env.storage.get('native_draft').savedAt, 99)
+  assert.equal(env.load(path.join(native, 'utils/session.js')).revision(), revision)
+  for (const [key, value] of env.storage) { assert.notEqual(value, '13800138000'); assert.notEqual(value, '234567') }
+})
+test('manual phone: SMS not configured, code mismatch and phone conflicts never claim binding success', async () => {
+  for (const code of [400, 409, 429, 503]) {
+    const env = environment()
+    const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { throw Object.assign(new Error('短信未完成-' + code), { code }) } })
+    manualFill(page); await page.sendPhoneSms()
+    assert.equal(page.data.mobileBound, false); assert.equal(page.data.phoneError, '短信未完成-' + code)
+    assert.equal(page.data.phoneDemoCode, ''); assert.equal(page.data.phoneCooling, 0); assert.equal(page.data.phoneSending, false)
+    assert.equal(env.storage.get('feilv_token'), 'token-1'); assert.equal(env.calls.toast.some(message => message.includes('已发送')), false)
+  }
+})
+test('manual phone: changing phone clears old code and mock display; cooldown blocks repeated sends', async () => {
+  const env = environment(); let sends = 0; let binds = 0
+  const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { sends++; return { retryAfterSeconds: 60, mock: true, demoCode: '123456' } }, async bindPhone() { binds++ } })
+  manualFill(page); await page.sendPhoneSms(); assert.equal(sends, 1); assert.equal(page.data.phoneCooling, 60)
+  await page.sendPhoneSms(); assert.equal(sends, 1)
+  manualFill(page, '13900139000', '123456'); assert.equal(page.data.phoneDemoCode, '')
+  await page.bindManualPhone(); assert.equal(binds, 0)
+  page.onHide(); assert.equal(env.timers.size, 0); page._phoneSmsUntil = Date.now() - 1; await page.onShow()
+  assert.equal(page.data.phoneCooling, 0); assert.equal(page.data.phoneSmsLabel, '获取验证码')
+})
+test('manual phone: switching method revokes pending WeChat phone intent but keeps manual form in page memory', async () => {
+  const env = environment(); let binds = 0
+  const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { binds++ } })
+  page.preparePhone(); page.togglePhoneMethod(); await page.bindPhone(phoneEvent('late-code')); assert.equal(binds, 0)
+  manualFill(page, '13800138000', '123456'); page.togglePhoneMethod(); assert.equal(page.data.manualPhone, false)
+  page.togglePhoneMethod(); assert.equal(page.data.manualMobile, '13800138000'); assert.equal(page.data.manualCode, '123456')
+})
+test('manual phone: concurrent send and bind taps are suppressed and hidden/switched responses never mutate another page', async () => {
+  for (const operation of ['send', 'bind']) {
+    const env = environment(); let resolve; let calls = 0
+    const api = { async me() { return profileValue() }, phoneSmsCode() { return Promise.resolve({ retryAfterSeconds: 60, mock: true, demoCode: '123456' }) }, bindPhone() { calls++; return new Promise(r => { resolve = r }) } }
+    if (operation === 'send') api.phoneSmsCode = () => { calls++; return new Promise(r => { resolve = r }) }
+    const page = await readyManualPhone(env, api); manualFill(page)
+    if (operation === 'bind') { await page.sendPhoneSms(); page.manualPhoneInput(event('manualCode', '123456')) }
+    const invoke = () => operation === 'send' ? page.sendPhoneSms() : page.bindManualPhone()
+    const pending = invoke(); await invoke(); assert.equal(calls, 1)
+    env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B昵称' })
+    resolve(operation === 'send' ? { retryAfterSeconds: 60, mock: true, demoCode: '654321' } : profileValue({ mobileBound: true, mobile: '138****8000' })); await pending
+    assert.equal(page.data.mobileBound, false); assert.notEqual(page.data.phoneDemoCode, '654321'); assert.equal(env.storage.get('feilv_nickname'), 'B昵称')
+    assert.equal(env.calls.navigation.length, 0)
+  }
+})
+test('manual phone: inline login supports manual binding even when WeChat phone capability is unavailable', async () => {
+  const env = environment({ canIUse() { return false } })
+  const page = await readyManualPhone(env, { async me() { return profileValue({ nickname: '微信用户' }) }, async phoneSmsCode() { return { retryAfterSeconds: 60, mock: true, demoCode: '123456' } }, async bindPhone() { return profileValue({ mobileBound: true, mobile: '138****8000', nickname: '微信用户' }) } }, 'pages/login/login')
+  assert.equal(page.data.phoneSupported, false); assert.equal(page.data.manualPhone, true)
+  manualFill(page); await page.sendPhoneSms(); page.manualPhoneInput(event('manualCode', '123456')); await page.bindManualPhone()
+  assert.equal(page.data.profileStage, true); assert.equal(page.data.mobileBound, true); assert.equal(page.data.manualMobile, '')
+})
+test('manual phone: failed binding keeps current input for retry but never displays a false bound state', async () => {
+  for (const result of ['wrong-code', 'unconfirmed']) {
+    const env = environment()
+    const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { return { retryAfterSeconds: 60, mock: true, demoCode: '123456' } }, async bindPhone() { if (result === 'wrong-code') throw new Error('验证码错误'); return profileValue() } })
+    manualFill(page); await page.sendPhoneSms(); page.manualPhoneInput(event('manualCode', '123456')); await page.bindManualPhone()
+    assert.equal(page.data.mobileBound, false); assert.ok(page.data.phoneError); assert.equal(page.data.manualMobile, '13800138000')
+    assert.equal(page.data.binding, false); assert.equal(env.calls.toast.some(message => message.includes('已验证并绑定')), false)
+  }
+})
+test('manual phone: native reusable template exists in both binding entry points and requires code verification', () => {
+  const form = fs.readFileSync(path.join(native, 'templates/manual-phone.wxml'), 'utf8')
+  assert.ok(form.includes('bindtap="sendPhoneSms"')); assert.ok(form.includes('bindtap="bindManualPhone"')); assert.ok(form.includes('data-field="manualMobile"'))
+  assert.ok(form.includes('未发送真实短信')); assert.ok(form.includes('不能仅填写号码直接绑定'))
+  for (const page of ['profile/profile', 'login/login']) {
+    const template = fs.readFileSync(path.join(native, 'pages/' + page + '.wxml'), 'utf8')
+    assert.ok(template.includes('is="manualPhoneForm"')); assert.ok(template.includes('bindtap="togglePhoneMethod"'))
+  }
+})
 ;(async () => {
   let failures = 0
   for (const { name, fn } of tests) {

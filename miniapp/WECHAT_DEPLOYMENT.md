@@ -53,7 +53,9 @@ docker compose up -d --build --force-recreate backend
 - 头像由用户主动点击 `chooseAvatar` 选择；登录页点击“保存并继续”会依次上传选中的头像、保存昵称并重新核验 me，失败留在原页重试，已成功上传的头像不重复上传。“我的”独立资料页点击“保存头像”后调用 `wx.uploadFile`。可保留默认头像，不强制上传才能浏览或下单。支持5MB以内 JPEG/PNG；`POST /api/v1/user/avatar`，multipart 字段名 `file`，Bearer 认证，不能手工指定 multipart Content-Type。
 - 上传接口、昵称保存、手机号绑定和 GET me 均返回完整 me，包含持久化 `avatarUrl`（`/api/v1/avatars/<uuid>.jpg|png`）。头像 URL 按服务 **origin** 解析，即使 API_BASE_URL 含 `/api` 也不重复拼接路径。服务必须持久化头像文件并允许公开读取；头像不可包含私密身份字段，不应上传证件、手机号等信息。客户端仅缓存合法服务端路径，绝不缓存 chooseAvatar 临时路径。
 - 手机号绑定入口：登录后的授权按钮，或“我的 → 手机号绑定”（专用模式不要求先修改头像昵称）。绑定成功立即生效，“完成”返回“我的”后刷新资料。只有接口明确返回 `mobileBound: true` 才显示成功；未确认成功可重新读取状态，旧凭证不重放。
-- 手机号须用户单独点击 `getPhoneNumber` 授权按钮。后端使用同一 AppID 的有效凭据获取应用 `access_token`，向微信换取手机号后才绑定；前端不得提交或缓存完整号码作为验证依据。`POST /api/v1/user/wechat-phone {code}` 中的 code 不是 `wx.login` 的 code。me 中 `mobile` 始终脱敏，以 `mobileBound === true` 判断是否绑定。
+- 手动输入为另一条独立验证流程：`POST /api/v1/user/phone/sms-code {mobile}` 返回 `{retryAfterSeconds,mock,demoCode}`；`POST /api/v1/user/phone {mobile,code}` 返回完整me。两接口需要平台JWT，验证码绑定用户+号码+绑号用途，不能复用 `/auth/sms-code` 的登录凭证，不能只填号码直接绑定。
+- 手动短信绑定默认关闭（`SMS_BINDING_MOCK_ENABLED=false`），未配置真实短信时返回503，不声称已发送。显式开启mock仅供本地联调，页面以“未发送真实短信”显示测试码；正式环境必须关闭，且真实网关未接入前只能使用微信授权。6位码有效5分钟，60秒冷却、5次错误作废、用户/号码每日各10次限制；进程重启后需重新获取，多实例需改为共享的验证码与限流存储。
+- 微信方式须用户单独点击 `getPhoneNumber` 授权按钮。后端使用同一 AppID 的有效凭据获取应用 `access_token`，向微信换取手机号后才绑定；前端不得提交或缓存完整号码作为验证依据。`POST /api/v1/user/wechat-phone {code}` 中的 code 不是 `wx.login` 的 code。me 中 `mobile` 始终脱敏，以 `mobileBound === true` 判断是否绑定。
 - **手机号和已保存的非空昵称是下单必填。** 拒绝、取消、无 code 或能力不可用时保留登录态，可返回浏览，但不能下单。创建页继续和确认页提交都实时读取服务端 me 做门禁，失败保留订单草稿。服务端创建订单业务码 `4091` 也引导完善资料，并清除匹配草稿的“创建待核实”标记以便完善后重试，不丢弃草稿。
 - 号码冲突返回409，不切换账号、不覆盖绑定、不合并订单或角色；首版不支持换号。绑定不会自动填入配送联系电话。授权凭证失效返回业务400而非登录401；微信权限未开通返回503提示管理员检查，配额或频控返回429；未知微信错误/异常响应返回502且不回显微信原始错误、凭据或手机号。
 - 在微信公众平台核对手机号能力的主体、认证、权限与额度要求；完善头像、昵称和手机号用途、存储、删除/更正渠道以及用户隐私保护指引，并真机验证平台隐私弹窗。不能用本地文案代替后台配置，也不要将手机号API填入定位类 `requiredPrivateInfos`。

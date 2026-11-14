@@ -78,6 +78,24 @@ for (const page of app.pages) {
     pageDefinitions.set(page, definition)
   } catch (e) { errors.push(js + ': 页面声明失败 ' + e.message) }
 }
+// 原生 WXML template 可复用表单，事件必须存在于每个引用页面，不能跳过检查。
+const templateConsumers = new Map()
+for (const [page, definition] of pageDefinitions) {
+  const file = path.join(root, page + '.wxml')
+  if (!fs.existsSync(file)) continue
+  const text = fs.readFileSync(file, 'utf8')
+  const names = new Set()
+  for (const match of text.matchAll(/<import\s+src=["']([^"']+)["']\s*\/>/g)) {
+    const target = path.resolve(path.dirname(file), match[1])
+    const valid = target.startsWith(root + path.sep) && target.endsWith('.wxml') && fs.existsSync(target)
+    check(valid, file + ': 模板引用不存在或越界 ' + match[1])
+    if (!valid) continue
+    const consumers = templateConsumers.get(target) || []
+    consumers.push({ page, definition }); templateConsumers.set(target, consumers)
+    for (const item of fs.readFileSync(target, 'utf8').matchAll(/<template\s+name=["']([^"']+)["']/g)) names.add(item[1])
+  }
+  for (const match of text.matchAll(/<template\b[^>]*\bis=["']([^"']+)["']/g)) check(names.has(match[1]), file + ': 引用未导入的模板 ' + match[1])
+}
 let wxmlCount = 0
 const runtimeFiles = files.filter(file => !path.relative(root, file).startsWith('scripts' + path.sep) && /\.(?:js|json|wxml|wxss)$/.test(file))
 for (const file of runtimeFiles) {
@@ -96,11 +114,14 @@ for (const file of runtimeFiles) {
     wxmlCount++
     const page = path.relative(root, file).split(path.sep).join('/').replace(/\.wxml$/, '')
     const definition = pageDefinitions.get(page)
+    const consumers = definition ? [{ page, definition }] : templateConsumers.get(file) || []
+    check(consumers.length > 0, file + ': WXML既未注册为页面，也未被页面导入')
     for (const match of text.matchAll(/(?:bind|catch|capture-bind|capture-catch):?[\w-]+\s*=\s*["']([^"']+)["']/g)) {
-      check(Boolean(definition && typeof definition[match[1]] === 'function'), file + ': 事件处理函数不存在 ' + match[1])
+      for (const consumer of consumers) check(Boolean(consumer.definition && typeof consumer.definition[match[1]] === 'function'), file + ': 引用页面' + consumer.page + '缺少事件处理函数 ' + match[1])
     }
     for (const match of text.matchAll(/\{\{([\s\S]*?)\}\}/g)) check(!/[(){};]|=>|\?\.|\.includes\b|\.toFixed\b|\.replace\b/.test(match[1]), file + ': WXML 不允许函数调用或复杂对象表达式 ' + match[1])
-    check(!/v-model|v-if|v-for|<script|<template\s|@click/.test(text), file + ': WXML 中存在非原生模板')
+    check(!/v-model|v-if|v-for|<script|@click/.test(text), file + ': WXML 中存在非原生模板')
+    for (const match of text.matchAll(/<template\b[^>]*>/g)) check(/\b(?:name|is)=["'][^"']+["']/.test(match[0]), file + ': template 必须使用原生 name/is 属性')
     const stack = []
     const source = text.replace(/<!--[\s\S]*?-->/g, '').replace(/\{\{[\s\S]*?\}\}/g, '')
     for (const token of source.matchAll(/<\/?([\w-]+)\b[^>]*>/g)) {

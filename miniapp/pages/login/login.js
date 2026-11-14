@@ -94,7 +94,7 @@ definePage(Object.assign({}, profilePage, {
     if (!this.data.loaded) return toast('请先成功读取账号资料')
     const nickname = session.validNickname(this.data.nickname)
     if (!session.nicknameReady(nickname)) return toast('请填写1至32个字符的昵称，不使用微信默认昵称')
-    if (!this.data.mobileBound) return toast('请先授权绑定手机号，也可以暂时返回浏览')
+    if (!this.data.mobileBound) return toast('请先用微信授权或短信验证绑定手机号，也可以暂时返回浏览')
     return this.run('saving', async (scopedApi) => {
       const revision = this._profileRevision; const userId = this._profileUserId
       try {

@@ -1,3 +1,5 @@
+@import "../../templates/manual-phone.wxss";
+
 .profile-page .section-title .optional {
   margin-left: 12rpx;
 }

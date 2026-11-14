@@ -15,6 +15,8 @@ module.exports = {
     loaded: false, loading: false, saving: false, binding: false, checkingPrivacy: false, openingPrivacy: false,
     nickname: '', savedNickname: '', avatarUrl: '', avatarDraft: '', uploading: false, avatarSupported: false,
     mobile: '', mobileBound: false, error: '', fromLogin: false, phoneOnly: false, phoneError: '',
+    manualPhone: false, manualMobile: '', manualCode: '', phoneSending: false, phoneCooling: 0,
+    phoneSmsLabel: '获取验证码', phoneDemoCode: '', phoneSmsMock: false,
     phoneSupported: false, privacyReady: false, privacyNeeded: false, privacyGateSupported: false,
     privacyTitle: '微信隐私保护指引'
   },
@@ -22,6 +24,7 @@ module.exports = {
   onShow() {
     if (!session.requireLogin()) return
     this.initializeProfile()
+    this.updatePhoneCooling()
     return this.load()
   },
   initializeProfile() {
@@ -32,11 +35,75 @@ module.exports = {
       this._usedPhoneCodes = new Set()
       this._phoneIntent = null
       this._avatarIntent = null
+      this._phoneSmsUntil = 0
+      this._phoneSmsMobile = ''
       this.safeSet({ fromLogin: this._fromLogin, avatarSupported: typeof wx.canIUse === 'function' && wx.canIUse('button.open-type.chooseAvatar') })
     }
   },
   onHide() { this._privacyAttempt = (this._privacyAttempt || 0) + 1; this._phoneIntent = null; this._avatarIntent = null },
-  onUnload() { this._privacyAttempt = (this._privacyAttempt || 0) + 1; this._phoneIntent = null; this._avatarIntent = null },
+  onUnload() { this._privacyAttempt = (this._privacyAttempt || 0) + 1; this._phoneIntent = null; this._avatarIntent = null; this._phoneSmsUntil = 0; this._phoneSmsMobile = '' },
+  togglePhoneMethod() {
+    if (!this.current() || this._working || this.data.mobileBound) return
+    this._phoneIntent = null
+    this.safeSet({ manualPhone: !this.data.manualPhone, phoneError: '' })
+  },
+  manualPhoneInput(e) {
+    if (!this.current() || this._working || this.data.mobileBound) return
+    const field = e.currentTarget.dataset.field
+    if (!['manualMobile', 'manualCode'].includes(field)) return
+    const value = String(e.detail.value || '').trim()
+    const patch = { [field]: value }
+    if (field === 'manualMobile' && value !== this.data.manualMobile) Object.assign(patch, { manualCode: '', phoneDemoCode: '', phoneSmsMock: false })
+    this.safeSet(patch)
+  },
+  updatePhoneCooling() {
+    if (!this.current()) return
+    const cooling = Math.max(0, Math.ceil(((this._phoneSmsUntil || 0) - Date.now()) / 1000))
+    this.safeSet({ phoneCooling: cooling, phoneSmsLabel: cooling ? cooling + '秒后重试' : '获取验证码' })
+    if (cooling) this.later(this.updatePhoneCooling, 1000)
+  },
+  sendPhoneSms() {
+    if (!this.current() || this._working || !this.data.loaded || this.data.mobileBound || !this.data.manualPhone || this.data.phoneCooling) return
+    const mobile = this.data.manualMobile.trim()
+    if (!/^1[3-9]\d{9}$/.test(mobile)) return toast('请输入正确的11位手机号')
+    return this.run('phoneSending', async (api) => {
+      const revision = this._profileRevision; const userId = this._profileUserId
+      try {
+        const value = await api.phoneSmsCode(mobile)
+        if (!this.current(revision, userId)) return
+        if (!value || typeof value.mock !== 'boolean' || !Number.isInteger(value.retryAfterSeconds) || value.retryAfterSeconds < 1 || value.retryAfterSeconds > 3600
+            || value.mock && !/^\d{6}$/.test(value.demoCode || '')) throw new Error('验证码响应异常，请重新获取')
+        this._phoneSmsUntil = Date.now() + value.retryAfterSeconds * 1000
+        this._phoneSmsMobile = mobile
+        this.safeSet({ phoneSmsMock: value.mock, phoneDemoCode: value.mock ? value.demoCode : '', manualCode: '', phoneError: '' })
+        this.updatePhoneCooling()
+        toast(value.mock ? '演示验证码已生成，未发送真实短信' : '验证码已发送，请查看短信')
+      } catch (e) { this.phoneFailure(e, revision, userId) }
+    })
+  },
+  bindManualPhone() {
+    if (!this.current() || this._working || !this.data.loaded || this.data.mobileBound || !this.data.manualPhone) return
+    const mobile = this.data.manualMobile.trim(); const code = this.data.manualCode.trim()
+    if (!/^1[3-9]\d{9}$/.test(mobile) || !/^\d{6}$/.test(code)) return toast('请填写正确手机号和6位短信验证码')
+    if (mobile !== this._phoneSmsMobile) return toast('请先为当前手机号获取绑定验证码')
+    return this.run('binding', async (api) => {
+      const revision = this._profileRevision; const userId = this._profileUserId
+      try {
+        const value = await api.bindPhone(mobile, code)
+        if (!this.current(revision, userId)) return
+        if (!value || value.mobileBound !== true) throw new Error('服务端尚未确认绑定成功，请重新读取资料后重试')
+        if (this.applyProfile(value, revision, userId, true)) toast('手机号已验证并绑定')
+      } catch (e) { this.phoneFailure(e, revision, userId) }
+    })
+  },
+  clearManualPhone() {
+    this._phoneSmsUntil = 0; this._phoneSmsMobile = ''
+    this.safeSet({ manualMobile: '', manualCode: '', phoneDemoCode: '', phoneSmsMock: false, phoneCooling: 0, phoneSmsLabel: '获取验证码' })
+  },
+  phoneFailure(error, revision, userId) {
+    if (this.current(revision, userId) && !(error && error.silent)) this.safeSet({ phoneError: error && error.message || '绑定未完成，请重试' })
+    this.failure(error, revision, userId)
+  },
   current(revision = this._profileRevision, userId = this._profileUserId) {
     return !this._dead && this._visible && !this._leaving && !!session.token()
       && revision === session.revision() && revision === this._sessionRevision
@@ -52,6 +119,7 @@ module.exports = {
     this.safeSet({ loaded: true, savedNickname, nickname: preserveDraft ? this.data.nickname : savedNickname,
       avatarUrl: avatarURL(value.avatarUrl), mobileBound: value.mobileBound === true, mobile: masked, error: '',
       phoneError: value.mobileBound === true ? '' : this.data.phoneError })
+    if (value.mobileBound === true) this.clearManualPhone()
     return true
   },
   failure(error, revision, userId) {
@@ -157,7 +225,7 @@ module.exports = {
   },
   preparePhone() {
     this._phoneIntent = null
-    if (this.current() && !this._working && this.data.loaded && this.data.phoneSupported && this.data.privacyReady && !this.data.mobileBound) {
+    if (this.current() && !this._working && this.data.loaded && this.data.phoneSupported && this.data.privacyReady && !this.data.mobileBound && !this.data.manualPhone) {
       this._phoneIntent = { revision: this._profileRevision, userId: this._profileUserId }
     }
   },
@@ -165,7 +233,7 @@ module.exports = {
     const intent = this._phoneIntent
     this._phoneIntent = null
     if (!intent || !this.current(intent.revision, intent.userId) || this._working
-        || !this.data.loaded || !this.data.phoneSupported || !this.data.privacyReady || this.data.mobileBound) return
+        || !this.data.loaded || !this.data.phoneSupported || !this.data.privacyReady || this.data.mobileBound || this.data.manualPhone) return
     const detail = e.detail || {}
     if (detail.errMsg !== 'getPhoneNumber:ok' || typeof detail.code !== 'string' || !detail.code.trim()) {
       const denied = /deny|cancel/i.test(detail.errMsg || '')
@@ -197,7 +265,7 @@ module.exports = {
     if (!this.current() || this._working) return
     if (!this.data.loaded) return toast('请先成功读取账号资料')
     if (this.data.phoneOnly) {
-      if (!this.data.mobileBound) return toast('请先点击授权并绑定微信手机号')
+      if (!this.data.mobileBound) return toast('请先使用微信授权或短信验证码绑定手机号')
       return this.leave()
     }
     if (!session.nicknameReady(this.data.savedNickname)) return toast('请填写并主动保存非空昵称，不使用微信默认昵称')
