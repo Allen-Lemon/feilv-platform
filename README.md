@@ -84,7 +84,7 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 #### 开发模式临时免验证码绑定
 
 - 后端以 `local` profile 启动时，默认开启 `feilv.sms.binding-dev-bypass-enabled`，可用 `SMS_BINDING_DEV_BYPASS_ENABLED=false` 关闭。`development` profile 需显式配置该属性为true；普通环境默认false，同时包含 `prod`、`production` 或 `docker` 时一律拒绝，即使显式开启也不能绕过。
-- 小程序切换手动绑定时读取认证接口 `GET /api/v1/user/phone/options`；仅返回 `developmentBypass:true` 时隐藏短信区域、显示开发测试警告，点击“开发模式直接绑定”提交 `POST /api/v1/user/phone/development {mobile}`。不发送短信、不填写验证码，仍校验当前账号状态、号码格式、用户行锁及唯一性，不支持换绑或账号合并。
+- 小程序切换手动绑定时读取认证接口 `GET /api/v1/user/phone/options`；仅返回 `developmentBypass:true` 时隐藏短信区域、显示开发测试警告，点击“开发模式直接绑定”提交 `POST /api/v1/user/phone/development {mobile}`。不发送短信、不填写验证码，仍校验当前账号状态、号码格式、用户行锁及唯一性。首次绑定不允许覆盖旧号；明确的开发换绑使用 `/user/phone/development/change`，不支持账号合并。
 - 仅设置 `SMS_BINDING_DEV_BYPASS_ENABLED=true` 不足以绕过profile检查；隔离开发后端还需 `SPRING_PROFILES_ACTIVE=local` 或 `development`，修改后重启。项目两个Compose文件固定启用 `docker`，仍会拒绝，不要将生产Compose切换到local来测试。小程序当前固定连接 `https://xt.allms.cn`，本机环境变量不影响该远程服务，需确认请求实际指向的开发后端。
 - 选项接口新增 `reason`（`ENABLED`、`DISABLED`、`DEVELOPMENT_PROFILE_REQUIRED`、`PROTECTED_PROFILE`）及中文 `message`。小程序显示未生效原因、当前服务地址及“刷新绑定模式”；后端旧接口404或查询失败不再静默当作正常短信模式。
 - 仅限使用隔离开发数据库和测试账号。直接绑定的号码归属**未验证**，不要把开发用户数据迁入生产；该功能不能因前端传入develop标志而开启。
@@ -96,7 +96,7 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 - `POST /api/v1/user/phone/sms-code`，JSON `{"mobile":"13800138000"}`。显式开启本地 mock 后成功 `data` 为 `{"retryAfterSeconds":60,"mock":true,"demoCode":"六位验证码"}`；`demoCode` 契约为可空字符串，只有 mock 才能返回明文。**当前没有真实短信网关，默认 `feilv.sms.binding-mock-enabled: ${SMS_BINDING_MOCK_ENABLED:false}` 关闭，此时返回业务码 `503`，明确提示短信未配置、可使用微信授权，不生成验证码、不发送短信、不返回成功 data。**
 - `POST /api/v1/user/phone`，JSON `{"mobile":"13800138000","code":"六位验证码"}`。成功返回完整 `ProfileVO`：`userId`、`nickname`、`role`、脱敏 `mobile`（如 `138****8000`）、`mobileBound`、`avatarUrl`，立即持久化生效，可继续下单。手机号须为11位大陆手机号（1开头、第二位3至9），验证码须为6位数字。
 - 绑定凭证与旧 `/api/v1/auth/sms-code` 登录凭证完全独立，绑定 userId + mobile + PHONE_BINDING 用途；有效期5分钟，用户和手机号两个维度各60秒冷却、每日最多10次（北京时间自然日），连续错误5次作废，验证成功一次消费。错误/过期返回 `4011`/`4010`，不是平台登录失效 `401`，前端勿因此清除平台会话。
-- 已绑定不同号码、号码属于其他账户均返回业务 `409`；同号也须重新验证后才幂等成功，不自动合并账户或换号。数据库行锁与既有微信绑定共用，唯一索引竞争回滚后返回 `409`。
+- 已绑定不同号码、号码属于其他账户均返回业务 `409`；同号也须重新验证后才幂等成功，首次接口不自动合并账户或换号；换号须走专用换绑接口。数据库行锁与既有微信绑定共用，唯一索引竞争回滚后返回 `409`。
 - 本地联调显式设置 `SMS_BINDING_MOCK_ENABLED=true` 后启动后端（例如 `SMS_BINDING_MOCK_ENABLED=true mvn -f backend/pom.xml spring-boot:run`）。此模式只调用现有 `MessageService` 日志模拟，并使用脱敏号码、不将验证码写入日志；验证码仅在 mock 响应 `demoCode` 中供本地填写。**生产必须保持关闭；开启 mock 不等于发送真实短信，接入真实网关前手动短信绑号不可用，请使用微信授权。**
 - 两个绑号接口设置 `Cache-Control: no-store`。控制台与文件日志保留数据库异常及堆栈，仅将消息和堆栈中的11位大陆手机号替换为 `[PHONE_REDACTED]`，避免唯一约束冲突泄漏完整号码；不关闭 Hibernate 错误日志类别。
 - 凭证与限流当前为单实例内存状态，重启失效；mock 仅用于本地联调。未来接真实短信及多实例部署时须迁移到共享存储、原子限流/消费并取消明文验证码回传。既有短信登录仍是历史 demo，本次不改变其行为，也不能把其登录验证码用于绑定。
@@ -143,6 +143,16 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 ### 9）服务型自定义任务升级
 
 `db/migrations/20261115_task_service_pricing.sql` 幂等追加 `t_custom_task` 的 `task_mode/price_fen/contact/phone/location_address/service_time` 及自定价范围约束；历史任务默认 `DELIVERY`，`price_fen` 保留NULL并按原订单金额展示，**不更新历史订单、支付或钱包**。默认/local/docker启动按钱包迁移后执行本脚本。请先备份并升级后端数据库，再同时更新后台、小程序；尚未在远程数据库自动执行。线上/上门/兼职仍沿用“提交完成15分钟后默认确认”的演示规则，发布者须及时核对；通马桶、建材搬运等实际服务上线前需另行核对人员资质、劳动安全、服务范围与保险，不代表已实现正式用工/实名或安全审核。
+
+### 10）手机号换绑与骑手转派
+
+- 已绑定手机号可在小程序资料页点击“更换手机号”，验证新号码后仅修改当前 `t_user.mobile`；用户ID、微信身份、角色、订单、钱包及地址簿不迁移、不合并。新号码已属于任何其他账号时返回409；同号也须验证。旧手机号不再作为本账号的短信登录查找键，历史配送联系人电话和已发布任务联系方式不自动改写。
+- 微信换绑 `POST /api/v1/user/wechat-phone/change {code}`；短信换绑 `POST /user/phone/change/sms-code {mobile}` 和 `POST /user/phone/change {mobile,code}`；开发环境免验证换绑 `/user/phone/development/change {mobile}` 沿用受保护的开发开关。短信换绑凭证独立PHONE_CHANGE用途，并绑定原手机号快照，不能拿首次绑定/登录码或另一账号验证码换号；外部微信兑换后也检查原号及配置快照，旧响应不能覆盖新号码。响应只展示脱敏值，审计与更改同事务，开发免验证不可用于真实用户。
+- 转派仅允许正常骑手对自己“已接单ACCEPTED、尚未取件/开始服务”的已支付订单发起，填写目标骑手ID（不是用户ID）和原因。目标必须为正常骑手、已绑号，不能是自己或订单发布者；目标接受时须上线。已有投诉、扣款/钱包记账的订单不允许转派，避免责任漂移。
+- 发起不会立即变更承接者；对方确认接受后才交接，拒绝/撤销仍由原人负责。原人可继续履约，但开始取件/服务、订单取消或状态变化后PENDING申请失效，不能在完成/开始后再接收。订单级锁串行化接受与开始服务；同单最多一张活动申请，重复接受不重复日志。配送交接后重置取件码，服务任务仍无取件码。
+- 仅最终承接骑手可履约和读取订单私密详情，完成收入及后续投诉责任归最终承接者，不拆分原/新骑手收入；原骑手只能读取本人涉及的转派记录，不继续读取地址、电话或取件码。原支付金额、分账及钱包不在转派时改动。
+- 小程序骑手工作台可发起转派、查看待接收/已发出申请、接受/拒绝/撤销；后台订单管理增加只读转派历史，不代替目标骑手接受。接口：`POST /api/v1/rider/orders/{orderId}/transfers`、`GET /rider/transfers`、`POST /rider/transfers/{id}/respond|cancel`、`GET /orders/{orderId}/transfers`；后台 `GET /api/v1/admin/order-transfers` 需要orders实时菜单权限。
+- 新增 `db/migrations/20261115_phone_transfer.sql` 只创建 `t_order_transfer` 及查询索引/状态约束，手机号换绑无新列，不重写历史订单、手机号或支付数据。默认/local/docker已接入启动迁移；尚未自动执行远程数据库变更，升级需后端/数据库先行。
 
 ## 三、Docker 部署
 

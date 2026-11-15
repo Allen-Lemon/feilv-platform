@@ -59,11 +59,19 @@ docker compose up -d --build --force-recreate backend
 - 手动短信绑定默认关闭（`SMS_BINDING_MOCK_ENABLED=false`），未配置真实短信时返回503，不声称已发送。显式开启mock仅供本地联调，页面以“未发送真实短信”显示测试码；正式环境必须关闭，且真实网关未接入前只能使用微信授权。6位码有效5分钟，60秒冷却、5次错误作废、用户/号码每日各10次限制；进程重启后需重新获取，多实例需改为共享的验证码与限流存储。
 - 微信方式须用户单独点击 `getPhoneNumber` 授权按钮。后端使用同一 AppID 的有效凭据获取应用 `access_token`，向微信换取手机号后才绑定；前端不得提交或缓存完整号码作为验证依据。`POST /api/v1/user/wechat-phone {code}` 中的 code 不是 `wx.login` 的 code。me 中 `mobile` 始终脱敏，以 `mobileBound === true` 判断是否绑定。
 - **手机号和已保存的非空昵称是下单必填。** 拒绝、取消、无 code 或能力不可用时保留登录态，可返回浏览，但不能下单。创建页继续和确认页提交都实时读取服务端 me 做门禁，失败保留订单草稿。服务端创建订单业务码 `4091` 也引导完善资料，并清除匹配草稿的“创建待核实”标记以便完善后重试，不丢弃草稿。
-- 号码冲突返回409，不切换账号、不覆盖绑定、不合并订单或角色；首版不支持换号。绑定不会自动填入配送联系电话。授权凭证失效返回业务400而非登录401；微信权限未开通返回503提示管理员检查，配额或频控返回429；未知微信错误/异常响应返回502且不回显微信原始错误、凭据或手机号。
+- 号码冲突返回409，不切换账号、不覆盖占用号码、不合并订单或角色；已绑定账号可走独立换号流程，保持原userID/wallet/order/role。绑定不会自动填入配送联系电话。授权凭证失效返回业务400而非登录401；微信权限未开通返回503提示管理员检查，配额或频控返回429；未知微信错误/异常响应返回502且不回显微信原始错误、凭据或手机号。
 - 在微信公众平台核对手机号能力的主体、认证、权限与额度要求；完善头像、昵称和手机号用途、存储、删除/更正渠道以及用户隐私保护指引，并真机验证平台隐私弹窗。不能用本地文案代替后台配置，也不要将手机号API填入定位类 `requiredPrivateInfos`。
 - 手机号也是原有短信登录的查找键。**生产短信登录仍是演示能力，正式用户环境必须关闭演示验证码回传并接入真实短信验证服务，或禁用短信登录入口。** 资料绑定不将演示短信变成生产认证能力。
 - 真机验收至少包含：微信/短信登录、首页登录回跳、头像选择和保存、上传失败重试/格式与大小限制、重新进入展示持久化头像、昵称选择/手填并主动保存、同意/拒绝手机号、未完善返回浏览但下单被拦截、草稿保留、同号幂等/跨账号冲突、业务401及退出/切号后的旧上传和资料响应隔离。离线测试不调用真实微信，不能证明手机号资格已开通。
 - 微信接口说明参考：<https://developers.weixin.qq.com/miniprogram/dev/OpenApiDoc/user-info/phone-number/getPhoneNumber.html>、<https://developers.weixin.qq.com/miniprogram/dev/OpenApiDoc/mp-access-token/getStableAccessToken.html>。平台规则和接口要求应以当前官方文档及后台为准。
+
+### 手机号换绑与接单转派联调
+
+- 换绑保留原用户ID、钱包、订单与角色，只验证新号、不提交旧号。后端须提供 `POST /user/wechat-phone/change {code}`、`POST /user/phone/change/sms-code {mobile}`、`POST /user/phone/change {mobile,code}`、`POST /user/phone/development/change {mobile}`（均为`/api/v1`前缀；发送验证码返回SMS结果，其余返回完整masked `ProfileVO`）。`GET /user/phone/options`不变。开发免验证仅后端允许时可见，生产不得放开；默认未配置真实短信换号503，mock/noSMS不能声称真实验证。
+- “我的 → 手机号绑定”和资料页已bound显示更换，phoneOnly同样可换；`changingPhone`与首次绑定严格分开，三方式提交前确认，取消清输入。成功只更新资料/新masked和toast，不重登、不递增session revision、不清订单或提现待核实草稿；冲突不覆盖占用号。手填新号码与code仅页内存，取消/成功/hide清空，切号及旧选项/短信/换号响应隔离。
+- 转派创建路由必须为 **`POST /api/v1/rider/orders/{id}/transfers {targetRiderId,reason}`**；查询`GET /rider/transfers?page=0&direction=INCOMING|OUTGOING&status=可选`每页15，处理`POST /rider/transfers/{id}/respond {decision:ACCEPTED|REJECTED,reason:''}`与`POST /rider/transfers/{id}/cancel {reason:''}`，订单只读历史为`GET /orders/{id}/transfers`。完整TransferVO见本目录README。客户端不增加全国骑手搜索，不传用户ID作目标。
+- 仅RIDER入口；工作台显示自己的riderId便于分享，每个ACCEPTED订单可申请。只允许未取件/未开始服务，原因1–255字且指定现役目标骑手ID。对方在工作台上线（onlineStatus 1/2）后于incoming接受才交接；拒绝/撤销仍原人负责，开始履约使pending过期。最终骑手取得原收入并负责投诉，原人保留转派记录访问但无履约或私有订单详情权限。专页带orderId才查历史，不扩大原详情请求。失败/未知结果查询服务端，不本地假成功；切号清列表，返回工作台刷新承接订单，原人pickup/serviceStart后端403不推进。
+- 真机/联调覆盖：微信新号授权/短信新号/开发免验证、占用409与短信503/expired、取消、mock/开发文案、原号masked与成功新masked、会话和订单钱包草稿不变；两名现役骑手分享riderId、离线接受被阻、上线后接受/拒绝/撤销、Page15、待转派继续取件或开始服务自动过期、重复点击及超时核实、最终骑手原收入与投诉归属、原骑手历史可看/私有详情和履约403、切号/hide/unload旧回调隔离。离线wx-mock不证明后端部署、真实微信/短信授权或并发交接安全。
 
 ### 自定义任务及投诉联调
 
@@ -114,4 +122,4 @@ npm run check:release --prefix miniapp
 - 短信验证码与骑手入驻仍存在演示逻辑，生产须接入真实验证或禁用对应入口。
 - 真实微信授权未因HTTPS配置而自动完成，必须用真实AppID/Secret实测。
 - 服务/隐私页面是当前数据流说明，正式法律文本、业务资质及审核材料必须由运营方补全。
-- 仅实现公开头像上传，送达照片凭证、OCR、真实支付、手机号换绑和微信短信既有账号合并仍未实现。业务必需的手机号绑定不等于账户合并，也不解决真实微信登录的凭据错误。
+- 仅实现公开头像上传，送达照片凭证、OCR、真实支付、微信短信既有账号合并仍未实现；手机号换绑已接独立接口，须配套后端及真实授权验收。业务必需的手机号绑定不等于账户合并，也不解决真实微信登录的凭据错误。

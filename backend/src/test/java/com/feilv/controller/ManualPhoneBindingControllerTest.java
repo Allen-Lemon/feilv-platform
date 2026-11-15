@@ -214,7 +214,7 @@ class ManualPhoneBindingControllerTest {
     }
 
     private MockMvc mvc(boolean enabled) {
-        var service = new SmsPhoneBindingService(users, messages, manager, enabled);
+        var service = new SmsPhoneBindingService(users, messages, mock(com.feilv.service.AuditService.class), mock(jakarta.persistence.EntityManager.class), manager, enabled);
         return MockMvcBuilders.standaloneSetup(new ManualPhoneBindingController(service))
                 .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(new AuthInterceptor(users)).build();
     }

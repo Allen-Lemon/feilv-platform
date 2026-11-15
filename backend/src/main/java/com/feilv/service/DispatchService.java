@@ -27,6 +27,7 @@ public class DispatchService {
     private final RiderRepository riderRepository;
     private final UserRepository userRepository;
     private final OrderService orderService;
+    private final OrderTransferService orderTransferService;
 
     @Transactional
     public void online(long userId, int onlineStatus) {
@@ -99,6 +100,7 @@ public class DispatchService {
             throw BizException.of(4092, "取件码不正确，连续错误5次将锁定转人工核实");
         }
         orderService.changeStatus(order, OrderStatus.PICKING, "RIDER", userId, "骑手到达取件点并核销");
+        orderTransferService.expirePendingOnStart(order);
     }
 
     @Transactional
@@ -123,6 +125,7 @@ public class DispatchService {
         if (Set.of(OrderStatus.PICKING, OrderStatus.DELIVERING, OrderStatus.DELIVERED, OrderStatus.FINISHED).contains(order.getStatus())) return;
         if (order.getStatus() != OrderStatus.ACCEPTED) throw BizException.of(4090, "当前状态不可开始服务");
         orderService.changeStatus(order, OrderStatus.PICKING, "RIDER", userId, "骑手开始服务");
+        orderTransferService.expirePendingOnStart(order);
     }
 
     /** 两个内部状态及日志在一个订单锁/事务内提交；并发重试不会重复写日志。 */

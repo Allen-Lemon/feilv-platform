@@ -4,6 +4,7 @@
     <view class="account-identity"><image wx:if="{{avatarUrl}}" class="account-avatar" src="{{avatarUrl}}" mode="aspectFill"/><view wx:else class="account-avatar account-avatar-default">飞</view><view class="account-info"><view class="account-name">{{nickname}}</view><text class="account-role">{{roleText}}</text><view class="account-mobile" wx:if="{{me}}">{{me.mobile}}</view><view class="account-mobile" wx:elif="{{loading}}">正在同步账号资料…</view></view></view>
     <view class="account-error" wx:if="{{error}}"><view class="error">{{error}}</view><button class="text-button retry-button" bindtap="load" disabled="{{loading}}">重新读取资料</button></view>
     <button wx:if="{{me && !me.mobileBound}}" class="account-phone-bind" bindtap="phone" disabled="{{loading}}">授权绑定手机号，完成下单准备 →</button>
+    <button wx:if="{{me && me.mobileBound}}" class="account-phone-bind" bindtap="phone" disabled="{{loading}}">更换手机号 →</button>
     <button class="account-profile-link" bindtap="profile" disabled="{{loading}}" hover-class="tap-feedback"><view class="grow"><view class="profile-link-title">管理账号资料</view><view class="profile-link-caption">头像、昵称与手机号</view></view><view class="chevron"></view></button>
   </view>
   <view class="card account-card guest-card" wx:else><view class="account-identity"><view class="account-avatar account-avatar-default">飞</view><view class="account-info"><view class="account-name">欢迎来到飞毛腿</view><view class="account-mobile">登录后查看资料与订单</view></view></view><button class="primary" bindtap="login">登录 / 注册</button></view>

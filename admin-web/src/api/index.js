@@ -12,6 +12,7 @@ export const adminApi = {
   customerUser: (id) => request.get(`/v1/admin/users/${id}`),
   changeCustomerStatus: (id, status) => request.post(`/v1/admin/users/${id}/status`, { status }),
   orders: (params) => request.get('/v1/admin/orders', { params }),
+  orderTransfers: (params) => request.get('/v1/admin/order-transfers', { params }),
   cancelOrder: (id, reason) => request.post(`/v1/admin/orders/${id}/cancel`, { reason }),
   completeOrder: (id, reason) => request.post(`/v1/admin/orders/${id}/complete`, { reason }),
   handleComplaint: (id, data) => request.post(`/v1/admin/complaints/${id}/handle`, data),

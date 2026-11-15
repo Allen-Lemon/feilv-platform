@@ -13,6 +13,7 @@
     "pages/wallet/wallet",
     "pages/rider/register",
     "pages/rider/workbench",
+    "pages/rider/transfers",
     "pages/settings/settings",
     "pages/legal/legal"
   ],

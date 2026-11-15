@@ -10,8 +10,9 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import java.io.IOException;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
-/** 手动绑号只接受手机号和绑定验证码，不接受任何客户端身份字段。 */
+/** 绑号/换绑只接受对应凭据，不接受任何客户端身份或验证绕过字段。 */
 public final class ManualPhoneBindingDtos {
     private ManualPhoneBindingDtos() {}
 
@@ -31,6 +32,14 @@ public final class ManualPhoneBindingDtos {
         @JsonAnySetter
         public void rejectUnknown(String name, Object value) { throw new IllegalArgumentException("请求包含不支持的字段"); }
         @Override public String toString() { return "BindPhoneReq[mobile=REDACTED, code=REDACTED]"; }
+    }
+
+    public record WechatChangeReq(
+            @JsonDeserialize(using = StrictStringDeserializer.class)
+            @NotBlank @Size(max = 256) String code) {
+        @JsonAnySetter
+        public void rejectUnknown(String name, Object value) { throw new IllegalArgumentException("请求包含不支持的字段"); }
+        @Override public String toString() { return "WechatChangeReq[code=REDACTED]"; }
     }
 
     /** 只在此接口拒绝 Jackson 默认的数字/布尔到字符串强制转换，不改变其他 API。 */

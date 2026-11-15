@@ -1,5 +1,5 @@
 const session = require('./session')
-const { toast } = require('./page')
+const { toast, modal } = require('./page')
 const { avatarURL, baseURL } = require('./request')
 const nickname = session.validNickname
 function codePhoneSupported() {
@@ -14,7 +14,7 @@ module.exports = {
   data: {
     loaded: false, loading: false, saving: false, binding: false, checkingPrivacy: false, openingPrivacy: false,
     nickname: '', savedNickname: '', avatarUrl: '', avatarDraft: '', uploading: false, avatarSupported: false,
-    mobile: '', mobileBound: false, error: '', fromLogin: false, phoneOnly: false, phoneError: '',
+    mobile: '', mobileBound: false, changingPhone: false, error: '', fromLogin: false, phoneOnly: false, phoneError: '',
     manualPhone: false, manualMobile: '', manualCode: '', phoneSending: false, phoneCooling: 0,
     phoneSmsLabel: '获取验证码', phoneDemoCode: '', phoneSmsMock: false,
     phoneDevelopment: false, phoneOptionsLoading: false, phoneOptionsError: '', phoneModeMessage: '', phoneBackend: '',
@@ -26,6 +26,7 @@ module.exports = {
     if (!session.requireLogin()) return
     this.initializeProfile()
     this.updatePhoneCooling()
+    if (this._working) { this._showAfterRun = true; return }
     return this.load()
   },
   initializeProfile() {
@@ -41,10 +42,32 @@ module.exports = {
       this.safeSet({ fromLogin: this._fromLogin, avatarSupported: typeof wx.canIUse === 'function' && wx.canIUse('button.open-type.chooseAvatar') })
     }
   },
-  onHide() { this._privacyAttempt = (this._privacyAttempt || 0) + 1; this._phoneIntent = null; this._avatarIntent = null },
-  onUnload() { this._privacyAttempt = (this._privacyAttempt || 0) + 1; this._phoneIntent = null; this._avatarIntent = null; this._phoneSmsUntil = 0; this._phoneSmsMobile = '' },
+  onHide() { this.invalidatePhone(); this._privacyAttempt = (this._privacyAttempt || 0) + 1; this._avatarIntent = null },
+  onUnload() { this.invalidatePhone(); this._privacyAttempt = (this._privacyAttempt || 0) + 1; this._avatarIntent = null },
+  invalidatePhone() {
+    this._phoneGeneration = (this._phoneGeneration || 0) + 1
+    this._phoneIntent = null
+    this.clearManualPhone()
+    this.safeSet({ changingPhone: false, manualPhone: false, phoneDevelopment: false, phoneError: '', phoneOptionsError: '', phoneModeMessage: '' })
+  },
+  phoneContext() { return { revision: this._profileRevision, userId: this._profileUserId, generation: this._phoneGeneration || 0, changing: this.data.changingPhone } },
+  phoneCurrent(ctx) { return !!ctx && this.current(ctx.revision, ctx.userId) && ctx.generation === (this._phoneGeneration || 0) && ctx.changing === this.data.changingPhone },
+  phoneFailureFor(error, ctx) {
+    // 真实401已由传输层清会话；登录页仍须退出资料阶段，但hide/切号的旧失败不能重置新页。
+    const expired = error && (error.status === 401 || error.code === 401) && !session.token() && !this._dead && this._visible
+      && ctx.generation === (this._phoneGeneration || 0) && this._profileRevision === ctx.revision && this._sessionRevision === ctx.revision
+    if (this.phoneCurrent(ctx) || expired) this.phoneFailure(error, ctx.revision, ctx.userId)
+  },
+  startPhoneChange() {
+    if (!this.current() || this._working || !this.data.loaded || !this.data.mobileBound) return
+    this.invalidatePhone()
+    this.safeSet({ changingPhone: true })
+  },
+  cancelPhoneChange() {
+    if (this.current() && !this._working && this.data.changingPhone) this.invalidatePhone()
+  },
   togglePhoneMethod() {
-    if (!this.current() || this._working || this.data.mobileBound) return
+    if (!this.current() || this._working || this.data.mobileBound && !this.data.changingPhone) return
     this._phoneIntent = null
     const manualPhone = !this.data.manualPhone
     this.safeSet({ manualPhone, phoneError: '', phoneDevelopment: false, phoneOptionsError: '', phoneModeMessage: '' })
@@ -54,22 +77,22 @@ module.exports = {
     if (!this.current() || this._working || !this.data.manualPhone) return
     this.safeSet({ phoneDevelopment: false, phoneOptionsError: '', phoneModeMessage: '', phoneBackend: baseURL() })
     return this.run('phoneOptionsLoading', async (api) => {
-      const revision = this._profileRevision; const userId = this._profileUserId
+      const ctx = this.phoneContext()
       try {
         const options = await api.phoneBindingOptions()
-        if (!this.current(revision, userId)) return
+        if (!this.phoneCurrent(ctx)) return
         if (!options || typeof options.developmentBypass !== 'boolean') throw new Error('绑定配置响应格式错误')
         this.safeSet({ phoneDevelopment: options.developmentBypass,
           phoneModeMessage: options.developmentBypass ? '' : typeof options.message === 'string' && options.message ? options.message : '当前后端未开启开发免验证码模式，请检查开关、开发profile并重启后端后刷新。' })
       } catch (e) {
-        if (this.current(revision, userId)) this.safeSet({ phoneDevelopment: false,
+        if (this.phoneCurrent(ctx)) this.safeSet({ phoneDevelopment: false,
           phoneOptionsError: e && (e.status === 404 || e.code === 404) ? '当前服务没有绑定配置接口，请更新后端；修改本地配置不会影响小程序正在连接的远程服务。' : '无法读取手机号绑定配置，请检查网络和当前服务地址后重试。' })
-        if (e && e.status === 401) this.phoneFailure(e, revision, userId)
+        this.phoneFailureFor(e, ctx)
       }
     })
   },
   manualPhoneInput(e) {
-    if (!this.current() || this._working || this.data.mobileBound) return
+    if (!this.current() || this._working || this.data.mobileBound && !this.data.changingPhone) return
     const field = e.currentTarget.dataset.field
     if (!['manualMobile', 'manualCode'].includes(field)) return
     const value = String(e.detail.value || '').trim()
@@ -84,14 +107,14 @@ module.exports = {
     if (cooling) this.later(this.updatePhoneCooling, 1000)
   },
   sendPhoneSms() {
-    if (!this.current() || this._working || !this.data.loaded || this.data.mobileBound || !this.data.manualPhone || this.data.phoneCooling || this.data.phoneDevelopment) return
+    if (!this.current() || this._working || !this.data.loaded || this.data.mobileBound && !this.data.changingPhone || !this.data.manualPhone || this.data.phoneCooling || this.data.phoneDevelopment) return
     const mobile = this.data.manualMobile.trim()
     if (!/^1[3-9]\d{9}$/.test(mobile)) return toast('请输入正确的11位手机号')
     return this.run('phoneSending', async (api) => {
-      const revision = this._profileRevision; const userId = this._profileUserId
+      const ctx = this.phoneContext(); const { revision, userId } = ctx
       try {
-        const value = await api.phoneSmsCode(mobile)
-        if (!this.current(revision, userId)) return
+        const value = ctx.changing ? await api.changePhoneSmsCode(mobile) : await api.phoneSmsCode(mobile)
+        if (!this.phoneCurrent(ctx)) return
         if (!value || typeof value.mock !== 'boolean' || !Number.isInteger(value.retryAfterSeconds) || value.retryAfterSeconds < 1 || value.retryAfterSeconds > 3600
             || value.mock && !/^\d{6}$/.test(value.demoCode || '')) throw new Error('验证码响应异常，请重新获取')
         this._phoneSmsUntil = Date.now() + value.retryAfterSeconds * 1000
@@ -99,24 +122,32 @@ module.exports = {
         this.safeSet({ phoneSmsMock: value.mock, phoneDemoCode: value.mock ? value.demoCode : '', manualCode: '', phoneError: '' })
         this.updatePhoneCooling()
         toast(value.mock ? '演示验证码已生成，未发送真实短信' : '验证码已发送，请查看短信')
-      } catch (e) { this.phoneFailure(e, revision, userId) }
+      } catch (e) { this.phoneFailureFor(e, ctx) }
     })
   },
   bindManualPhone() {
-    if (!this.current() || this._working || !this.data.loaded || this.data.mobileBound || !this.data.manualPhone) return
+    if (!this.current() || this._working || !this.data.loaded || this.data.mobileBound && !this.data.changingPhone || !this.data.manualPhone) return
     const mobile = this.data.manualMobile.trim(); const code = this.data.manualCode.trim()
     if (!/^1[3-9]\d{9}$/.test(mobile)) return toast('请输入正确的11位手机号')
     if (!this.data.phoneDevelopment && !/^\d{6}$/.test(code)) return toast('请填写6位短信验证码')
     if (!this.data.phoneDevelopment && mobile !== this._phoneSmsMobile) return toast('请先为当前手机号获取绑定验证码')
     return this.run('binding', async (api) => {
-      const revision = this._profileRevision; const userId = this._profileUserId
+      const ctx = this.phoneContext(); const { revision, userId } = ctx
       try {
-        const development = this.data.phoneDevelopment
-        const value = development ? await api.bindDevelopmentPhone(mobile) : await api.bindPhone(mobile, code)
-        if (!this.current(revision, userId)) return
-        if (!value || value.mobileBound !== true) throw new Error('服务端尚未确认绑定成功，请重新读取资料后重试')
-        if (this.applyProfile(value, revision, userId, true)) toast(development ? '开发测试手机号已绑定（未验证归属）' : '手机号已验证并绑定')
-      } catch (e) { this.phoneFailure(e, revision, userId) }
+        const development = this.data.phoneDevelopment; const mock = this.data.phoneSmsMock
+        if (ctx.changing && !(await modal({ title: '确认更换手机号', content: '将使用新号码替换当前绑定号码；用户ID、钱包、订单和角色不变，不合并其他账号。' + (development ? '开发模式未验证号码归属。' : mock ? '演示验证码未发送真实短信，不代表真实验证。' : '请确认新号码由您本人使用。') })).confirm) return
+        if (!this.phoneCurrent(ctx)) return
+        const value = ctx.changing
+          ? development ? await api.changeDevelopmentPhone(mobile) : await api.changePhone(mobile, code)
+          : development ? await api.bindDevelopmentPhone(mobile) : await api.bindPhone(mobile, code)
+        if (!this.phoneCurrent(ctx)) return
+        if (!value || value.mobileBound !== true || ctx.changing && (value.role !== wx.getStorageSync('feilv_role') || !/^\d{3}\*{4}\d{4}$/.test(value.mobile || ''))) throw new Error('服务端尚未确认手机号操作成功，请重新读取资料后重试')
+        if (this.applyProfile(value, revision, userId, true)) {
+          this.invalidatePhone()
+          toast(development ? '开发测试手机号已' + (ctx.changing ? '更换' : '绑定') + '（未验证归属）'
+            : mock ? '演示手机号已' + (ctx.changing ? '更换' : '绑定') + '（未真实验证）' : '手机号已' + (ctx.changing ? '更换' : '验证并绑定'))
+        }
+      } catch (e) { this.phoneFailureFor(e, ctx) }
     })
   },
   clearManualPhone() {
@@ -142,7 +173,7 @@ module.exports = {
     this.safeSet({ loaded: true, savedNickname, nickname: preserveDraft ? this.data.nickname : savedNickname,
       avatarUrl: avatarURL(value.avatarUrl), mobileBound: value.mobileBound === true, mobile: masked, error: '',
       phoneError: value.mobileBound === true ? '' : this.data.phoneError })
-    if (value.mobileBound === true) this.clearManualPhone()
+    if (value.mobileBound === true && !this.data.changingPhone) this.clearManualPhone()
     return true
   },
   failure(error, revision, userId) {
@@ -155,16 +186,17 @@ module.exports = {
     return this.run('loading', api => this.loadProfile(api))
   },
   async loadProfile(api) {
-    const revision = this._profileRevision; const userId = this._profileUserId
+    const revision = this._profileRevision; const userId = this._profileUserId; const generation = this._phoneGeneration || 0
     try {
       const wasLoaded = this.data.loaded
       const preserveDraft = wasLoaded && this.data.nickname !== this.data.savedNickname
       const value = await api.me()
+      if (generation !== (this._phoneGeneration || 0)) return
       if (!this.applyProfile(value, revision, userId, preserveDraft)) return
       if (!wasLoaded && this._fromLogin && session.nicknameReady(value.nickname) && value.mobileBound === true) return this.leave()
       await this.readPrivacy(revision, userId)
       if (this.data.manualPhone && this.current(revision, userId)) this.later(this.loadPhoneOptions, 0)
-    } catch (e) { this.failure(e, revision, userId) }
+    } catch (e) { if (generation === (this._phoneGeneration || 0)) this.failure(e, revision, userId) }
   },
   input(e) { if (this.current() && !this._working) this.safeSet({ nickname: e.detail.value }) },
   save() {
@@ -249,15 +281,15 @@ module.exports = {
   },
   preparePhone() {
     this._phoneIntent = null
-    if (this.current() && !this._working && this.data.loaded && this.data.phoneSupported && this.data.privacyReady && !this.data.mobileBound && !this.data.manualPhone) {
-      this._phoneIntent = { revision: this._profileRevision, userId: this._profileUserId }
+    if (this.current() && !this._working && this.data.loaded && this.data.phoneSupported && this.data.privacyReady && (!this.data.mobileBound || this.data.changingPhone) && !this.data.manualPhone) {
+      this._phoneIntent = this.phoneContext()
     }
   },
   bindPhone(e) {
     const intent = this._phoneIntent
     this._phoneIntent = null
-    if (!intent || !this.current(intent.revision, intent.userId) || this._working
-        || !this.data.loaded || !this.data.phoneSupported || !this.data.privacyReady || this.data.mobileBound || this.data.manualPhone) return
+    if (!this.phoneCurrent(intent) || this._working
+        || !this.data.loaded || !this.data.phoneSupported || !this.data.privacyReady || this.data.mobileBound && !this.data.changingPhone || this.data.manualPhone) return
     const detail = e.detail || {}
     if (detail.errMsg !== 'getPhoneNumber:ok' || typeof detail.code !== 'string' || !detail.code.trim()) {
       const denied = /deny|cancel/i.test(detail.errMsg || '')
@@ -272,17 +304,13 @@ module.exports = {
     return this.run('binding', async (api) => {
       try {
         // 仅使用本次 getPhoneNumber 用户操作的 code，绝不使用 wx.login 的 code 或客户端手机号。
-        const value = await api.bindWechatPhone(code)
-        if (!this.current(intent.revision, intent.userId)) return
-        if (!value || value.mobileBound !== true) throw new Error('服务端尚未确认绑定成功，请重新读取资料后重试')
-        if (this.applyProfile(value, intent.revision, intent.userId, true)) toast('手机号已绑定')
-      } catch (e) {
-        if (this.current(intent.revision, intent.userId) && !(e && e.silent)) {
-          const message = e && e.message || '绑定失败，请重新点击授权手机号'
-          this.safeSet({ phoneError: message })
-        }
-        this.failure(e, intent.revision, intent.userId)
-      }
+        if (intent.changing && !(await modal({ title: '确认更换微信手机号', content: '确认使用本次微信授权的新号码替换当前手机号？用户ID、钱包、订单和角色保持不变，不合并已占用号码。' })).confirm) return
+        if (!this.phoneCurrent(intent)) return
+        const value = intent.changing ? await api.changeWechatPhone(code) : await api.bindWechatPhone(code)
+        if (!this.phoneCurrent(intent)) return
+        if (!value || value.mobileBound !== true || intent.changing && (value.role !== wx.getStorageSync('feilv_role') || !/^\d{3}\*{4}\d{4}$/.test(value.mobile || ''))) throw new Error('服务端尚未确认手机号操作成功，请重新读取资料后重试')
+        if (this.applyProfile(value, intent.revision, intent.userId, true)) { this.invalidatePhone(); toast(intent.changing ? '手机号已更换' : '手机号已绑定') }
+      } catch (e) { this.phoneFailureFor(e, intent) }
     })
   },
   complete() {

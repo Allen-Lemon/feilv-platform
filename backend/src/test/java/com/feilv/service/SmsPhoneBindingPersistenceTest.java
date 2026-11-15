@@ -37,11 +37,13 @@ import static org.mockito.Mockito.*;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SmsPhoneBindingPersistenceTest {
     @Autowired UserRepository users;
+    @Autowired jakarta.persistence.EntityManager entityManager;
     @Autowired WechatIdentityRepository identities;
     @Autowired PlatformTransactionManager manager;
     @Autowired UserProfileService profiles;
     @Autowired org.springframework.core.env.Environment environment;
     @MockBean MessageService messages;
+    @MockBean AuditService audit;
     @MockBean WechatPhoneClient phone;
     @MockBean WechatConfigService settings;
     private SmsPhoneBindingService binding;
@@ -58,7 +60,7 @@ class SmsPhoneBindingPersistenceTest {
         when(clock.getZone()).thenReturn(ZoneId.of("Asia/Shanghai"));
         // 默认仍委托真实 Spring Data 代理；仅在竞争用例中插入可控同步点。
         controlledUsers = mock(UserRepository.class, AdditionalAnswers.delegatesTo(users));
-        binding = new SmsPhoneBindingService(controlledUsers, messages, manager, true, clock, new SecureRandom());
+        binding = new SmsPhoneBindingService(controlledUsers, messages, audit, entityManager, manager, true, clock, new SecureRandom());
         when(settings.effectiveLogin()).thenReturn(credentials);
     }
 

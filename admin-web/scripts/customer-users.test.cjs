@@ -46,6 +46,7 @@ function harness(t, name, { userId, menus = [], overrides = {} } = {}) {
     orders: async params => pageOf([{ id: 7, status: 'DELIVERED', userId: 42 }], params.page),
     cancelOrder: async () => undefined,
     completeOrder: async () => undefined,
+    orderTransfers: async params => pageOf([{ id: 21, orderId: Number(params.orderId), fromRiderId: 1, toRiderId: 2, status: 'PENDING', reason: '时间冲突' }], params.page),
     ...overrides
   }
   const api = Object.fromEntries(Object.keys(implementations).map(method => [method, async (...args) => {
@@ -287,4 +288,30 @@ test('detail failures are retryable and unmount during confirmation prevents mut
   pending.resolve(true)
   await changing
   assert.equal(called(h, 'changeCustomerStatus').length, 0)
+})
+
+test('orders transfer history uses zero-based paging, preserves order filter and never offers admin acceptance', async t => {
+  const h = harness(t, 'OrderList')
+  await h.state.openTransfers({ id: 7 })
+  assert.deepEqual(called(h, 'orderTransfers')[0].args, [{ page: 0, orderId: '7' }])
+  assert.equal(h.state.transferRows.value[0].status, 'PENDING')
+  await h.state.loadTransfers(2)
+  assert.deepEqual(called(h, 'orderTransfers')[1].args, [{ page: 1, orderId: '7' }])
+  assert.equal(h.state.transferPage.value, 2)
+  assert.equal(h.state.transferStatus('ACCEPTED'), '已转派')
+  assert.ok(components.OrderList.template.includes('后台仅查看，不代替对方接受'))
+  assert.equal(h.state.respondOrderTransfer, undefined)
+})
+
+test('orders transfer history recovers from failures and ignores closed or unmounted requests', async t => {
+  const h = harness(t, 'OrderList', { overrides: { orderTransfers: async () => { throw new Error('network') } } })
+  await h.state.openTransfers({ id: 7 })
+  assert.ok(h.state.transfersError.value); assert.equal(h.state.transfersLoading.value, false)
+  const delayed = deferred(); h.implementations.orderTransfers = () => delayed.promise
+  const pending = h.state.loadTransfers(); h.state.closeTransfers()
+  delayed.resolve(pageOf([{ id: 1 }], 0)); await pending
+  assert.equal(h.state.transferRows.value.length, 0); assert.equal(h.state.transfersOpen.value, false)
+  h.implementations.orderTransfers = async params => pageOf([], params.page)
+  await h.state.openTransfers({ id: 8 }); assert.equal(h.state.transfersError.value, '')
+  h.unmount(); assert.equal(h.state.transfersOpen.value, false)
 })

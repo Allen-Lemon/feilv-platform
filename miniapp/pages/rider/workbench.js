@@ -5,7 +5,7 @@ const fmt = require('../../utils/format')
 function mine(value) {
   // 此骑手专用端点返回 status(中文) + statusCode；与用户 OrderVO 不同。
   const isService = fmt.service(value)
-  return Object.assign({}, value, { isService, modeText: fmt.taskModes[value.taskMode] || fmt.taskModes.DELIVERY,
+  return Object.assign({}, value, { isService, canTransfer: value.statusCode === 'ACCEPTED', modeText: fmt.taskModes[value.taskMode] || fmt.taskModes.DELIVERY,
     statusText: isService ? ({ PICKING: '服务中', DELIVERED: '待用户确认完成' }[value.statusCode] || value.status) : value.status,
     rewardText: fmt.money(value.rewardFen), canPickup: !isService && value.statusCode === 'ACCEPTED', canDepart: !isService && value.statusCode === 'PICKING',
     canDeliver: !isService && value.statusCode === 'DELIVERING', canServiceStart: isService && value.statusCode === 'ACCEPTED', canServiceComplete: isService && value.statusCode === 'PICKING' })
@@ -15,25 +15,37 @@ definePage({
   onShow() {
     const allowed = session.token() && wx.getStorageSync('feilv_role') === 'RIDER'
     this.setData({ allowed: !!allowed })
+    this._generation = (this._generation || 0) + 1
     if (!allowed) return
+    if (this._working) { this._showAfterRun = true; return }
     return this.load()
   },
+  onHide() { this._generation = (this._generation || 0) + 1 },
+  onUnload() { this._generation = (this._generation || 0) + 1 },
+  workbenchCurrent(revision, generation) { return !this._dead && this._visible && revision === session.revision() && revision === this._sessionRevision && generation === this._generation && wx.getStorageSync('feilv_role') === 'RIDER' },
   load() {
+    if (!this.workbenchCurrent(session.revision(), this._generation)) return
     return this.run('loading', async (api) => {
+      const revision = session.revision(); const generation = this._generation
       try {
         const info = await api.riderMe()
+        if (!this.workbenchCurrent(revision, generation)) return
         const halls = info.onlineStatus > 0 ? await api.grabList() : []
+        if (!this.workbenchCurrent(revision, generation)) return
         const data = await api.riderOrders(0)
+        if (!this.workbenchCurrent(revision, generation)) return
         const rows = data.content || []
         this._nextPage = 1
         this.safeSet({ info, online: info.onlineStatus > 0, modeText: ({ 0: '已下线', 1: '抢单中', 2: '听单中' })[info.onlineStatus] || '未知状态', halls: halls.map(g => Object.assign({}, g, { isService: fmt.service(g), modeText: fmt.taskModes[g.taskMode] || fmt.taskModes.DELIVERY, typeText: fmt.types[g.orderType] || g.orderType, distanceText: (Number(g.distanceM) / 1000).toFixed(1), rewardText: fmt.money(g.rewardFen) })), orders: rows.map(mine), hasMore: !data.last && rows.length > 0, error: '' })
-      } catch (e) { this.safeSet({ error: e.message }); throw e }
+      } catch (e) { if (this.workbenchCurrent(revision, generation)) { this.safeSet({ error: e.message }); throw e } }
     })
   },
   more() {
-    if (!this.data.hasMore) return
+    if (!this.data.hasMore || !this.workbenchCurrent(session.revision(), this._generation)) return
     return this.run('loading', async (api) => {
+      const revision = session.revision(); const generation = this._generation
       const data = await api.riderOrders(this._nextPage)
+      if (!this.workbenchCurrent(revision, generation)) return
       const rows = data.content || []
       this.safeSet({ orders: this.data.orders.concat(rows.map(mine)), hasMore: !data.last && rows.length > 0 })
       this._nextPage++
@@ -77,8 +89,15 @@ definePage({
     if (!code) return toast('请先输入并核对真实取件码')
     return this.run('busy', async (api) => {
       if (!(await modal({ title: '取件核销', content: '确认已到达取件点，并核对取件码 ' + code + '？' })).confirm) return
-      await api.pickup(id, code)
-      this.safeSet({ ['pickupCodes.' + id]: '' }); toast('取件码核销成功')
+      const revision = session.revision(); const generation = this._generation
+      try {
+        await api.pickup(id, code)
+        if (this._dead || !this._visible || revision !== session.revision() || generation !== this._generation) return
+        this.safeSet({ ['pickupCodes.' + id]: '' }); toast('取件码核销成功')
+      } catch (e) {
+        if (this._dead || !this._visible || revision !== session.revision() || generation !== this._generation) return
+        this.safeSet({ error: (e.message || '取件未确认') + '；请刷新工作台核实订单归属和状态。' }); toast(e.message || '取件未确认，请刷新核实')
+      }
     }).then(() => this.load())
   },
   depart(e) {
@@ -124,12 +143,26 @@ definePage({
     if (!row || !row.isService || !(action === 'serviceStart' ? row.canServiceStart : row.canServiceComplete)) return
     return this.run('busy', async (api) => {
       if (!(await modal({ title, content })).confirm || !this._visible || this._dead) return
-      await api[action](id); toast(action === 'serviceStart' ? '已开始服务' : '已提交完成，等待用户确认')
+      const revision = session.revision(); const generation = this._generation
+      try {
+        await api[action](id)
+        if (!this.workbenchCurrent(revision, generation)) return
+        toast(action === 'serviceStart' ? '已开始服务' : '已提交完成，等待用户确认')
+      } catch (e) {
+        if (!this.workbenchCurrent(revision, generation)) return
+        this.safeSet({ error: (e.message || '履约未确认') + '；请刷新工作台核实归属和状态。' }); toast(e.message || '履约未确认，请刷新核实')
+      }
     }).then(() => this.load())
   },
   detail(e) {
     const id = Number(e.currentTarget.dataset.id)
     if (Number.isSafeInteger(id) && id > 0 && this.data.orders.some(o => Number(o.id) === id)) wx.navigateTo({ url: '/pages/order/detail?id=' + id })
+  },
+  transfers(e) {
+    if (!this.workbenchCurrent(session.revision(), this._generation) || this._working) return
+    const id = Number(e && e.currentTarget.dataset.id)
+    if (id && (!Number.isSafeInteger(id) || !this.data.orders.some(o => o.id === id && o.canTransfer))) return
+    wx.navigateTo({ url: '/pages/rider/transfers' + (id ? '?orderId=' + id : '') })
   },
   permission() { wx.openSetting({}) },
   credit() {

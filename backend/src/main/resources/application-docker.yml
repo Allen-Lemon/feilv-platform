@@ -16,4 +16,4 @@ spring:
     init:
       mode: always
       encoding: UTF-8
-      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql,classpath:db/migrations/20261113_wechat_config.sql,classpath:db/migrations/20261114_user_profile.sql,classpath:db/migrations/20261115_address_region.sql,classpath:db/migrations/20261115_custom_tasks.sql,classpath:db/migrations/20261115_wallet.sql,classpath:db/migrations/20261115_task_service_pricing.sql
+      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql,classpath:db/migrations/20261113_wechat_config.sql,classpath:db/migrations/20261114_user_profile.sql,classpath:db/migrations/20261115_address_region.sql,classpath:db/migrations/20261115_custom_tasks.sql,classpath:db/migrations/20261115_wallet.sql,classpath:db/migrations/20261115_task_service_pricing.sql,classpath:db/migrations/20261115_phone_transfer.sql

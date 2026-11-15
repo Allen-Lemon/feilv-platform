@@ -33,6 +33,8 @@ class SmsPhoneBindingServiceTest {
     private static final String CODE = "042137";
     private final UserRepository users = mock(UserRepository.class);
     private final MessageService messages = mock(MessageService.class);
+    private final AuditService audit = mock(AuditService.class);
+    private final jakarta.persistence.EntityManager entityManager = mock(jakarta.persistence.EntityManager.class);
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
     private final SecureRandom random = mock(SecureRandom.class);
     private final Clock clock = mock(Clock.class);
@@ -70,6 +72,8 @@ class SmsPhoneBindingServiceTest {
     void springDefaultIsDisabledWithoutAnyPropertyOverride() {
         new ApplicationContextRunner().withBean(UserRepository.class, () -> users)
                 .withBean(MessageService.class, () -> messages)
+                .withBean(AuditService.class, () -> audit)
+                .withBean(jakarta.persistence.EntityManager.class, () -> entityManager)
                 .withBean(PlatformTransactionManager.class, () -> manager)
                 .withUserConfiguration(SmsPhoneBindingService.class).run(context -> {
                     assertNull(context.getStartupFailure());
@@ -340,8 +344,114 @@ class SmsPhoneBindingServiceTest {
         } finally { executor.shutdownNow(); }
     }
 
+    @Test
+    void changeRequiresBoundActiveAccountAndConfiguredSms() {
+        assertError(409, () -> service.sendChangeCode(42L, MOBILE));
+        assertError(409, () -> service.changePhone(42L, MOBILE, CODE));
+        user.setMobile(OTHER_MOBILE);
+        service = service(false);
+        assertError(503, () -> service.sendChangeCode(42L, MOBILE));
+        assertError(503, () -> service.changePhone(42L, MOBILE, CODE));
+        service = service(true);
+        user.setStatus(0);
+        assertError(403, () -> service.sendChangeCode(42L, MOBILE));
+        assertError(403, () -> service.changePhone(42L, MOBILE, CODE));
+        user.setStatus(1); user.setRole("ADMIN");
+        assertError(403, () -> service.sendChangeCode(42L, MOBILE));
+        assertError(403, () -> service.changePhone(42L, MOBILE, CODE));
+        verifyNoInteractions(messages, random, audit);
+    }
+
+    @Test
+    void changeCredentialsArePurposeAccountNewMobileAndOriginalSnapshotBound() {
+        user.setMobile(OTHER_MOBILE);
+        accounts.get(43L).setMobile("13700137000");
+        service.sendChangeCode(42L, MOBILE);
+        assertError(4010, () -> service.changePhone(43L, MOBILE, CODE));
+        assertError(4010, () -> service.changePhone(42L, "13600136000", CODE));
+        // 即便原先绑定状态被后台或并行流程改成可首次绑定，也不能挪用换绑凭证。
+        user.setMobile(null);
+        assertError(4010, () -> service.bindPhone(42L, MOBILE, CODE));
+        user.setMobile("13500135000");
+        assertError(4010, () -> service.changePhone(42L, MOBILE, CODE));
+        assertEquals("13500135000", user.getMobile());
+        verifyNoInteractions(audit);
+    }
+
+    @Test
+    void bindingAndLoginCredentialsCannotAuthorizePhoneChange() {
+        service.sendCode(42L, MOBILE);
+        user.setMobile(OTHER_MOBILE);
+        assertError(4010, () -> service.changePhone(42L, MOBILE, CODE));
+        var login = new UserService(users, null, mock(MessageService.class), null, null, null, null, null);
+        String loginCode = login.sendSmsCode(MOBILE);
+        assertError(4010, () -> service.changePhone(42L, MOBILE, loginCode));
+        now = now.plusSeconds(60);
+        String changeCode = service.sendChangeCode(42L, "13600136000").demoCode();
+        assertError(4010, () -> login.login("13600136000", changeCode));
+        assertEquals("136****6000", service.changePhone(42L, "13600136000", changeCode).mobile());
+        verify(audit).record("PHONE_CHANGE", "userId=42,channel=SMS,old=139****9000,new=136****6000");
+    }
+
+    @Test
+    void firstBindingAndChangeShareUserAndMobileCooldownAndDailyLimits() {
+        service.sendCode(42L, MOBILE);
+        user.setMobile(OTHER_MOBILE);
+        assertError(4291, () -> service.sendChangeCode(42L, MOBILE));
+        accounts.get(43L).setMobile("13700137000");
+        assertError(4291, () -> service.sendChangeCode(43L, MOBILE));
+        now = now.plusSeconds(60);
+        // 两个 purpose 交替发送仍然累计到同一个 user/day 配额。
+        for (int i = 1; i < 10; i++) {
+            service.sendChangeCode(42L, i % 2 == 0 ? OTHER_MOBILE : MOBILE);
+            now = now.plusSeconds(60);
+        }
+        assertError(4292, () -> service.sendCode(42L, OTHER_MOBILE));
+        assertError(4292, () -> service.sendChangeCode(42L, MOBILE));
+    }
+
+    @Test
+    void changeRequiresVerificationEvenForSameMobileAndNeverRestoresConsumedCode() {
+        user.setMobile(MOBILE);
+        assertError(4010, () -> service.changePhone(42L, MOBILE, CODE));
+        service.sendChangeCode(42L, MOBILE);
+        assertError(4011, () -> service.changePhone(42L, MOBILE, "999999"));
+        assertEquals("138****8000", service.changePhone(42L, MOBILE, CODE).mobile());
+        assertError(4010, () -> service.changePhone(42L, MOBILE, CODE));
+        verify(users, never()).saveAndFlush(any());
+        verify(audit).record("PHONE_CHANGE", "userId=42,channel=SMS,old=138****8000,new=138****8000");
+    }
+
+    @Test
+    void changeHasFiveErrorBudgetAndFiveMinuteExpiry() {
+        user.setMobile(OTHER_MOBILE);
+        service.sendChangeCode(42L, MOBILE);
+        for (int i = 0; i < 5; i++) assertError(4011, () -> service.changePhone(42L, MOBILE, "999999"));
+        assertError(4010, () -> service.changePhone(42L, MOBILE, CODE));
+        now = now.plusSeconds(60);
+        service.sendChangeCode(42L, MOBILE);
+        now = now.plusSeconds(300);
+        assertError(4010, () -> service.changePhone(42L, MOBILE, CODE));
+        assertEquals(OTHER_MOBILE, user.getMobile());
+        verifyNoInteractions(audit);
+    }
+
+    @Test
+    void changeRejectsOccupiedNumberOfAnyRoleIncludingFrozenAndRechecksAfterSend() {
+        user.setMobile(OTHER_MOBILE);
+        service.sendChangeCode(42L, MOBILE);
+        User other = accounts.get(43L); other.setMobile(MOBILE); other.setStatus(0);
+        for (String role : new String[]{"USER", "RIDER", "ADMIN"}) {
+            other.setRole(role);
+            assertError(409, () -> service.sendChangeCode(42L, MOBILE));
+            assertError(409, () -> service.changePhone(42L, MOBILE, CODE));
+        }
+        assertEquals(OTHER_MOBILE, user.getMobile());
+        verifyNoInteractions(audit);
+    }
+
     private SmsPhoneBindingService service(boolean enabled) {
-        return new SmsPhoneBindingService(users, messages, manager, enabled, clock, random);
+        return new SmsPhoneBindingService(users, messages, audit, entityManager, manager, enabled, clock, random);
     }
 
     private User account(long id, String role) {

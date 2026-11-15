@@ -1,0 +1,35 @@
+<view class="page transfer-page">
+  <view class="card" wx:if="{{!allowed}}"><view class="title">仅骑手账户可使用</view><view class="hint">请登录现役骑手账号；申请与接收资格最终由服务端核实。</view><button class="primary" bindtap="login">去登录</button></view>
+  <block wx:else>
+    <view class="card"><view class="title">转派记录 / 待接收</view><view class="transfer-identity" wx:if="{{riderId}}">我的骑手ID：{{riderId}}（可分享给转派人，不是用户ID）</view><view class="error" wx:if="{{identityError}}">{{identityError}}</view><button class="secondary" bindtap="refresh" disabled="{{busy || incomingLoading || outgoingLoading || historyLoading}}">刷新服务端状态</button></view>
+    <view class="notice" wx:if="{{riderId && !online}}">接受转派前须上线（抢单中或听单中）。请先返回工作台上线，再回此页刷新；服务端仍会核实当前资格。<button class="secondary" bindtap="workbench" disabled="{{busy}}">去工作台上线</button></view>
+    <view class="notice">仅 ACCEPTED 已接单且未取件、未开始服务可转派，指定现役骑手ID与原因，对方接受才交接。待接收时原骑手仍负责；拒绝、撤销仍由原骑手负责，开始履约会使待转派过期。交接后最终骑手得原收入并负责投诉，原骑手无履约/私有详情权限。钱包和投诉金额以原有服务端规则为准。</view>
+    <view class="card" wx:if="{{orderId}}">
+      <view class="section-title">申请转派 · 订单ID {{orderId}}</view>
+      <view class="hint">请向对方索取其“工作台”或“转派记录”中的骑手ID，不是用户ID。没有全国骑手搜索列表。</view>
+      <view class="field"><label class="label" for="transfer-target">目标骑手ID</label><input id="transfer-target" type="number" maxlength="16" value="{{targetRiderId}}" data-field="targetRiderId" bindinput="input" disabled="{{busy || requestUncertain || orderPending}}" placeholder="现役骑手的正整数ID"/></view>
+      <view class="field"><label class="label" for="transfer-reason">转派原因（必填1至255字）</label><textarea id="transfer-reason" maxlength="255" value="{{reason}}" data-field="reason" bindinput="input" disabled="{{busy || requestUncertain || orderPending}}" placeholder="请说明本单转派原因，勿填写电话等无关隐私"/></view>
+      <view class="hint" wx:if="{{requestUncertain}}">申请结果待核实，先刷新本订单转派记录，不要重复发送。</view>
+      <view class="hint" wx:if="{{orderPending}}">本订单有待接收转派，请先查看记录，不重复申请。</view>
+      <button class="primary" bindtap="submit" loading="{{busy}}" disabled="{{busy || !riderId || !historyLoaded || historyLoading || requestUncertain || orderPending}}">申请转派（接受前仍由我负责）</button>
+    </view>
+    <view class="card" wx:if="{{submitError}}"><view class="error">{{submitError}}</view><button class="secondary" bindtap="refresh" disabled="{{busy}}">刷新核实，非本地确认成功</button></view>
+    <view class="card">
+      <view class="transfer-tabs"><button class="{{tab === 'INCOMING' ? 'selected' : 'secondary'}}" data-tab="INCOMING" bindtap="tabChange" disabled="{{busy}}">待接收 / 收到的</button><button class="{{tab === 'OUTGOING' ? 'selected' : 'secondary'}}" data-tab="OUTGOING" bindtap="tabChange" disabled="{{busy}}">我发出的</button></view>
+      <view class="loading-note" wx:if="{{tab === 'INCOMING' ? incomingLoading : outgoingLoading}}">正在查询服务端转派记录…</view>
+      <view class="error" wx:if="{{tab === 'INCOMING' ? incomingError : outgoingError}}">{{tab === 'INCOMING' ? incomingError : outgoingError}}<button class="secondary" bindtap="retryList" disabled="{{busy || incomingLoading || outgoingLoading}}">重试当前页</button></view>
+      <view class="empty" wx:if="{{tab === 'INCOMING' ? incomingLoaded && !incoming.length : outgoingLoaded && !outgoing.length}}">暂无此方向转派记录</view>
+      <view class="transfer-row" wx:for="{{tab === 'INCOMING' ? incoming : outgoing}}" wx:key="id">
+        <view class="row"><text>{{item.orderNo}}</text><text class="tag">{{item.statusText}}</text></view><view class="transfer-title" wx:if="{{item.title}}">{{item.title}}</view><view class="hint">{{item.modeText}} · {{item.fromName}} → {{item.toName}}</view>
+        <view class="transfer-reason">申请原因：{{item.reason}}</view><view class="transfer-reason" wx:if="{{item.responseReason}}">处理说明：{{item.responseReason}}</view><view class="hint">申请：{{item.createdText}}</view><view class="hint" wx:if="{{item.handledText}}">处理：{{item.handledText}}</view>
+        <view class="actions" wx:if="{{item.canRespond}}"><button class="primary" data-id="{{item.id}}" data-action="ACCEPTED" bindtap="handle" disabled="{{busy || incomingLoading || outgoingLoading}}">接受并交接</button><button class="secondary" data-id="{{item.id}}" data-action="REJECTED" bindtap="handle" disabled="{{busy || incomingLoading || outgoingLoading}}">拒绝</button></view>
+        <button wx:if="{{item.canCancel}}" class="secondary" data-id="{{item.id}}" data-action="CANCELED" bindtap="handle" disabled="{{busy || incomingLoading || outgoingLoading}}">撤销申请</button>
+      </view>
+      <button wx:if="{{tab === 'INCOMING' ? incomingMore && incomingLoaded : outgoingMore && outgoingLoaded}}" class="secondary" bindtap="more" disabled="{{busy || incomingLoading || outgoingLoading}}">加载更多（每页15条）</button>
+    </view>
+    <view class="card" wx:if="{{orderId}}"><view class="section-title">本订单只读转派历史</view><view class="hint">只读取转派记录，不读取订单联系人、电话或私有详情。</view><view class="loading-note" wx:if="{{historyLoading}}">正在读取历史…</view><view class="error" wx:if="{{historyError}}">{{historyError}}</view><view class="empty" wx:if="{{historyLoaded && !history.length}}">暂无转派记录</view>
+      <view class="transfer-row" wx:for="{{history}}" wx:key="id"><view class="row"><text>{{item.orderNo}}</text><text class="tag">{{item.statusText}}</text></view><view class="transfer-title" wx:if="{{item.title}}">{{item.title}}</view><view class="hint">{{item.modeText}} · {{item.fromName}} → {{item.toName}}</view><view class="transfer-reason">{{item.reason}}</view><view class="transfer-reason" wx:if="{{item.responseReason}}">{{item.responseReason}}</view><view class="hint">{{item.createdText}} {{item.handledText}}</view></view>
+    </view>
+    <view class="footer-note">下拉刷新也会核实过期状态。返回工作台会重新查询承接订单，不在本地推进履约状态。</view>
+  </block>
+</view>

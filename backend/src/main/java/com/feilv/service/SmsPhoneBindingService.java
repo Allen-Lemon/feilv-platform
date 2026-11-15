@@ -5,6 +5,8 @@ import com.feilv.domain.User;
 import com.feilv.dto.ManualPhoneBindingDtos.SmsCodeVO;
 import com.feilv.dto.UserProfileDtos.ProfileVO;
 import com.feilv.repository.UserRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -30,10 +32,12 @@ public class SmsPhoneBindingService {
     private static final int TTL_SECONDS = 300;
     private static final int DAILY_LIMIT = 10;
     private static final int MAX_ERRORS = 5;
-    private enum Purpose { PHONE_BINDING }
+    private enum Purpose { PHONE_BINDING, PHONE_CHANGE }
 
     private final UserRepository users;
     private final MessageService messages;
+    private final AuditService audit;
+    private final EntityManager entityManager;
     private final TransactionTemplate transaction;
     private final boolean mockEnabled;
     private final Clock clock;
@@ -44,7 +48,7 @@ public class SmsPhoneBindingService {
     private final Map<Long, SendCounter> userCounters = new HashMap<>();
     private final Map<String, SendCounter> mobileCounters = new HashMap<>();
 
-    private record CredentialKey(long userId, String mobile, Purpose purpose) {
+    private record CredentialKey(long userId, String mobile, Purpose purpose, String originalMobile) {
         @Override public String toString() { return "CredentialKey[REDACTED]"; }
     }
     private record Credential(String code, Instant expiresAt, int errors) {
@@ -53,15 +57,19 @@ public class SmsPhoneBindingService {
     private record SendCounter(LocalDate day, int count, Instant lastSent) {}
 
     @Autowired
-    public SmsPhoneBindingService(UserRepository users, MessageService messages, PlatformTransactionManager manager,
+    public SmsPhoneBindingService(UserRepository users, MessageService messages, AuditService audit,
+                                  EntityManager entityManager, PlatformTransactionManager manager,
                                   @Value("${feilv.sms.binding-mock-enabled:false}") boolean mockEnabled) {
-        this(users, messages, manager, mockEnabled, Clock.system(ZoneId.of("Asia/Shanghai")), new SecureRandom());
+        this(users, messages, audit, entityManager, manager, mockEnabled, Clock.system(ZoneId.of("Asia/Shanghai")), new SecureRandom());
     }
 
-    SmsPhoneBindingService(UserRepository users, MessageService messages, PlatformTransactionManager manager,
+    SmsPhoneBindingService(UserRepository users, MessageService messages, AuditService audit,
+                           EntityManager entityManager, PlatformTransactionManager manager,
                            boolean mockEnabled, Clock clock, SecureRandom random) {
         this.users = users;
         this.messages = messages;
+        this.audit = audit;
+        this.entityManager = entityManager;
         this.transaction = new TransactionTemplate(manager);
         this.mockEnabled = mockEnabled;
         this.clock = clock;
@@ -69,10 +77,23 @@ public class SmsPhoneBindingService {
     }
 
     public SmsCodeVO sendCode(long userId, String mobile) {
+        return sendCode(userId, mobile, Purpose.PHONE_BINDING);
+    }
+
+    public SmsCodeVO sendChangeCode(long userId, String mobile) {
+        return sendCode(userId, mobile, Purpose.PHONE_CHANGE);
+    }
+
+    private SmsCodeVO sendCode(long userId, String mobile, Purpose purpose) {
         validateMobile(mobile);
         return transaction.execute(status -> {
-            User user = active(users.findByIdForUpdate(userId).orElse(null));
-            requireAvailableMobile(user, mobile);
+            User user = lockedActive(userId);
+            if (purpose == Purpose.PHONE_CHANGE) {
+                PhoneChangeService.activeBound(user);
+                PhoneChangeService.requireAvailable(users, user, mobile);
+            } else {
+                requireAvailableMobile(user, mobile);
+            }
             requireSmsConfigured();
             synchronized (stateLock) {
                 Instant now = clock.instant();
@@ -84,7 +105,7 @@ public class SmsPhoneBindingService {
                 // MessageService 目前只写日志。即使在 mock 下也不让它记录原始手机号/验证码。
                 messages.sendSms(mobile.substring(0, 3) + "****" + mobile.substring(7),
                         "【飞毛腿】手机号绑定短信模拟，验证码仅在本地联调响应中返回，有效期5分钟（不写日志）。");
-                credentials.put(key(userId, mobile), new Credential(code, now.plusSeconds(TTL_SECONDS), 0));
+                credentials.put(key(userId, mobile, purpose, user.getMobile()), new Credential(code, now.plusSeconds(TTL_SECONDS), 0));
                 userCounters.put(userId, increment(userCounters.get(userId), today, now));
                 mobileCounters.put(mobile, increment(mobileCounters.get(mobile), today, now));
                 return new SmsCodeVO(COOLDOWN_SECONDS, true, code);
@@ -98,10 +119,10 @@ public class SmsPhoneBindingService {
         try {
             return transaction.execute(status -> {
                 // 与微信绑号使用同一行锁，检查和写入不可被微信/其他手动绑定覆盖。
-                User user = active(users.findByIdForUpdate(userId).orElse(null));
+                User user = lockedActive(userId);
                 requireAvailableMobile(user, mobile);
                 requireSmsConfigured();
-                consumeCode(userId, mobile, code);
+                consumeCode(key(userId, mobile, Purpose.PHONE_BINDING, null), code);
                 if (mobile.equals(user.getMobile())) return view(user);
                 user.setMobile(mobile);
                 return view(users.saveAndFlush(user));
@@ -112,11 +133,28 @@ public class SmsPhoneBindingService {
         }
     }
 
-    private void consumeCode(long userId, String mobile, String code) {
+    public ProfileVO changePhone(long userId, String mobile, String code) {
+        validateMobile(mobile);
+        if (code == null || !code.matches("[0-9]{6}")) throw BizException.of(400, "请输入6位短信验证码");
+        try {
+            return transaction.execute(status -> {
+                User user = PhoneChangeService.activeBound(lockedActive(userId));
+                PhoneChangeService.requireAvailable(users, user, mobile);
+                requireSmsConfigured();
+                // 用锁内当前原号查找凭证；发送后若已换绑，不可能消费旧快照的验证码。
+                consumeCode(key(userId, mobile, Purpose.PHONE_CHANGE, user.getMobile()), code);
+                return PhoneChangeService.apply(users, audit, user, mobile, "SMS");
+            });
+        } catch (DataIntegrityViolationException e) {
+            // 即使唯一约束或后续审计失败导致回滚，也不恢复已消费验证码。
+            throw phoneConflict();
+        }
+    }
+
+    private void consumeCode(CredentialKey key, String code) {
         synchronized (stateLock) {
             Instant now = clock.instant();
             prune(now, LocalDate.now(clock));
-            CredentialKey key = key(userId, mobile);
             Credential credential = credentials.get(key);
             if (credential == null) throw BizException.of(4010, "绑定验证码已过期或不存在，请重新获取");
             if (!MessageDigest.isEqual(credential.code().getBytes(StandardCharsets.US_ASCII),
@@ -139,6 +177,12 @@ public class SmsPhoneBindingService {
         }
     }
 
+    private User lockedActive(long userId) {
+        User user = users.findByIdForUpdate(userId).orElse(null);
+        if (user != null) entityManager.refresh(user, LockModeType.PESSIMISTIC_WRITE);
+        return active(user);
+    }
+
     private User active(User user) {
         if (user == null) throw BizException.of(403, "账户不存在或不可用，请重新登录");
         if (user.getStatus() != 1) throw BizException.of(403, "账户已冻结，请联系客服");
@@ -156,8 +200,8 @@ public class SmsPhoneBindingService {
         if (mobile == null || !mobile.matches("1[3-9][0-9]{9}")) throw BizException.of(400, "请输入有效的11位手机号");
     }
 
-    private static CredentialKey key(long userId, String mobile) {
-        return new CredentialKey(userId, mobile, Purpose.PHONE_BINDING);
+    private static CredentialKey key(long userId, String mobile, Purpose purpose, String originalMobile) {
+        return new CredentialKey(userId, mobile, purpose, purpose == Purpose.PHONE_CHANGE ? originalMobile : null);
     }
 
     private static void checkLimit(SendCounter counter, Instant now, LocalDate today) {

@@ -1,0 +1,12 @@
+.transfer-page .section-title { margin-bottom: 20rpx; }
+.transfer-tabs { display: flex; gap: 16rpx; margin: 24rpx 0; }
+.transfer-tabs button { flex: 1; margin: 0; font-size: 26rpx; }
+.transfer-tabs .selected { color: #A93417; background: #FFF0E9; border: 2rpx solid #C94320; }
+.transfer-row { padding: 26rpx 0; border-bottom: 1rpx solid #E4E7EC; }
+.transfer-row:last-child { border-bottom: 0; }
+.transfer-row .tag { flex-shrink: 0; margin-left: 12rpx; }
+.transfer-title { font-weight: 600; margin-top: 14rpx; word-break: break-all; }
+.transfer-reason { color: #475467; line-height: 1.7; margin: 12rpx 0; white-space: pre-wrap; word-break: break-all; }
+.transfer-page textarea { box-sizing: border-box; width: 100%; min-height: 160rpx; padding: 20rpx; background: #F7F8FA; border: 1rpx solid #D0D5DD; border-radius: 14rpx; font-size: 28rpx; }
+.transfer-identity { margin-top: 12rpx; color: #344054; }
+.transfer-page .error { margin: 16rpx 0; }

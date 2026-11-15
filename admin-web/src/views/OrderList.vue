@@ -43,6 +43,7 @@
             <div class="order-actions">
               <el-button size="small" type="danger" plain :disabled="actionBusy !== null || row.status === 'CANCELED' || row.status === 'FINISHED'" :loading="actionBusy === row.id" @click="cancel(row)">干预取消</el-button>
               <el-button v-if="row.status === 'DELIVERED'" size="small" type="success" plain :disabled="actionBusy !== null" @click="complete(row)">强制完成</el-button>
+              <el-button size="small" plain @click="openTransfers(row)">转派记录</el-button>
               <el-button v-if="canViewComplaints" size="small" type="primary" plain @click="viewComplaints(row)">投诉管理</el-button>
             </div>
           </template>
@@ -50,6 +51,22 @@
       </el-table>
       <el-pagination layout="prev, pager, next, total" :total="total" :page-size="15" :current-page="page" @current-change="load" />
     </div>
+    <el-dialog v-model="transfersOpen" title="订单转派记录" width="820px" @close="closeTransfers">
+      <el-alert title="仅未取件／未开始服务时可由原骑手发起，目标骑手确认后才交接。后台仅查看，不代替对方接受；收入和投诉责任归最终承接者。" type="info" :closable="false" class="error-alert" />
+      <el-alert v-if="transfersError" :title="transfersError" type="error" :closable="false"><el-button link @click="loadTransfers()">重试</el-button></el-alert>
+      <el-table :data="transferRows" v-loading="transfersLoading" row-key="id" stripe>
+        <el-table-column prop="id" label="申请ID" width="85" />
+        <el-table-column label="转出骑手" min-width="125"><template #default="{ row }">{{ row.fromRiderName || '骑手' }}（{{ row.fromRiderId }}）</template></el-table-column>
+        <el-table-column label="接收骑手" min-width="125"><template #default="{ row }">{{ row.toRiderName || '骑手' }}（{{ row.toRiderId }}）</template></el-table-column>
+        <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag>{{ transferStatus(row.status) }}</el-tag></template></el-table-column>
+        <el-table-column prop="reason" label="发起原因" min-width="170" show-overflow-tooltip />
+        <el-table-column prop="responseReason" label="处理说明" min-width="170" show-overflow-tooltip />
+        <el-table-column prop="createdTime" label="发起时间" width="180" />
+        <el-table-column prop="handledTime" label="处理时间" width="180" />
+      </el-table>
+      <el-pagination layout="prev, pager, next, total" :total="transferTotal" :page-size="15" :current-page="transferPage" @current-change="loadTransfers" />
+      <template #footer><el-button @click="transfersOpen = false">关闭</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
@@ -79,6 +96,29 @@ const listError = ref('')
 const actionBusy = ref(null)
 let listRequest = 0
 let disposed = false
+const transfersOpen = ref(false), transfersLoading = ref(false), transfersError = ref('')
+const transferRows = ref([]), transferTotal = ref(0), transferPage = ref(1), transferOrderId = ref(null)
+let transferRequest = 0
+const transferStatus = status => ({ PENDING: '待对方确认', ACCEPTED: '已转派', REJECTED: '已拒绝', CANCELED: '已撤销', EXPIRED: '已失效' }[status] || status)
+function openTransfers(row) {
+  if (disposed || row.id == null) return
+  transferOrderId.value = row.id; transfersOpen.value = true; transferRows.value = []; transferTotal.value = 0
+  return loadTransfers(1)
+}
+async function loadTransfers(p = transferPage.value) {
+  if (disposed || !transfersOpen.value || transferOrderId.value == null) return
+  const request = ++transferRequest
+  transfersLoading.value = true; transfersError.value = ''; transferPage.value = p
+  try {
+    const data = await adminApi.orderTransfers({ page: p - 1, orderId: String(transferOrderId.value) })
+    if (disposed || request !== transferRequest) return
+    if (!data || !Array.isArray(data.content)) throw new Error('Invalid transfer response')
+    transferRows.value = data.content; transferTotal.value = data.totalElements || 0; transferPage.value = (data.number ?? p - 1) + 1
+  } catch {
+    if (request === transferRequest && !disposed) { transferRows.value = []; transferTotal.value = 0; transfersError.value = '转派记录读取失败，请确认订单权限并重试。' }
+  } finally { if (request === transferRequest) transfersLoading.value = false }
+}
+function closeTransfers() { ++transferRequest; transfersOpen.value = false; transfersLoading.value = false; transferRows.value = []; transfersError.value = '' }
 
 const typeLabel = type => ({ SEND: '跑腿送', BUY: '跑腿买', ERRAND: '跑腿办', CUSTOM: '自定义任务' }[type] || type)
 const taskModeLabel = mode => ({ ONLINE: '线上任务', ONSITE: '上门服务', PART_TIME: '兼职劳务' }[mode] || mode)
@@ -166,7 +206,7 @@ watch(() => route.query.userId, id => {
   query.userId = id === undefined ? '' : typeof id === 'string' && id.trim() ? id : '无效 ID'
   return load(1)
 }, { immediate: true })
-onBeforeUnmount(() => { disposed = true; ++listRequest })
+onBeforeUnmount(() => { disposed = true; ++listRequest; closeTransfers() })
 </script>
 
 <style scoped>

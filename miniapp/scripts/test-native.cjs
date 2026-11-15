@@ -2250,6 +2250,241 @@ test('service disclosure: scene examples, single address selector, precise total
   const env = environment(); const legal = env.page('pages/legal/legal'); legal.onLoad({ kind: 'privacy' }); const privacy = legal.data.sections.map(s => s.text).join(' ')
   for (const text of ['ONLINE', 'PART_TIME', '单服务地点', '总价', '联系方式', '仅由有权访问', '无取件码']) assert.ok(privacy.includes(text), text)
 })
+test('phone change API: all four protected change endpoints keep first-bind routes separate', async () => {
+  const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
+  for (const [method, args, suffix, keys] of [
+    ['changeWechatPhone', ['new-wechat-code'], '/user/wechat-phone/change', ['code']],
+    ['changePhoneSmsCode', ['13900139000'], '/user/phone/change/sms-code', ['mobile']],
+    ['changePhone', ['13900139000', '123456'], '/user/phone/change', ['mobile', 'code']],
+    ['changeDevelopmentPhone', ['13900139000'], '/user/phone/development/change', ['mobile']]
+  ]) {
+    const pending = api[method](...args); const req = env.calls.requests.at(-1)
+    assert.equal(req.method, 'POST'); assert.ok(req.url.endsWith('/api/v1' + suffix)); assert.equal(req.header.Authorization, 'Bearer token-1'); assert.deepEqual(Object.keys(req.data), keys)
+    okRequest(req, method === 'changePhoneSmsCode' ? { retryAfterSeconds: 60, mock: false } : profileValue({ mobileBound: true, mobile: '139****9000' })); await pending
+  }
+  const scoped = api.forSession(env.load(path.join(native, 'utils/session.js')).revision()); env.load(path.join(native, 'utils/session.js')).clear()
+  const count = env.calls.requests.length; await assert.rejects(scoped.changeWechatPhone('stale')); assert.equal(env.calls.requests.length, count)
+})
+async function changingPhone(env, api = {}, manual = false, development = false) {
+  const page = await readyProfile(env, Object.assign({ async me() { return profileValue({ mobileBound: true, mobile: '138****8000' }) }, async phoneBindingOptions() { return { developmentBypass: development } } }, api))
+  page.data.phoneOnly = true; page.startPhoneChange()
+  if (manual) await page.togglePhoneMethod()
+  return page
+}
+test('phone change WeChat: explicit new-code confirmation preserves session, wallet/order markers and draft nickname', async () => {
+  const env = environment(); const calls = []; const modals = []
+  env.wx.showModal = options => { modals.push(options); options.success({ confirm: true }) }
+  const page = await changingPhone(env, { async bindWechatPhone() { assert.fail('must not call initial bind') }, async changeWechatPhone(code) { calls.push(code); return profileValue({ mobileBound: true, mobile: '139****9000' }) } })
+  const session = env.load(path.join(native, 'utils/session.js')); const revision = session.revision()
+  env.storage.set('native_draft', { owner: 1, keep: true }); env.storage.set('native_pending_order', { id: 88 }); env.storage.set('native_pending_withdrawal', { owner: '1', requestId: 'original' })
+  page.data.nickname = '未保存新昵称'; page.preparePhone(); await page.bindPhone(phoneEvent('new-phone-code'))
+  assert.deepEqual(calls, ['new-phone-code']); assert.ok(modals[0].content.includes('不合并')); assert.equal(page.data.mobile, '139****9000'); assert.equal(page.data.changingPhone, false)
+  assert.equal(page.data.nickname, '未保存新昵称'); assert.equal(session.revision(), revision); assert.equal(env.storage.get('feilv_user_id'), 1); assert.equal(env.storage.get('feilv_role'), 'USER'); assert.equal(env.storage.get('feilv_token'), 'token-1')
+  assert.equal(env.storage.get('native_draft').keep, true); assert.equal(env.storage.get('native_pending_order').id, 88); assert.equal(env.storage.get('native_pending_withdrawal').requestId, 'original')
+  assert.ok(env.calls.toast.includes('手机号已更换')); assert.equal([...env.storage.values()].includes('13900139000'), false)
+})
+test('phone change: cancel change and cancel confirmation retain old masked number and never fall back to bind', async () => {
+  const env = environment(); let changes = 0
+  const page = await changingPhone(env, { async changeWechatPhone() { changes++ } })
+  page.preparePhone(); page.cancelPhoneChange(); await page.bindPhone(phoneEvent('revoked-intent')); assert.equal(changes, 0)
+  page.startPhoneChange(); env.wx.showModal = options => options.success({ confirm: false }); page.preparePhone(); await page.bindPhone(phoneEvent('canceled-confirm'))
+  assert.equal(changes, 0); assert.equal(page.data.changingPhone, true); assert.equal(page.data.mobile, '138****8000')
+  page.data.manualMobile = '13900139000'; page.data.manualCode = '123456'; page.cancelPhoneChange(); assert.equal(page.data.manualMobile, ''); assert.equal(page.data.manualCode, ''); assert.equal(page.data.changingPhone, false)
+})
+test('phone change SMS: uses change-purpose code, validates new number, and mock never claims real verification', async () => {
+  const env = environment(); const calls = []
+  const page = await changingPhone(env, {
+    async phoneSmsCode() { assert.fail('initial SMS must not run') }, async bindPhone() { assert.fail('initial bind must not run') },
+    async changePhoneSmsCode(mobile) { calls.push(['sms', mobile]); return { retryAfterSeconds: 60, mock: true, demoCode: '234567' } },
+    async changePhone(mobile, code) { calls.push(['change', mobile, code]); return profileValue({ mobileBound: true, mobile: '139****9000' }) }
+  }, true)
+  page.manualPhoneInput(event('manualMobile', '13900139000')); await page.bindManualPhone(); assert.equal(calls.length, 0)
+  await page.sendPhoneSms(); page.manualPhoneInput(event('manualCode', '234567')); await page.bindManualPhone()
+  assert.deepEqual(calls, [['sms', '13900139000'], ['change', '13900139000', '234567']]); assert.equal(page.data.changingPhone, false); assert.equal(page.data.phoneDemoCode, ''); assert.equal(page.data.manualMobile, '')
+  assert.ok(env.calls.toast.some(text => text.includes('未真实验证'))); assert.equal(env.calls.toast.some(text => text.includes('已验证')), false)
+})
+test('phone change development: only backend options unlock dedicated change path with unverified copy', async () => {
+  const env = environment(); let changes = 0
+  const page = await changingPhone(env, { async changeDevelopmentPhone(mobile) { changes++; assert.equal(mobile, '13900139000'); return profileValue({ mobileBound: true, mobile: '139****9000' }) }, async bindDevelopmentPhone() { assert.fail('not initial bind') } }, true, true)
+  page.manualPhoneInput(event('manualMobile', '13900139000')); await page.bindManualPhone(); assert.equal(changes, 1); assert.ok(env.calls.toast.at(-1).includes('未验证归属'))
+  const locked = await changingPhone(environment(), { async phoneBindingOptions() { throw new Error('配置不可用') }, async changeDevelopmentPhone() { assert.fail('fail closed') } }, true)
+  assert.equal(locked.data.phoneDevelopment, false); locked.manualPhoneInput(event('manualMobile', '13900139000')); await locked.bindManualPhone(); assert.equal(locked.data.mobile, '138****8000')
+})
+test('phone change: conflicts, SMS503, code expiry and unconfirmed results preserve old number without false success', async () => {
+  for (const result of ['conflict', 'unconfirmed', 'expiry', 'sms503', 'development403']) {
+    const env = environment()
+    const page = await changingPhone(env, { async changePhoneSmsCode() { if (result === 'sms503') throw Object.assign(new Error('未配置真实短信'), { code: 503 }); return { retryAfterSeconds: 60, mock: false } },
+      async changePhone() { if (result === 'unconfirmed') return profileValue(); throw Object.assign(new Error(result === 'expiry' ? '验证码过期' : '号码已占用'), { code: result === 'expiry' ? 4010 : 409 }) },
+      async changeDevelopmentPhone() { throw Object.assign(new Error('后端禁止免验证'), { code: 403 }) }
+    }, true, result === 'development403')
+    page.manualPhoneInput(event('manualMobile', '13900139000')); if (result !== 'development403') await page.sendPhoneSms()
+    page.manualPhoneInput(event('manualCode', '123456')); await page.bindManualPhone()
+    assert.equal(page.data.mobile, '138****8000'); assert.equal(page.data.changingPhone, true); assert.ok(page.data.phoneError); assert.equal(env.storage.get('feilv_token'), 'token-1'); assert.equal(env.calls.toast.some(text => text.includes('已更换')), false)
+  }
+})
+test('phone change: hide/reentry and account switch discard old options, SMS and change responses', async () => {
+  for (const operation of ['options', 'sms', 'wechat', 'manual']) {
+    for (const lifecycle of ['hide-reentry', 'switch']) {
+      const env = environment(); let respond
+      let pending
+      const deferred = await changingPhone(env, {
+        async phoneBindingOptions() { if (operation === 'options') return new Promise(resolve => { respond = resolve }); return { developmentBypass: false } },
+        changePhoneSmsCode() { if (operation === 'sms') return new Promise(resolve => { respond = resolve }); return Promise.resolve({ retryAfterSeconds: 60, mock: false }) },
+        changePhone() { return new Promise(resolve => { respond = resolve }) }, changeWechatPhone() { return new Promise(resolve => { respond = resolve }) }
+      }, false)
+      if (operation !== 'wechat') { deferred.data.manualPhone = true; deferred.manualPhoneInput(event('manualMobile', '13900139000')) }
+      if (operation === 'options') pending = deferred.loadPhoneOptions()
+      else if (operation === 'sms') pending = deferred.sendPhoneSms()
+      else if (operation === 'manual') { await deferred.sendPhoneSms(); deferred.manualPhoneInput(event('manualCode', '123456')); pending = deferred.bindManualPhone() }
+      else { deferred.preparePhone(); pending = deferred.bindPhone(phoneEvent('late-new-code')) }
+      await flush(); deferred.onHide()
+      if (lifecycle === 'switch') env.load(path.join(native, 'utils/session.js')).save({ token: 'new-token', userId: 2, role: 'USER' })
+      await deferred.onShow()
+      const before = JSON.stringify(deferred.data); const toasts = env.calls.toast.length
+      respond(operation === 'options' ? { developmentBypass: true } : operation === 'sms' ? { retryAfterSeconds: 60, mock: true, demoCode: '654321' } : profileValue({ mobileBound: true, mobile: '139****9000', nickname: '旧响应昵称' }))
+      await pending
+      assert.equal(JSON.stringify({ ...deferred.data, binding: false, phoneSending: false, phoneOptionsLoading: false }), JSON.stringify({ ...JSON.parse(before), binding: false, phoneSending: false, phoneOptionsLoading: false }))
+      assert.equal(env.calls.toast.length, toasts); assert.equal(deferred.data.manualCode, ''); assert.equal(deferred.data.phoneDemoCode, '')
+    }
+  }
+})
+function transferValue(patch = {}) {
+  return Object.assign({ id: 201, orderId: 81, orderNo: 'ORDER-81', fromRiderId: 11, fromRiderName: '原骑手', toRiderId: 22, toRiderName: '新骑手', status: 'PENDING', reason: '临时需要交接', responseReason: '', createdTime: '2026-11-15T10:00:00', handledTime: null, taskMode: 'ONLINE', title: '设计任务' }, patch)
+}
+function transferPageValue(rows = [], number = 0, last = true) { return { content: rows, number, last, size: 15 } }
+async function transferPage(env, patch = {}, orderId = 0) {
+  env.authenticated('RIDER')
+  const page = env.page('pages/rider/transfers', Object.assign({ async riderMe() { return { riderId: 11, onlineStatus: 1 } }, async riderTransfers(page) { return transferPageValue([], page) }, async orderTransfers() { return [] } }, patch))
+  page.onLoad({ orderId: String(orderId) }); await page.onShow(); return page
+}
+function transferTap(id, action) { return { currentTarget: { dataset: { id, action } } } }
+test('transfer API: exact protected endpoints, no user identity or target lookup, and payload validation', async () => {
+  const env = environment(); env.authenticated('RIDER'); const api = env.load(path.join(native, 'utils/api.js'))
+  for (const [method, args, verb, suffix, expected] of [
+    ['requestOrderTransfer', [81, { targetRiderId: 22, reason: ' 原因 ' }], 'POST', '/rider/orders/81/transfers', { targetRiderId: 22, reason: '原因' }],
+    ['riderTransfers', [0, 'INCOMING'], 'GET', '/rider/transfers', { page: 0, direction: 'INCOMING' }],
+    ['riderTransfers', [2, 'OUTGOING', 'PENDING'], 'GET', '/rider/transfers', { page: 2, direction: 'OUTGOING', status: 'PENDING' }],
+    ['respondOrderTransfer', [201, { decision: 'ACCEPTED', reason: '' }], 'POST', '/rider/transfers/201/respond', { decision: 'ACCEPTED', reason: '' }],
+    ['cancelOrderTransfer', [201, { reason: '' }], 'POST', '/rider/transfers/201/cancel', { reason: '' }],
+    ['orderTransfers', [81], 'GET', '/orders/81/transfers', {}]
+  ]) {
+    const pending = api[method](...args); const req = env.calls.requests.at(-1); assert.equal(req.method, verb); assert.ok(req.url.endsWith('/api/v1' + suffix)); assert.deepEqual(JSON.parse(JSON.stringify(req.data)), expected); assert.equal(req.header.Authorization, 'Bearer token-1'); okRequest(req, {}); await pending
+  }
+  const count = env.calls.requests.length
+  for (const targetRiderId of [0, -1, 1.5, '22', Number.MAX_SAFE_INTEGER + 1]) await assert.rejects(api.requestOrderTransfer(81, { targetRiderId, reason: '原因' }))
+  for (const reason of ['', ' ', 'a'.repeat(256)]) await assert.rejects(api.requestOrderTransfer(81, { targetRiderId: 22, reason }))
+  await assert.rejects(api.respondOrderTransfer(201, { decision: 'PENDING' })); await assert.rejects(api.riderTransfers(0, 'ALL')); assert.equal(env.calls.requests.length, count)
+})
+test('transfers: rider-only gate, identity failures and switched account clear prior lists and order draft', async () => {
+  for (const role of ['USER', 'ADMIN']) {
+    const env = environment(); env.authenticated(role); let calls = 0
+    const page = env.page('pages/rider/transfers', { async riderMe() { calls++ } }); page.onLoad({ orderId: '81' }); await page.onShow(); assert.equal(calls, 0); assert.equal(page.data.allowed, false)
+  }
+  const env = environment(); let fail = false
+  const page = await transferPage(env, { async riderMe() { if (fail) throw new Error('身份未加载'); return { riderId: 11, onlineStatus: 1 } }, async riderTransfers(p, direction) { return transferPageValue(direction === 'OUTGOING' ? [transferValue()] : [], p) } }, 81)
+  page.input(event('reason', '旧账号原因')); fail = true; env.load(path.join(native, 'utils/session.js')).save({ token: 'other', userId: 2, role: 'RIDER' }); await page.onShow()
+  assert.equal(page.data.incoming.length + page.data.outgoing.length, 0); assert.equal(page.data.orderId, 0); assert.equal(page.data.reason, ''); assert.ok(page.data.identityError)
+})
+test('transfers: Page15 directions paginate independently, retry same failed page, dedupe, terminal and malformed response', async () => {
+  const env = environment(); const calls = []; let fail = true
+  const page = await transferPage(env, { async riderTransfers(number, direction) {
+    calls.push([number, direction]); if (direction === 'INCOMING') return transferPageValue([], number)
+    if (number === 1 && fail) { fail = false; throw new Error('分页失败') }
+    return transferPageValue(number === 0 ? Array.from({ length: 15 }, (_, i) => transferValue({ id: 201 + i })) : [transferValue({ id: 215 }), transferValue({ id: 216, status: 'EXPIRED' })], number, number === 1)
+  } })
+  assert.equal(page.data.outgoing.length, 15); page.tabChange({ currentTarget: { dataset: { tab: 'OUTGOING' } } }); await page.more(); assert.ok(page.data.outgoingError); assert.equal(page.data.outgoing.length, 15)
+  await page.retryList(); assert.equal(page.data.outgoing.length, 16); assert.equal(page.data.outgoing.at(-1).statusText, '已过期'); assert.equal(page.data.outgoingMore, false)
+  const count = calls.length; await page.more(); assert.equal(calls.length, count); assert.deepEqual(calls.filter(row => row[0] === 1), [[1, 'OUTGOING'], [1, 'OUTGOING']])
+  const bad = await transferPage(environment(), { async riderTransfers() { return transferPageValue([transferValue()], 4) } }); assert.ok(bad.data.outgoingError); assert.equal(bad.data.outgoingLoaded, false)
+})
+test('transfers: request validates positive riderId and trimmed 1..255 reason, confirms responsibility and reloads server history', async () => {
+  const env = environment(); const requests = []; const modals = []; let history = []
+  env.wx.showModal = options => { modals.push(options); options.success({ confirm: true }) }
+  const page = await transferPage(env, { async requestOrderTransfer(orderId, data) { requests.push({ orderId, ...data }); history = [transferValue({ reason: data.reason })]; return history[0] }, async orderTransfers() { return history } }, 81)
+  for (const target of ['0', '-1', '1.5', '1e2', '11', '9007199254740992']) { page.input(event('targetRiderId', target)); page.input(event('reason', '原因')); await page.submit() }
+  page.input(event('targetRiderId', '22')); for (const reason of ['', ' ', 'x'.repeat(256)]) { page.input(event('reason', reason)); await page.submit() }
+  assert.equal(requests.length, 0); page.input(event('reason', ' 原因 ')); await page.submit()
+  assert.deepEqual(requests, [{ orderId: 81, targetRiderId: 22, reason: '原因' }]); assert.equal(page.data.tab, 'OUTGOING'); assert.equal(page.data.reason, ''); assert.equal(page.data.orderPending, true)
+  for (const text of ['对方接受前仍由您负责', '投诉', '私有详情权限']) assert.ok(modals.at(-1).content.includes(text))
+  await page.submit(); assert.equal(requests.length, 1); assert.equal(env.calls.requests.length, 0)
+})
+test('transfers: request cancellation, busy lock and unknown result query server instead of showing fake success', async () => {
+  const env = environment(); let submitCount = 0; let finish; let histories = 0; let failHistory = false
+  const page = await transferPage(env, { requestOrderTransfer() { submitCount++; return new Promise(resolve => { finish = resolve }) }, async orderTransfers() { histories++; if (failHistory) throw new Error('历史不可用'); return [] } }, 81)
+  page.input(event('targetRiderId', '22')); page.input(event('reason', '原因')); env.wx.showModal = options => options.success({ confirm: false }); await page.submit(); assert.equal(submitCount, 0)
+  env.wx.showModal = options => options.success({ confirm: true }); const pending = page.submit(); await flush(); await page.submit(); assert.equal(submitCount, 1)
+  failHistory = true; finish({}); await pending; assert.ok(page.data.submitError); assert.ok(page.data.historyError); assert.equal(page.data.requestUncertain, true); assert.equal(page.data.busy, false); assert.ok(histories > 1)
+  assert.equal(env.calls.toast.some(text => text.includes('已确认')), false); await page.submit(); assert.equal(submitCount, 1)
+})
+test('transfers: PENDING incoming accept/reject and outgoing cancel require confirmation and server-confirmed status', async () => {
+  for (const action of ['ACCEPTED', 'REJECTED', 'CANCELED']) {
+    const env = environment(); const calls = []; let row = transferValue(action === 'CANCELED' ? {} : { fromRiderId: 22, toRiderId: 11 })
+    const page = await transferPage(env, {
+      async riderTransfers(p, direction) { return transferPageValue((action === 'CANCELED' ? direction === 'OUTGOING' : direction === 'INCOMING') ? [row] : [], p) },
+      async respondOrderTransfer(id, body) { calls.push([id, body.decision, body.reason]); row = { ...row, status: body.decision }; return row },
+      async cancelOrderTransfer(id, body) { calls.push([id, 'CANCELED', body.reason]); row = { ...row, status: 'CANCELED' }; return row }
+    })
+    env.wx.showModal = options => options.success({ confirm: false }); await page.handle(transferTap(201, action)); assert.equal(calls.length, 0)
+    env.wx.showModal = options => options.success({ confirm: true }); await page.handle(transferTap(201, action)); assert.deepEqual(calls, [[201, action, '']])
+    const list = action === 'CANCELED' ? page.data.outgoing : page.data.incoming; assert.equal(list[0].status, action); assert.equal(list[0].canRespond || list[0].canCancel, false)
+    await page.handle(transferTap(201, action)); assert.equal(calls.length, 1)
+  }
+})
+test('transfers: offline acceptance requires workbench online and reject remains available', async () => {
+  const env = environment(); let responses = 0
+  const page = await transferPage(env, { async riderMe() { return { riderId: 11, onlineStatus: 0 } }, async riderTransfers(p, direction) { return transferPageValue(direction === 'INCOMING' ? [transferValue({ fromRiderId: 22, toRiderId: 11 })] : [], p) }, async respondOrderTransfer() { responses++; return transferValue({ fromRiderId: 22, toRiderId: 11, status: 'REJECTED' }) } })
+  await page.handle(transferTap(201, 'ACCEPTED')); assert.equal(responses, 0); assert.ok(env.calls.toast.at(-1).includes('工作台上线'))
+  await page.handle(transferTap(201, 'REJECTED')); assert.equal(responses, 1)
+})
+test('transfers: server failure/autoexpiry refreshes lists, no optimistic acceptance or false status', async () => {
+  const env = environment(); let status = 'PENDING'; let reads = 0
+  const page = await transferPage(env, { async riderTransfers(p, direction) { reads++; return transferPageValue(direction === 'INCOMING' ? [transferValue({ fromRiderId: 22, toRiderId: 11, status })] : [], p) }, async respondOrderTransfer() { status = 'EXPIRED'; throw Object.assign(new Error('已开始履约，转派过期'), { status: 409 }) } })
+  await page.handle(transferTap(201, 'ACCEPTED')); assert.ok(reads >= 4); assert.equal(page.data.incoming[0].status, 'EXPIRED'); assert.equal(page.data.incoming[0].canRespond, false); assert.ok(page.data.submitError); assert.equal(env.calls.toast.some(text => text.includes('已确认')), false)
+})
+test('transfers: wrong to/from identities fail closed and sender records never expose telephone/private detail links', async () => {
+  const env = environment(); const page = await transferPage(env, { async riderTransfers(p, direction) { return transferPageValue([transferValue({ phone: '13800138000', userId: 999 })], p) } })
+  assert.ok(page.data.incomingError); assert.equal(page.data.incoming.length, 0); assert.equal(page.data.outgoing[0].title, '设计任务'); assert.equal('phone' in page.data.outgoing[0], false); assert.equal('userId' in page.data.outgoing[0], false)
+  await page.handle(transferTap(201, 'ACCEPTED')); assert.equal(env.calls.navigation.length, 0)
+  const wxml = fs.readFileSync(path.join(native, 'pages/rider/transfers.wxml'), 'utf8'); assert.equal(/item\.(?:phone|mobile)|bindtap="detail"/.test(wxml), false)
+})
+test('transfers: hidden/reentered and switched late list/history responses do not append or unlock other account', async () => {
+  for (const lifecycle of ['hide', 'switch', 'unload']) {
+    const env = environment(); let respondList; let respondHistory; let delay = false
+    const page = await transferPage(env, { riderTransfers(p, direction) { if (delay && direction === 'OUTGOING') return new Promise(resolve => { respondList = resolve }); return Promise.resolve(transferPageValue([], p)) }, orderTransfers() { if (delay) return new Promise(resolve => { respondHistory = resolve }); return Promise.resolve([]) } }, 81)
+    delay = true; const pending = page.reload(); await flush()
+    if (lifecycle === 'unload') page.onUnload(); else page.onHide()
+    if (lifecycle === 'switch') env.load(path.join(native, 'utils/session.js')).save({ token: 'new', userId: 2, role: 'RIDER' })
+    if (lifecycle !== 'unload') { delay = false; await page.onShow() }
+    respondList(transferPageValue([transferValue()])); respondHistory([transferValue()]); await pending
+    assert.equal(page.data.outgoing.length, 0); assert.equal(page.data.history.length, 0); if (lifecycle === 'switch') assert.equal(page.data.orderId, 0)
+  }
+})
+test('transfers: late modal and accepted-response cannot act or toast after hide/switch; duplicate handle is locked', async () => {
+  const env = environment(); let modalDone; let respond; let calls = 0
+  const page = await transferPage(env, { async riderTransfers(p, direction) { return transferPageValue(direction === 'INCOMING' ? [transferValue({ fromRiderId: 22, toRiderId: 11 })] : [], p) }, respondOrderTransfer() { calls++; return new Promise(resolve => { respond = resolve }) } })
+  env.wx.showModal = options => { modalDone = options.success }; const stale = page.handle(transferTap(201, 'ACCEPTED')); await flush(); page.onHide(); modalDone({ confirm: true }); await stale; assert.equal(calls, 0)
+  await page.onShow(); env.wx.showModal = options => options.success({ confirm: true }); const pending = page.handle(transferTap(201, 'ACCEPTED')); await flush(); await page.handle(transferTap(201, 'ACCEPTED')); assert.equal(calls, 1)
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'other', userId: 2, role: 'USER' }); await page.onShow(); respond(transferValue({ fromRiderId: 22, toRiderId: 11, status: 'ACCEPTED' })); await pending
+  assert.equal(page.data.allowed, false); assert.equal(page.data.incoming.length, 0); assert.equal(env.calls.toast.some(text => text.includes('已确认')), false)
+})
+test('transfer workbench: only ACCEPTED entry, shared riderId, return refresh removes transferred order and 403 never advances', async () => {
+  for (const taskMode of ['DELIVERY', 'ONLINE', 'ONSITE', 'PART_TIME']) {
+    const env = environment(); let owned = true; let attempts = 0
+    const page = await riderPage(env, { async riderMe() { return { riderId: 11, onlineStatus: 1 } }, async riderOrders() { return { content: owned ? [{ id: 81, taskMode, orderType: taskMode === 'DELIVERY' ? 'SEND' : 'CUSTOM', statusCode: 'ACCEPTED' }] : [], last: true } }, async pickup() { attempts++; owned = false; throw Object.assign(new Error('不再是当前骑手'), { status: 403 }) }, async serviceStart() { attempts++; owned = false; throw Object.assign(new Error('不再是当前骑手'), { status: 403 }) } })
+    assert.equal(page.data.orders[0].canTransfer, true); page.transfers(transferTap(81)); assert.equal(env.calls.navigation.at(-1).url, '/pages/rider/transfers?orderId=81')
+    if (taskMode === 'DELIVERY') { page.data.pickupCodes['81'] = '012345'; await page.pickup(transferTap(81)) } else await page.serviceStart(transferTap(81))
+    assert.equal(attempts, 1); assert.equal(page.data.orders.length, 0); assert.equal(env.calls.toast.some(text => text.includes('核销成功') || text === '已开始服务'), false)
+    page.onHide(); await page.onShow(); page.transfers(transferTap(81)); assert.equal(env.calls.navigation.length, 1)
+  }
+  const env = environment(); const page = await riderPage(env, { async riderOrders() { return { content: ['PICKING', 'DELIVERING', 'FINISHED'].map((statusCode, i) => ({ id: i + 1, statusCode })), last: true } } }); assert.ok(page.data.orders.every(row => row.canTransfer === false))
+})
+test('new UI disclosures: bound change button, cancel, phoneOnly, transfer role/ID/online rules and privacy remain explicit', () => {
+  const profile = fs.readFileSync(path.join(native, 'pages/profile/profile.wxml'), 'utf8')
+  for (const text of ['更换手机号', 'changingPhone', '取消修改', '验证新手机号', '用户ID、钱包、订单与角色不变']) assert.ok(profile.includes(text), text)
+  const my = fs.readFileSync(path.join(native, 'pages/my/my.wxml'), 'utf8'); assert.ok(my.includes('更换手机号'))
+  const transfers = fs.readFileSync(path.join(native, 'pages/rider/transfers.wxml'), 'utf8'); for (const text of ['不是用户ID', '每页15条', '私有详情权限', '上线', '只读转派历史', '不读取订单联系人']) assert.ok(transfers.includes(text), text)
+  const app = JSON.parse(fs.readFileSync(path.join(native, 'app.json'))); assert.ok(app.pages.includes('pages/rider/transfers'))
+})
 ;(async () => {
   let failures = 0
   for (const { name, fn } of tests) {
