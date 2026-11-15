@@ -24,7 +24,7 @@
     <button class="order-card" wx:for="{{list}}" wx:key="id" data-id="{{item.id}}" bindtap="detail" hover-class="order-card-pressed" aria-label="{{item.typeText}}，{{item.statusText}}，查看订单{{item.orderNo}}详情">
       <view class="order-card-heading">
         <view class="order-service">
-          <view class="order-service-icon type-{{item.orderType}}">{{item.orderType === 'SEND' ? '送' : item.orderType === 'BUY' ? '买' : item.orderType === 'ERRAND' ? '办' : '单'}}</view>
+          <view class="order-service-icon type-{{item.orderType}}">{{item.orderType === 'SEND' ? '送' : item.orderType === 'BUY' ? '买' : item.orderType === 'ERRAND' ? '办' : item.orderType === 'CUSTOM' ? '自' : '单'}}</view>
           <view class="service-copy">
             <view class="service-name">{{item.typeText}}</view>
             <view class="order-time">{{item.createdText}}</view>

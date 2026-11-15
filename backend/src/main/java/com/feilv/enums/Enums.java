@@ -9,7 +9,7 @@ public final class Enums {
 
     /** 订单业务类型：跑腿送 / 跑腿买 / 跑腿办（功能设计文档 3.3） */
     public enum OrderType {
-        SEND("跑腿送"), BUY("跑腿买"), ERRAND("跑腿办");
+        SEND("跑腿送"), BUY("跑腿买"), ERRAND("跑腿办"), CUSTOM("自定义任务");
 
         private final String label;
         OrderType(String label) { this.label = label; }
@@ -17,7 +17,7 @@ public final class Enums {
 
         public static OrderType of(String code) {
             try { return OrderType.valueOf(code); }
-            catch (Exception e) { throw BizException.of(400, "订单类型不合法，仅支持 SEND/BUY/ERRAND"); }
+            catch (Exception e) { throw BizException.of(400, "订单类型不合法，仅支持 SEND/BUY/ERRAND/CUSTOM"); }
         }
     }
 

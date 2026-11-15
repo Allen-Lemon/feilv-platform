@@ -203,7 +203,10 @@ class AdminUsersOrdersHttpTest {
         JsonNode row = rows.get(1); assertEquals(second.getId().longValue(), row.path("id").asLong());
         assertEquals("下单用户", row.path("userNickname").asText()); assertEquals("/api/v1/avatars/order.png", row.path("userAvatarUrl").asText());
         assertEquals("138****8001", row.path("userMobile").asText()); assertTrue(row.path("userMobileBound").asBoolean());
-        for (var component : com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()) assertTrue(row.has(component.getName()), component.getName());
+        for (var component : com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()) {
+            if (!"owner".equals(component.getName())) assertTrue(row.has(component.getName()), component.getName());
+        }
+        assertFalse(row.has("owner"), "C端所有者布尔值无需增加到后台订单DTO");
         assertEquals("WAIT_PAY", row.path("status").asText()); assertFalse(row.has("statusCode")); assertEquals(21, row.size());
         assertFalse(result.toString().contains("13800138001")); assertFalse(row.has("user"));
         JsonNode filtered = data(mvc.perform(get("/api/v1/admin/orders").header("Authorization", token)
@@ -234,7 +237,9 @@ class AdminUsersOrdersHttpTest {
         }
         mvc.perform(get("/api/v1/admin/users/" + legacy.getId()).header("Authorization", token))
                 .andExpect(jsonPath("$.data.mobile").value("****")).andExpect(jsonPath("$.data.mobileBound").value(true));
-        assertEquals(16, com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents().length);
+        assertEquals(17, com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents().length);
+        assertEquals(boolean.class, com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()[16].getType());
+        assertEquals("owner", com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()[16].getName());
     }
 
     private MvcResult getUsers(String query) throws Exception { return getUsers(query, 0); }

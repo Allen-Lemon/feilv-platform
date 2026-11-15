@@ -65,6 +65,15 @@ docker compose up -d --build --force-recreate backend
 - 真机验收至少包含：微信/短信登录、首页登录回跳、头像选择和保存、上传失败重试/格式与大小限制、重新进入展示持久化头像、昵称选择/手填并主动保存、同意/拒绝手机号、未完善返回浏览但下单被拦截、草稿保留、同号幂等/跨账号冲突、业务401及退出/切号后的旧上传和资料响应隔离。离线测试不调用真实微信，不能证明手机号资格已开通。
 - 微信接口说明参考：<https://developers.weixin.qq.com/miniprogram/dev/OpenApiDoc/user-info/phone-number/getPhoneNumber.html>、<https://developers.weixin.qq.com/miniprogram/dev/OpenApiDoc/mp-access-token/getStableAccessToken.html>。平台规则和接口要求应以当前官方文档及后台为准。
 
+### 自定义任务及投诉联调
+
+- 后端须同时提供 `GET /api/v1/task-tags`、`POST /api/v1/custom-tasks/quote`、`POST /api/v1/custom-tasks`、`GET /api/v1/orders/{id}/custom-task`、`GET /api/v1/orders/{id}/complaints`，并保留现有投诉提交与订单支付接口。详细请求契约见本目录README。发布返回必须是含订单ID的 `OrderVO`，不能返回仅有任务ID的TaskVO。
+- 标签来自后台启用记录，最多5个、可不选；失败必须可重试，不能用固定标签或假空列表替代。自定义任务标题1–64字、内容1–1000字，订单列表使用标题与CUSTOM类型，详情读取完整资料。
+- `OrderVO.owner` 是当前登录人是否发布者的布尔值，不是角色或公开用户编号；骑手发布自己的任务也应返回true，承运他人订单应返回false。旧接口无owner时仅有限兼容，所有提交与查询最终由服务端判权。自定义任务的userId只用于页面私有内存兼容判断，不额外展示身份。
+- 投诉描述1–255字，从已接单起至已完成可申请。活动仅 `OPEN/PROCESSING`，有活动单不能重复提交；`APPROVED/REJECTED/DONE` 终结后可申请不同问题，但累计赔付受本单骑手分账上限约束。详情按服务端记录展示状态、问题、结果与赔付；查询失败不得冒充暂无记录，提交失败保留描述并先刷新核实。
+- 审核赔付目前 **MOCK，仅记账，未真实退款或转账**。前端不计算扣分账或自行修改审核状态，不展示经办人/骑手内部ID、扣减审计字段和内部操作明细。真实结算需要另行实现与验收。
+- 真机/联调覆盖 USER和RIDER各自发布、自定义与普通报价无串路、空标签/5标签/停用变更、标签/资料/投诉加载重试、草稿恢复与切号旧响应隔离、创建结果未知保护、owner权限、接单后投诉、重复工单、审核通过/驳回/结案后刷新、新问题累计限额及MOCK提示。小程序本地测试不请求外部接口，不证明后端已部署或资金已到账。
+
 ## 本地校验与上传
 
 在项目根运行（无需安装任何npm依赖）：

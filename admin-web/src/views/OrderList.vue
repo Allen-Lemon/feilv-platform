@@ -43,6 +43,7 @@
             <div class="order-actions">
               <el-button size="small" type="danger" plain :disabled="actionBusy !== null || row.status === 'CANCELED' || row.status === 'FINISHED'" :loading="actionBusy === row.id" @click="cancel(row)">干预取消</el-button>
               <el-button v-if="row.status === 'DELIVERED'" size="small" type="success" plain :disabled="actionBusy !== null" @click="complete(row)">强制完成</el-button>
+              <el-button v-if="canViewComplaints" size="small" type="primary" plain @click="viewComplaints(row)">投诉管理</el-button>
             </div>
           </template>
         </el-table-column>
@@ -62,6 +63,7 @@ const route = useRoute()
 const router = useRouter()
 const menuCodes = inject('adminMenuCodes', ref([]))
 const canViewUsers = computed(() => menuCodes.value.includes('users'))
+const canViewComplaints = computed(() => menuCodes.value.includes('complaints'))
 const statuses = [
   { code: 'WAIT_PAY', label: '待支付' }, { code: 'WAIT_GRAB', label: '待接单' },
   { code: 'ACCEPTED', label: '已接单' }, { code: 'PICKING', label: '取件中' },
@@ -78,7 +80,7 @@ const actionBusy = ref(null)
 let listRequest = 0
 let disposed = false
 
-const typeLabel = type => ({ SEND: '跑腿送', BUY: '跑腿买', ERRAND: '跑腿办' }[type] || type)
+const typeLabel = type => ({ SEND: '跑腿送', BUY: '跑腿买', ERRAND: '跑腿办', CUSTOM: '自定义任务' }[type] || type)
 const statusLabel = status => statuses.find(item => item.code === status)?.label || status
 const tagType = status => ({ FINISHED: 'success', CANCELED: 'info', DELIVERING: 'primary', WAIT_GRAB: 'warning' }[status] || '')
 
@@ -122,6 +124,9 @@ function resetFilters() {
 
 function viewUser(row) {
   if (canViewUsers.value && row.userId != null) router.push({ path: '/users', query: { userId: String(row.userId) } })
+}
+function viewComplaints(row) {
+  if (canViewComplaints.value && row.id != null) router.push({ path: '/complaints', query: { orderId: String(row.id) } })
 }
 
 async function intervene(row, action) {

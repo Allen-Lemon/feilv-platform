@@ -98,6 +98,13 @@
       </view>
     </view>
 
+    <view class="card order-panel" wx:if="{{order.orderType === 'CUSTOM'}}">
+      <view class="panel-title">自定义任务</view>
+      <view class="error" wx:if="{{taskError}}">{{taskError}}<button class="outline-button" bindtap="loadTask" disabled="{{busy || loading || taskLoading}}">重试读取任务</button></view>
+      <view wx:if="{{task}}"><view class="panel-title">{{task.title}}</view><view class="task-content">{{task.content}}</view><view class="task-tags"><text class="service-type" wx:for="{{task.tags}}" wx:key="id">{{item.name}} </text><text class="form-note" wx:if="{{!task.tags.length}}">未选择标签</text></view></view>
+      <view class="form-note" wx:if="{{!task && !taskError}}">该订单暂无自定义任务资料。</view>
+    </view>
+
     <view class="card order-panel">
       <view class="panel-title">物品信息</view>
       <view class="info-row">
@@ -184,8 +191,24 @@
       </button>
     </view>
 
-    <view class="card order-panel secondary-panel" wx:if="{{order.canComplain}}">
+    <view class="card order-panel secondary-panel">
       <view class="panel-title">售后与投诉</view>
+      <view class="form-note">仅订单发布者可申请，自已接单起受理；审核赔付以服务端规则及本单骑手可分账限额为准。</view>
+      <view class="mock-note"><text class="mock-badge">MOCK</text><text>赔付仅记账，未真实退款或转账。</text></view>
+      <button class="outline-button" bindtap="loadComplaints" disabled="{{busy || loading || complaintsLoading}}">{{complaintsLoading ? '正在刷新…' : '刷新投诉记录'}}</button>
+      <view class="error" wx:if="{{complaintsError}}">{{complaintsError}}，请刷新核实，不能据此认定没有投诉。</view>
+      <view class="feedback-result" wx:if="{{activeComplaint}}">本单有活动工单，请等待处理，暂不可重复提交。</view>
+      <view class="form-note" wx:if="{{complaintDenied}}">当前账号不可提交本单投诉，权限以服务端为准。</view>
+      <view class="form-note" wx:if="{{complaintsLoaded && !complaints.length}}">暂无投诉记录。</view>
+      <view class="complaint-record" wx:for="{{complaints}}" wx:key="id">
+        <view class="panel-title">{{item.statusText}}</view><view class="task-content">{{item.description}}</view>
+        <view class="form-note">提交时间：{{item.createdText}}</view>
+        <view class="task-content" wx:if="{{item.result}}">处理结果：{{item.result}}</view>
+        <view class="form-note">赔付金额：¥{{item.compensationText}}（MOCK 记账）</view>
+        <view class="form-note" wx:if="{{item.handledText !== '暂无'}}">处理时间：{{item.handledText}}</view>
+      </view>
+      <view class="feedback-result" wx:if="{{ticket}}">{{ticket}}</view>
+      <block wx:if="{{complaintAllowed}}">
       <view class="form-field">
         <view class="form-label">问题类型</view>
         <picker
@@ -208,7 +231,7 @@
           value="{{complaintDescription}}"
           data-field="complaintDescription"
           bindinput="input"
-          maxlength="1000"
+          maxlength="255"
           placeholder="请描述问题与诉求，不要填写密码等敏感信息"
           disabled="{{busy}}"
         />
@@ -216,7 +239,8 @@
       <button class="outline-button" disabled="{{busy || loading}}" bindtap="complaint">
         提交投诉
       </button>
-      <view class="feedback-result" wx:if="{{ticket}}">{{ticket}}</view>
+      <view class="form-note">1–255字；结案后可提出新问题，累计赔付限额仍由后端校验。</view>
+      </block>
     </view>
   </block>
 </view>

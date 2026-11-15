@@ -1142,7 +1142,8 @@ test('order UI: details prioritize next action and retain all state branches, pr
   for (const state of ['WAIT_PAY', 'WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED', 'CANCELED']) {
     assert.ok(detail.includes("order.status === '" + state + "'"))
   }
-  for (const flag of ['canPay', 'canConfirm', 'canCancel', 'canReview', 'canComplain']) assert.ok(detail.includes('wx:if="{{order.' + flag + '}}"'))
+  for (const flag of ['canPay', 'canConfirm', 'canCancel', 'canReview']) assert.ok(detail.includes('wx:if="{{order.' + flag + '}}"'))
+  assert.ok(detail.includes('wx:if="{{complaintAllowed}}"')); assert.ok(detail.includes('complaintsError'))
   assert.ok(detail.indexOf('bindtap="pay"') < detail.indexOf('配送路线'))
   assert.ok(detail.indexOf('bindtap="confirm"') < detail.indexOf('配送路线'))
   assert.ok(detail.includes('wx:if="{{order.pickupCode}}"')); assert.ok(detail.includes('不要泄露给无关人员'))
@@ -1167,6 +1168,7 @@ test('order details: MOCK pay, cancel and receipt actions retain correct APIs an
     let value = { id: 25, orderNo: 'LONG-ORDER-25', orderType: 'SEND', status: action === 'confirm' ? 'DELIVERED' : 'WAIT_PAY', realFeeFen: 1200, fromAddress: '长地址'.repeat(40), toAddress: '送达地址' }
     const page = env.page('pages/order/detail', {
       async orderDetail(id) { assert.equal(id, 25); return value },
+      async orderComplaints() { return [] },
       async payOrder(id) { calls.push(['pay', id]); value = Object.assign({}, value, { status: 'WAIT_GRAB' }) },
       async cancelOrder(id, reason) { calls.push(['cancel', id, reason]); return Object.assign({}, value, { status: 'CANCELED' }) },
       async confirmOrder(id) { calls.push(['confirm', id]); return Object.assign({}, value, { status: 'FINISHED' }) }
@@ -1183,7 +1185,7 @@ test('order details: MOCK pay, cancel and receipt actions retain correct APIs an
 test('order details: cancelled confirmations do not mutate orders and failed actions recover loading state', async () => {
   for (const action of ['pay', 'cancel', 'confirm']) {
     const env = environment({ showModal(options) { options.success({ confirm: false, cancel: true }) } }); env.authenticated(); let calls = 0
-    const api = { async orderDetail() { return { id: 9, status: 'DELIVERED' } }, async payOrder() { calls++; throw new Error('操作失败') }, async cancelOrder() { calls++; throw new Error('操作失败') }, async confirmOrder() { calls++; throw new Error('操作失败') } }
+    const api = { async orderDetail() { return { id: 9, status: 'DELIVERED' } }, async orderComplaints() { return [] }, async payOrder() { calls++; throw new Error('操作失败') }, async cancelOrder() { calls++; throw new Error('操作失败') }, async confirmOrder() { calls++; throw new Error('操作失败') } }
     const page = env.page('pages/order/detail', api); page.onLoad({ id: '9' }); await page.onShow()
     await page[action](); assert.equal(calls, 0); assert.equal(page.data.busy, false)
     env.wx.showModal = options => options.success({ confirm: true })
@@ -1195,6 +1197,7 @@ test('order details: review and complaint form selections still submit only curr
   const env = environment(); env.authenticated(); let review; let complaint
   const page = env.page('pages/order/detail', {
     async orderDetail() { return { id: 33, status: 'FINISHED' } },
+    async orderComplaints() { return complaint ? [{ id: 66, status: 'OPEN', description: complaint.description }] : [] },
     async review(data) { review = data }, async complaint(data) { complaint = data; return { ticketId: 66, sla: '等待客服处理' } }
   })
   page.onLoad({ id: '33' }); await page.onShow()
@@ -1526,6 +1529,198 @@ test('development options: failed or missing backend endpoint gives actionable e
   assert.equal(page.data.phoneOptionsLoading, false)
   const template = fs.readFileSync(path.join(native, 'templates/manual-phone.wxml'), 'utf8')
   assert.ok(template.includes('刷新绑定模式')); assert.ok(template.includes('当前服务：')); assert.ok(template.includes('phoneOptionsError || phoneModeMessage'))
+})
+const taskTagRows = () => Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: '后台标签' + (i + 1), enabled: true, sort: i, version: 1 }))
+async function customCreate(env, api = {}) {
+  env.authenticated()
+  const page = env.page('pages/order/create', Object.assign({ async addressList() { return [] }, async taskTags() { return taskTagRows() }, async me() { return profileValue({ mobileBound: true }) }, async quote() { return { totalFen: 650, items: [] } } }, api))
+  page.onLoad({ type: 'CUSTOM' }); await page.onShow()
+  Object.assign(page.data.form, { fromContact: '甲', fromPhone: '13800000000', fromAddress: 'A', toContact: '乙', toPhone: '13900000000', toAddress: 'B' })
+  page.data.distanceKm = '2'; page.data.weightKg = '5'
+  page.input(event('taskTitle', '  自定义标题  ')); page.input(event('taskContent', '  完整任务要求  '))
+  return page
+}
+function tagEvent(id) { return { currentTarget: { dataset: { id } } } }
+function okRequest(req, value) { req.success({ statusCode: 200, data: { code: 0, data: value } }) }
+test('custom task API: quote routes only CUSTOM and create separates task fields from OrderCreateReq', async () => {
+  const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
+  for (const type of ['CUSTOM', 'SEND']) {
+    const quoting = api.quote({ orderType: type, distanceM: 2500, weightKg: 2 }); const req = env.calls.requests.at(-1)
+    assert.ok(req.url.endsWith(type === 'CUSTOM' ? '/custom-tasks/quote' : '/orders/quote'))
+    assert.equal(req.data.distanceM, 2500); assert.equal('orderType' in req.data, type !== 'CUSTOM'); okRequest(req, { totalFen: 650, items: [] }); await quoting
+  }
+  const payload = { orderType: 'CUSTOM', taskTitle: '标题', taskContent: '内容', taskTagIds: '2,5', fromAddress: '取件地址', goodsDesc: '标题', distanceM: 2500, weightKg: 2 }
+  const creating = api.createOrder(payload); const req = env.calls.requests.at(-1)
+  assert.ok(req.url.endsWith('/api/v1/custom-tasks')); assert.equal(req.data.title, '标题'); assert.equal(req.data.content, '内容')
+  assert.deepEqual(Array.from(req.data.tagIds), [2, 5]); assert.equal(req.data.order.orderType, 'CUSTOM'); assert.equal(req.data.order.fromAddress, '取件地址')
+  assert.equal('taskTitle' in req.data.order, false); assert.equal('taskContent' in req.data.order, false); assert.equal('taskTagIds' in req.data.order, false)
+  assert.equal(payload.taskTagIds, '2,5'); okRequest(req, { id: 77 }); assert.equal((await creating).id, 77)
+  const ordinary = { orderType: 'SEND', goodsDesc: '文件' }; const sending = api.createOrder(ordinary)
+  assert.ok(env.calls.requests.at(-1).url.endsWith('/api/v1/orders')); assert.equal(env.calls.requests.at(-1).data, ordinary); okRequest(env.calls.requests.at(-1), { id: 78 }); await sending
+  const empty = api.createOrder(Object.assign({}, payload, { taskTagIds: '' })); assert.equal(env.calls.requests.at(-1).data.tagIds.length, 0); okRequest(env.calls.requests.at(-1), { id: 79 }); await empty
+  for (const taskTagIds of ['1,1', '0', 'not-an-id', '1,2,3,4,5,6']) await assert.rejects(api.createOrder(Object.assign({}, payload, { taskTagIds })))
+})
+test('custom task API: authenticated tag, task metadata and complaint reads retain session scope', async () => {
+  const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
+  for (const [method, url] of [['taskTags', '/task-tags'], ['customTask', '/orders/77/custom-task'], ['orderComplaints', '/orders/77/complaints']]) {
+    const pending = api[method](77); const req = env.calls.requests.at(-1)
+    assert.ok(req.url.endsWith('/api/v1' + url)); assert.equal(req.method, 'GET'); assert.equal(req.header.Authorization, 'Bearer token-1'); okRequest(req, []); await pending
+  }
+  const session = env.load(path.join(native, 'utils/session.js')); const bound = api.forSession(session.revision()); session.clear()
+  const count = env.calls.requests.length; await assert.rejects(bound.taskTags()); assert.equal(env.calls.requests.length, count)
+})
+test('custom task home: exactly fourth independent service is available to users and riders without duplicate shortcuts', () => {
+  for (const role of ['USER', 'RIDER']) {
+    const env = environment(); env.authenticated(role); const page = env.page('pages/index/index', {}); page.onLoad({}); page.onShow()
+    assert.deepEqual(Array.from(page.data.types, t => t.code), ['SEND', 'BUY', 'ERRAND', 'CUSTOM'])
+    page.create({ currentTarget: { dataset: { type: 'CUSTOM' } } }); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=CUSTOM')
+    for (const name of ['orders', 'address', 'settings']) assert.equal(page[name], undefined)
+  }
+})
+test('custom task form: title/content boundaries, optional tags, canonical string IDs and existing route constraints', async () => {
+  const env = environment(); const page = await customCreate(env)
+  let payload = page.buildPayload(); assert.equal(payload.taskTitle, '自定义标题'); assert.equal(payload.taskContent, '完整任务要求'); assert.equal(payload.goodsDesc, payload.taskTitle); assert.equal(payload.taskTagIds, '')
+  for (const [field, max] of [['taskTitle', 64], ['taskContent', 1000]]) {
+    const original = page.data.form[field]
+    for (const value of ['', '  ', '字'.repeat(max + 1)]) { page.data.form[field] = value; assert.throws(() => page.buildPayload()) }
+    page.data.form[field] = '字'.repeat(max); assert.doesNotThrow(() => page.buildPayload()); page.data.form[field] = original
+  }
+  for (const id of [5, 3, 1, 4, 2]) page.tagChoice(tagEvent(id))
+  assert.equal(page.data.form.taskTagIds, '1,2,3,4,5'); page.tagChoice(tagEvent(6)); assert.equal(page.data.selectedTagCount, 5)
+  assert.ok(env.calls.toast.includes('最多选择5个标签')); page.tagChoice(tagEvent(3)); assert.equal(page.data.form.taskTagIds, '1,2,4,5')
+  payload = page.buildPayload(); assert.equal(env.load(path.join(native, 'utils/draft.js')).samePayload(payload, page.buildPayload()), true)
+  page.data.distanceKm = ''; assert.throws(() => page.buildPayload()); page.data.distanceKm = '2'; page.data.weightKg = '1.5'; assert.throws(() => page.buildPayload())
+})
+test('custom task tags: errors are visible and retryable with no fabricated options, disabled tags stay excluded', async () => {
+  const env = environment(); let fail = true
+  const page = await customCreate(env, { async taskTags() { if (fail) throw new Error('标签服务不可用'); return taskTagRows().concat([{ id: 99, name: '停用', enabled: false }]) } })
+  assert.equal(page.data.tagsLoaded, false); assert.equal(page.data.taskTags.length, 0); assert.equal(page.data.tagsError, '标签服务不可用')
+  await page.next(); assert.equal(env.calls.navigation.length, 0); assert.equal(env.storage.get('native_draft').payload.taskContent, '  完整任务要求  ')
+  fail = false; await page.loadTaskTags(); assert.equal(page.data.tagsLoaded, true); assert.equal(page.data.tagsError, ''); assert.equal(page.data.taskTags.some(t => t.id === 99), false)
+  page.tagChoice(tagEvent(1)); await page.next(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
+  const count = page.data.taskTags.length; assert.equal(count, 7)
+})
+test('custom task drafts: partial editing persists; restored title/content/tags do not replace uncertain order identity', async () => {
+  const env = environment(); const page = await customCreate(env); page.tagChoice(tagEvent(2)); await page.next()
+  const saved = env.storage.get('native_draft'); assert.equal(saved.payload.taskTagIds, '2')
+  const restored = env.page('pages/order/create', { async addressList() { return [] }, async taskTags() { return taskTagRows() } }); restored.onLoad({ type: 'CUSTOM' }); await restored.onShow()
+  assert.equal(restored.data.form.taskTitle, '自定义标题'); assert.equal(restored.data.form.taskContent, '完整任务要求'); assert.equal(restored.data.selectedTagCount, 1)
+  env.storage.set('native_pending_order', { owner: 1, savedAt: saved.savedAt, uncertain: true }); restored.input(event('taskTitle', '更改后需求'))
+  assert.equal(env.storage.get('native_draft').savedAt, saved.savedAt); await restored.next(); assert.equal(env.storage.get('native_draft').savedAt, saved.savedAt)
+  assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
+  const other = environment(); const partial = await customCreate(other); partial.data.distanceKm = ''; partial.input(event('taskContent', '未填完也保存'))
+  const again = other.page('pages/order/create', {}); again.onLoad({ type: 'CUSTOM' }); assert.equal(again.data.form.taskContent, '未填完也保存'); assert.equal(again.data.distanceKm, '')
+})
+test('custom task tags: stale account responses cannot replace new account form or tags', async () => {
+  const env = environment(); env.authenticated(); let respond
+  const page = env.page('pages/order/create', { async addressList() { return [] }, taskTags() { return new Promise(r => { respond = r }) } }); page.onLoad({ type: 'CUSTOM' }); const loading = page.onShow(); await flush()
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' }); const showing = page.onShow(); await showing
+  respond(taskTagRows()); await loading; assert.equal(page.data.taskTags.length, 0); assert.equal(page.data.form.taskTitle || '', '')
+  assert.equal(env.storage.has('native_draft'), false)
+})
+test('custom task publishing: same confirmation creates once, MOCK pays returned OrderVO ID and retains uncertain failure', async () => {
+  const env = environment(); const create = await customCreate(env); await create.next(); let creates = 0; let pays = 0
+  const page = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async createOrder(data) { creates++; assert.equal(data.orderType, 'CUSTOM'); assert.equal(data.taskTitle, '自定义标题'); return { id: 80 } }, async payOrder(id) { pays++; assert.equal(id, 80) } })
+  page.onLoad({}); page.onShow(); await page.submit(); assert.equal(creates, 1); assert.equal(pays, 1); assert.equal(env.storage.has('native_draft'), false)
+  const failedEnv = environment(); const failedCreate = await customCreate(failedEnv); await failedCreate.next()
+  const failed = failedEnv.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async createOrder() { throw new Error('网络超时') } }); failed.onLoad({}); failed.onShow(); await failed.submit()
+  assert.equal(failed.data.uncertain, true); assert.equal(failedEnv.storage.has('native_draft'), true); assert.equal(failedEnv.storage.get('native_pending_order').uncertain, true)
+})
+const orderValue = (patch = {}) => Object.assign({ id: 90, status: 'ACCEPTED', orderType: 'SEND', owner: true, goodsDesc: '需求' }, patch)
+const complaintValue = (patch = {}) => Object.assign({ id: 8, status: 'OPEN', description: '包装破损', compensationFen: 0, createdTime: '2026-11-15T10:00:00' }, patch)
+async function detailPage(env, api = {}, patch = {}, role = 'USER') {
+  env.authenticated(role)
+  const page = env.page('pages/order/detail', Object.assign({ async orderDetail() { return orderValue(patch) }, async orderComplaints() { return [] } }, api)); page.onLoad({ id: '90' }); await page.onShow(); return page
+}
+test('task details: only CUSTOM requests metadata; details display title/content/tags and redact identity extras', async () => {
+  const env = environment(); let reads = 0
+  const page = await detailPage(env, { async customTask() { reads++; return { id: 4, userId: 1, title: '标题', content: '内容', tags: [{ id: 1, name: '后台标签' }], createdBy: 999, publishSource: 'MINIAPP' } } }, { orderType: 'CUSTOM' })
+  assert.equal(reads, 1); assert.equal(page.data.task.title, '标题'); assert.equal(page.data.task.tags[0].name, '后台标签'); assert.equal('userId' in page.data.task, false); assert.equal('createdBy' in page.data.task, false)
+  const ordinary = await detailPage(environment(), { async customTask() { assert.fail('ordinary order must not read custom metadata') } }); assert.equal(ordinary.data.task, null)
+  const missing = await detailPage(environment(), { async customTask() { return null } }, { orderType: 'CUSTOM' }); assert.equal(missing.data.task, null); assert.equal(missing.data.taskError, '')
+})
+test('task details: metadata load errors remain visible, retry works, list uses existing title and CUSTOM type', async () => {
+  let fail = true; const env = environment()
+  const page = await detailPage(env, { async customTask() { if (fail) throw new Error('任务读取失败'); return { title: '任务标题', content: '要求', tags: [] } } }, { orderType: 'CUSTOM' })
+  assert.equal(page.data.taskError, '任务读取失败'); assert.equal(page.data.task, null); fail = false; await page.loadTask(); assert.equal(page.data.task.title, '任务标题')
+  const list = env.page('pages/order/list', { async myOrders() { return { content: [orderValue({ orderType: 'CUSTOM', goodsDesc: '列表任务标题' })], last: true } } }); list.onLoad({}); await list.onShow()
+  assert.equal(list.data.list[0].typeText, '自定义任务'); assert.equal(list.data.list[0].goodsDesc, '列表任务标题')
+})
+test('complaints: accepted through finished can submit, owner gates include rider publishers but never carrier', async () => {
+  for (const status of ['WAIT_PAY', 'WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED', 'CANCELED']) {
+    const page = await detailPage(environment(), {}, { status }); assert.equal(page.data.complaintAllowed, ['ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED'].includes(status))
+  }
+  for (const owner of [true, false]) { const page = await detailPage(environment(), {}, { owner }, 'RIDER'); assert.equal(page.data.complaintAllowed, owner) }
+  const legacyRider = await detailPage(environment(), {}, { owner: undefined }, 'RIDER'); assert.equal(legacyRider.data.complaintAllowed, false)
+  const legacyUser = await detailPage(environment(), {}, { owner: undefined }); assert.equal(legacyUser.data.complaintAllowed, true)
+  const customRider = await detailPage(environment(), { async customTask() { return { userId: 1, title: '自己发布', content: '要求', tags: [] } } }, { orderType: 'CUSTOM', owner: undefined }, 'RIDER'); assert.equal(customRider.data.complaintAllowed, true)
+})
+test('complaints: server OPEN/PROCESSING suppress duplicates, terminal states allow new issues and format MOCK compensation', async () => {
+  for (const status of ['OPEN', 'PROCESSING', 'APPROVED', 'REJECTED', 'DONE', 'UNKNOWN']) {
+    const page = await detailPage(environment(), { async orderComplaints() { return [complaintValue({ status, result: '处理原因', compensationFen: 1234, riderId: 20, handledBy: 30, actions: [{ operatorId: 30, detail: '内部说明' }] })] } })
+    const active = ['OPEN', 'PROCESSING', 'UNKNOWN'].includes(status); assert.equal(page.data.activeComplaint, active); assert.equal(page.data.complaintAllowed, !active)
+    assert.equal(page.data.complaints[0].compensationText, '12.34'); assert.equal(page.data.complaints[0].result, '处理原因')
+    for (const field of ['riderId', 'userId', 'handledBy', 'actions', 'deductedFen']) assert.equal(field in page.data.complaints[0], false)
+  }
+})
+test('complaints: failed reads never pretend empty or enable form; retry and refresh use service state and preserve draft', async () => {
+  let mode = 'failure'; const env = environment()
+  const page = await detailPage(env, { async orderComplaints() { if (mode === 'failure') throw new Error('投诉查询失败'); return mode === 'active' ? [complaintValue()] : [complaintValue({ status: 'APPROVED', result: '已赔付', compensationFen: 500 })] } })
+  page.input(event('complaintDescription', '保留诉求')); assert.equal(page.data.complaintsLoaded, false); assert.equal(page.data.complaintAllowed, false); assert.equal(page.data.complaintsError, '投诉查询失败')
+  mode = 'active'; await page.loadComplaints(); assert.equal(page.data.complaintsError, ''); assert.equal(page.data.activeComplaint, true)
+  mode = 'done'; await page.loadComplaints(); assert.equal(page.data.complaintAllowed, true); assert.equal(page.data.complaints[0].compensationText, '5.00'); assert.equal(page.data.complaintDescription, '保留诉求')
+})
+test('complaints: description 1..255, successful submit refreshes history and blocks another active ticket', async () => {
+  let submitted; let reads = 0; const env = environment()
+  const page = await detailPage(env, { async orderComplaints() { reads++; return submitted ? [complaintValue({ description: submitted.description })] : [] }, async complaint(data) { submitted = data; return { ticketId: 8, sla: '请等待处理' } } })
+  for (const value of ['', '  ', '字'.repeat(256)]) { page.input(event('complaintDescription', value)); await page.complaint(); assert.equal(submitted, undefined) }
+  page.input(event('complaintDescription', ' ' + '字'.repeat(255) + ' ')); await page.complaint()
+  assert.equal(submitted.description.length, 255); assert.equal(submitted.orderId, 90); assert.equal(reads, 2); assert.equal(page.data.complaintAllowed, false); assert.equal(page.data.complaintDescription, '')
+})
+test('complaints: 403 and uncertain submission preserve description, require refresh, and never invent successful ticket', async () => {
+  for (const code of [403, 500]) {
+    const page = await detailPage(environment(), { async complaint() { throw Object.assign(new Error('服务端拒绝或待核实'), { code }) } })
+    page.input(event('complaintDescription', '保留本单诉求')); await page.complaint()
+    assert.equal(page.data.complaintDescription, '保留本单诉求'); assert.equal(page.data.ticket, ''); assert.equal(page.data.complaintAllowed, false); assert.equal(page.data.complaintsLoaded, false)
+    assert.ok(page.data.complaintsError); await page.loadComplaints(); assert.equal(page.data.complaintAllowed, code !== 403)
+  }
+})
+test('complaints: slow list and submit responses cannot expose old account history or clear another account input', async () => {
+  for (const operation of ['read', 'submit']) {
+    const env = environment(); let respond; let defer = false
+    const page = await detailPage(env, { orderComplaints() { if (defer) return new Promise(r => { respond = r }); return Promise.resolve([]) }, complaint() { return new Promise(r => { respond = r }) } })
+    page.input(event('complaintDescription', '旧账号描述')); defer = operation === 'read'; const pending = operation === 'read' ? page.loadComplaints() : page.complaint(); await flush()
+    env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' }); await page.onShow(); page.input(event('complaintDescription', '新账号输入'))
+    respond(operation === 'read' ? [complaintValue({ description: '旧账号私有问题' })] : { ticketId: 88 }); await pending
+    assert.equal(page.data.complaints.length, 0); assert.equal(page.data.ticket, ''); assert.equal(page.data.complaintDescription, '新账号输入')
+  }
+})
+test('custom page phases: switching accounts during address load never starts a new-session tag request', async () => {
+  const env = environment(); env.authenticated(); let respond; let tags = 0
+  const page = env.page('pages/order/create', { addressList() { return new Promise(r => { respond = r }) }, async taskTags() { tags++; return taskTagRows() } })
+  page.onLoad({ type: 'CUSTOM' }); const pending = page.onShow(); await flush()
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' }); respond([]); await pending
+  assert.equal(tags, 0); assert.equal(page.data.taskTags.length, 0)
+})
+test('task details phases: stale metadata never renders or continues into a switched-account complaint request', async () => {
+  const env = environment(); env.authenticated(); let respond; let reads = 0
+  const page = env.page('pages/order/detail', { async orderDetail() { return orderValue({ orderType: 'CUSTOM' }) }, customTask() { return new Promise(r => { respond = r }) }, async orderComplaints() { reads++; return [] } })
+  page.onLoad({ id: '90' }); const pending = page.onShow(); await flush()
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' }); await page.onShow()
+  respond({ title: '旧账号隐私', content: '旧账号内容', userId: 1, tags: [] }); await pending
+  assert.equal(page.data.task, null); assert.equal(page.data.complaints.length, 0); assert.equal(reads, 0)
+})
+test('complaint missing mock endpoint is an explicit failure, never a fabricated no-complaints success', async () => {
+  const env = environment(); env.authenticated(); const page = env.page('pages/order/detail', { async orderDetail() { return orderValue() } })
+  page.onLoad({ id: '90' }); await page.onShow(); assert.equal(page.data.complaintsLoaded, false); assert.equal(page.data.complaintAllowed, false); assert.ok(page.data.complaintsError)
+})
+test('custom and complaint disclosure: templates and legal copy retain limits, retries, necessary fields and MOCK-only refunds', () => {
+  const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8'); const detail = fs.readFileSync(path.join(native, 'pages/order/detail.wxml'), 'utf8')
+  for (const text of ['maxlength="64"', 'maxlength="1000"', 'loadTaskTags', 'selectedTagCount']) assert.ok(create.includes(text))
+  for (const text of ['maxlength="255"', 'loadComplaints', 'complaintsError', 'complaintAllowed', '未真实退款或转账', 'item.result', 'item.compensationText']) assert.ok(detail.includes(text))
+  for (const text of ['item.userId', 'item.riderId', 'item.handledBy', 'item.actions', 'task.userId', 'task.createdBy']) assert.equal(detail.includes(text), false)
+  const env = environment(); const legal = env.page('pages/legal/legal'); legal.onLoad({ kind: 'privacy' }); const privacy = legal.data.sections.map(s => s.text).join(' ')
+  for (const text of ['自定义任务', '投诉', '标签', 'MOCK', '草稿']) assert.ok(privacy.includes(text))
 })
 ;(async () => {
   let failures = 0

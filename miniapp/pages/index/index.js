@@ -4,7 +4,8 @@ definePage({
   data: { types: [
     { code: 'SEND', label: '跑腿送', desc: '文件、鲜花、蛋糕与日常物品同城送达' },
     { code: 'BUY', label: '跑腿买', desc: '商超代购，购买金额与骑手另行确认' },
-    { code: 'ERRAND', label: '跑腿办', desc: '代取件、代排队与日常事务代办' }
+    { code: 'ERRAND', label: '跑腿办', desc: '代取件、代排队与日常事务代办' },
+    { code: 'CUSTOM', label: '自定义任务', desc: '写下标题和详细需求，按需选择任务标签' }
   ] },
   onShow() {
     if (this._pendingType && session.token()) {

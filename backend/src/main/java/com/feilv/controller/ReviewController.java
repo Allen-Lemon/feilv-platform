@@ -4,14 +4,19 @@ import com.feilv.common.Result;
 import com.feilv.common.UserContext;
 import com.feilv.dto.ApiDtos.ComplaintReq;
 import com.feilv.dto.ApiDtos.ReviewReq;
+import com.feilv.dto.ComplaintDtos.ComplaintVO;
+import com.feilv.service.ComplaintService;
 import com.feilv.service.ReviewRiskService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 /** 评价与投诉接口（对应详细设计4.5/9.5 投诉赔付链路） */
@@ -21,6 +26,7 @@ import java.util.Map;
 public class ReviewController {
 
     private final ReviewRiskService reviewRiskService;
+    private final ComplaintService complaintService;
 
     /** 提交评价（订单完成后7天内，一单一评，联动信用分） */
     @PostMapping("/reviews")
@@ -34,5 +40,11 @@ public class ReviewController {
     public Result<Map<String, Object>> complaint(@Valid @RequestBody ComplaintReq req) {
         long ticketId = reviewRiskService.complaint(UserContext.userId(), req);
         return Result.ok(Map.of("ticketId", ticketId, "sla", "一般投诉48小时内办结"));
+    }
+
+    /** 服务端工单状态、审批金额及MOCK赔付结果，仅发布者/承运骑手可见。 */
+    @GetMapping("/orders/{id}/complaints")
+    public Result<List<ComplaintVO>> complaints(@PathVariable long id) {
+        return Result.ok(complaintService.listForOrder(UserContext.userId(), id));
     }
 }

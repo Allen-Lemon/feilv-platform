@@ -1,7 +1,6 @@
 package com.feilv.service;
 
 import com.feilv.common.BizException;
-import com.feilv.domain.Complaint;
 import com.feilv.domain.CreditLog;
 import com.feilv.domain.OrderMain;
 import com.feilv.domain.Review;
@@ -10,7 +9,6 @@ import com.feilv.dto.ApiDtos.ComplaintReq;
 import com.feilv.dto.ApiDtos.ReviewReq;
 import com.feilv.enums.Enums.CreditReason;
 import com.feilv.enums.OrderStatus;
-import com.feilv.repository.ComplaintRepository;
 import com.feilv.repository.CreditLogRepository;
 import com.feilv.repository.ReviewRepository;
 import com.feilv.repository.RiderRepository;
@@ -34,7 +32,7 @@ public class ReviewRiskService {
     private final ReviewRepository reviewRepository;
     private final CreditLogRepository creditLogRepository;
     private final RiderRepository riderRepository;
-    private final ComplaintRepository complaintRepository;
+    private final ComplaintService complaintService;
     private final OrderService orderService;
 
     /** 提交评价：订单须已完成、本人、且一单一评 */
@@ -98,23 +96,9 @@ public class ReviewRiskService {
     }
 
     /** 提交投诉工单（8:00-22:00客服响应≤30分钟，一般投诉48小时办结——生产由工单系统承接） */
-    @Transactional
+    @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public long complaint(long userId, ComplaintReq req) {
-        OrderMain order = orderService.mustGet(req.orderId());
-        if (order.getUserId() != userId) throw BizException.of(403, "无权投诉他人订单");
-        Complaint c = new Complaint();
-        c.setOrderId(order.getId());
-        c.setUserId(userId);
-        try {
-            c.setType(com.feilv.enums.Enums.ComplaintType.valueOf(req.type()).name());
-        } catch (IllegalArgumentException e) {
-            throw BizException.of(400, "投诉类型不合法");
-        }
-        c.setDescription(req.description() == null ? "" : req.description());
-        c.setStatus("OPEN");
-        complaintRepository.save(c);
-        log.info("工单#{}已生成（订单{}），待客服分派", c.getId(), order.getOrderNo());
-        return c.getId();
+        return complaintService.create(userId, req);
     }
 
     /** 骑手信用分明细 */

@@ -27,6 +27,11 @@ public class ComplaintAction {
     @Column(length = 255)
     private String detail;
 
-    @Column(name = "created_time", insertable = false, updatable = false)
+    @Column(name = "created_time", updatable = false)
     private LocalDateTime createdTime;
+
+    @PrePersist
+    void initializeTime() {
+        if (createdTime == null) createdTime = LocalDateTime.now();
+    }
 }

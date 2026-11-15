@@ -1,6 +1,10 @@
 package com.feilv.controller;
 
 import com.feilv.common.Result;
+import com.feilv.common.BizException;
+import com.feilv.dto.ComplaintDtos.ComplaintReviewReq;
+import com.feilv.dto.ComplaintDtos.ComplaintHandleReq;
+import jakarta.validation.Valid;
 import com.feilv.domain.OrderMain;
 import com.feilv.enums.OrderStatus;
 import com.feilv.repository.ComplaintRepository;
@@ -113,34 +117,36 @@ public class AdminController {
     /** 结算中心：骑手分账汇总（对应功能设计文档7.3；生产：结算单→财务审核→批量打款） */
     @GetMapping("/settlements")
     public Result<List<Map<String, Object>>> settlements() {
-        List<Map<String, Object>> rows = new ArrayList<>();
-        for (Object[] row : payRecordRepository.sumRiderShareGroupByRider()) {
-            Long riderId = (Long) row[0];
-            Long total = (Long) row[1];
-            String name = riderRepository.findById(riderId).map(r -> r.getName()).orElse("未知骑手");
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("riderId", riderId);
-            m.put("name", name);
-            m.put("totalShareFen", total);
-            m.put("totalShareYuan", String.format("%.2f", total / 100.0));
-            rows.add(m);
-        }
-        return Result.ok(rows);
+        adminMenuAccess.requireMenu("settlements");
+        return Result.ok(complaintService.settlements());
     }
 
     /** 投诉工单列表 */
     @GetMapping("/complaints")
-    public Result<?> complaints(@RequestParam(defaultValue = "OPEN") String status) {
-        return Result.ok(complaintRepository.findByStatusOrderByIdDesc(status));
+    public Result<?> complaints(@RequestParam(required = false) String status,
+                                @RequestParam(required = false) String orderId,
+                                @RequestParam(defaultValue = "0") String page) {
+        adminMenuAccess.requireMenu("complaints");
+        return Result.ok(complaintService.list(status, orderId == null ? null : AdminQueryParameters.id(orderId),
+                AdminQueryParameters.page(page)));
     }
 
-    /** 客服受理或办结投诉，保留处理记录和赔付金额。 */
+    /** 审批和MOCK扣款/等额赔付同事务，金额单位分。 */
+    @PostMapping("/complaints/{id}/review")
+    public Result<?> reviewComplaint(@PathVariable long id, @Valid @RequestBody ComplaintReviewReq req) {
+        adminMenuAccess.requireMenu("complaints");
+        return Result.ok(complaintService.review(id, req));
+    }
+
+    /** 旧接口仅兼容零元受理/办结，不可用于绕过MOCK扣款审核。 */
     @PostMapping("/complaints/{id}/handle")
-    public Result<?> handleComplaint(@PathVariable long id, @RequestBody Map<String, Object> body) {
-        String status = String.valueOf(body.getOrDefault("status", "PROCESSING"));
-        String result = String.valueOf(body.getOrDefault("result", ""));
-        int compensation = body.get("compensationFen") instanceof Number n ? n.intValue() : 0;
-        return Result.ok(complaintService.handle(id, status, result, compensation));
+    public Result<?> handleComplaint(@PathVariable long id, @Valid @RequestBody ComplaintHandleReq req) {
+        adminMenuAccess.requireMenu("complaints");
+        if ((req.compensationFen() != null && req.compensationFen() != 0)
+                || (req.amountFen() != null && req.amountFen() != 0)) {
+            throw BizException.of(400, "旧接口仅支持0元办结，扣款请使用review审核接口");
+        }
+        return Result.ok(complaintService.handle(id, req.status() == null ? "PROCESSING" : req.status(), req.result(), 0));
     }
 
     private Long UserContextLong() {

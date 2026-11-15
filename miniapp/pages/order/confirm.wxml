@@ -19,6 +19,8 @@
       <view class="route-node"><text class="route-marker destination-marker">送</text><view class="route-content"><view class="address-text">{{draft.toAddress}}</view><view class="contact-line"><text class="contact-name">{{draft.toContact}}</text><text>{{draft.toPhone}}</text></view></view></view>
       <view class="task-summary">
         <view class="summary-row"><text class="summary-label">需求</text><text class="summary-value">{{draft.goodsDesc}}</text></view>
+        <view class="summary-row" wx:if="{{draft.orderType === 'CUSTOM'}}"><text class="summary-label">详细内容</text><text class="summary-value">{{draft.taskContent}}</text></view>
+        <view class="summary-row" wx:if="{{draft.orderType === 'CUSTOM'}}"><text class="summary-label">任务标签</text><view class="summary-value"><text wx:for="{{tagNames}}" wx:key="*this">{{item}} </text><text wx:if="{{!tagNames.length}}">未选择</text></view></view>
         <view class="summary-row"><text class="summary-label">距离 / 重量</text><text class="summary-value">{{draft.distanceM}}米 · {{draft.weightKg}}公斤</text></view>
         <view class="summary-row" wx:if="{{draft.remark}}"><text class="summary-label">备注</text><text class="summary-value">{{draft.remark}}</text></view>
       </view>

@@ -4,7 +4,7 @@ const { definePage, toast } = require('../../utils/page')
 const { types } = require('../../utils/format')
 const paidStates = ['WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED']
 definePage({
-  data: { draft: null, quote: null, typeText: '', busy: false, orderId: null, invalid: false, uncertain: false },
+  data: { draft: null, quote: null, typeText: '', tagNames: [], busy: false, orderId: null, invalid: false, uncertain: false },
   onLoad() { this.restore() },
   onShow() { session.requireLogin() },
   restore() {
@@ -13,7 +13,7 @@ definePage({
     const pending = wx.getStorageSync('native_pending_order')
     if (!draft || draft.owner !== owner || !draft.payload || !draft.quote) { this.setData({ invalid: true }); return }
     const matching = draftState.matches(pending, owner, draft.savedAt)
-    this.setData({ draft: draft.payload, quote: draft.quote, typeText: types[draft.payload.orderType], orderId: matching ? pending.id || null : null, uncertain: !!(matching && pending.uncertain) })
+    this.setData({ draft: draft.payload, quote: draft.quote, tagNames: draft.tagNames || [], typeText: types[draft.payload.orderType], orderId: matching ? pending.id || null : null, uncertain: !!(matching && pending.uncertain) })
     this._savedAt = draft.savedAt
     this._owner = owner
     this._revision = session.revision()

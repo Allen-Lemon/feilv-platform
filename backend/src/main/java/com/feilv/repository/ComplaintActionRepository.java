@@ -7,4 +7,6 @@ import java.util.List;
 
 public interface ComplaintActionRepository extends JpaRepository<ComplaintAction, Long> {
     List<ComplaintAction> findByComplaintIdOrderByIdDesc(Long complaintId);
+
+    List<ComplaintAction> findByComplaintIdInOrderByIdAsc(java.util.Collection<Long> complaintIds);
 }

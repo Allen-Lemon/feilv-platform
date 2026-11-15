@@ -18,8 +18,19 @@ function createApi(r) {
     addAddress: data => r.post(root + '/user/address', data),
     updateAddress: (id, data) => r.put(root + '/user/address/' + id, data),
     deleteAddress: id => r.delete(root + '/user/address/' + id),
-    quote: data => r.post(root + '/orders/quote', data),
-    createOrder: data => r.post(root + '/orders', data),
+    taskTags: () => r.get(root + '/task-tags'),
+    quote: data => data.orderType === 'CUSTOM'
+      ? r.post(root + '/custom-tasks/quote', { distanceM: data.distanceM, weightKg: data.weightKg })
+      : r.post(root + '/orders/quote', data),
+    createOrder: data => {
+      if (data.orderType !== 'CUSTOM') return r.post(root + '/orders', data)
+      const { taskTitle, taskContent, taskTagIds, ...order } = data
+      const tagIds = taskTagIds ? String(taskTagIds).split(',').map(Number) : []
+      if (tagIds.length > 5 || tagIds.some(id => !Number.isSafeInteger(id) || id <= 0) || new Set(tagIds).size !== tagIds.length) return Promise.reject(new Error('任务标签无效，请重新选择'))
+      return r.post(root + '/custom-tasks', { title: taskTitle, content: taskContent, tagIds, order })
+    },
+    customTask: id => r.get(root + '/orders/' + id + '/custom-task'),
+    orderComplaints: id => r.get(root + '/orders/' + id + '/complaints'),
     payOrder: id => r.post(root + '/orders/' + id + '/pay'),
     cancelOrder: (id, reason) => r.post(root + '/orders/' + id + '/cancel', { reason }),
     confirmOrder: id => r.post(root + '/orders/' + id + '/confirm'),

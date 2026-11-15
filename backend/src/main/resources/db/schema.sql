@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS t_merchant (
 CREATE TABLE IF NOT EXISTS t_order (
   id            BIGINT AUTO_INCREMENT PRIMARY KEY,
   order_no      VARCHAR(32) NOT NULL UNIQUE,           -- 全局唯一可读订单号
-  order_type    VARCHAR(8) NOT NULL,                   -- SEND送/BUY买/ERRAND办
+  order_type    VARCHAR(8) NOT NULL,                   -- SEND送/BUY买/ERRAND办/CUSTOM自定义
   user_id       BIGINT NOT NULL,
   rider_id      BIGINT,
   from_contact  VARCHAR(32) NOT NULL,
@@ -87,6 +87,52 @@ CREATE TABLE IF NOT EXISTS t_order (
   updated_time  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_user (user_id), KEY idx_rider (rider_id), KEY idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单主表（保留≥3年）';
+
+CREATE TABLE IF NOT EXISTS t_task_tag (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(32) NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order INT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='任务标签';
+
+CREATE TABLE IF NOT EXISTS t_custom_task (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  order_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  title VARCHAR(64) NOT NULL,
+  content VARCHAR(1000) NOT NULL,
+  publish_source VARCHAR(16) NOT NULL,
+  created_by BIGINT NOT NULL,
+  created_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_custom_task_order (order_id),
+  KEY idx_custom_task_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='自定义任务';
+
+CREATE TABLE IF NOT EXISTS t_custom_task_tag (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  task_id BIGINT NOT NULL,
+  tag_id BIGINT NOT NULL,
+  tag_name VARCHAR(32) NOT NULL,
+  UNIQUE KEY uk_custom_task_tag (task_id, tag_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='任务标签快照';
+
+CREATE TABLE IF NOT EXISTS t_complaint_deduction (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  complaint_id BIGINT NOT NULL,
+  order_id BIGINT NOT NULL,
+  rider_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  amount_fen INT NOT NULL,
+  channel VARCHAR(16) NOT NULL DEFAULT 'MOCK',
+  created_by BIGINT NOT NULL,
+  created_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_complaint_deduction_complaint (complaint_id),
+  KEY idx_complaint_deduction_order (order_id),
+  KEY idx_complaint_deduction_rider (rider_id),
+  CONSTRAINT chk_complaint_deduction_amount CHECK (amount_fen > 0),
+  CONSTRAINT chk_complaint_deduction_channel CHECK (channel = 'MOCK')
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='投诉扣款赔付模拟账本';
 
 CREATE TABLE IF NOT EXISTS t_order_status_log (
   id            BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -164,7 +210,8 @@ CREATE TABLE IF NOT EXISTS t_complaint (
   handled_time DATETIME,
   sla_deadline DATETIME,
   compensation_fen INT NOT NULL DEFAULT 0,
-  created_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_complaint_order_status (order_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='投诉工单';
 
 CREATE TABLE IF NOT EXISTS t_complaint_action (

@@ -57,7 +57,14 @@ public final class ApiDtos {
                           String fromAddress, String toAddress, String goodsDesc,
                           int estimateFeeFen, int realFeeFen, Long riderId,
                           String pickupCode, String createdTime, String acceptedTime,
-                          String deliveredTime, String finishTime) {}
+                          String deliveredTime, String finishTime, boolean owner) {
+        public OrderVO(long id, String orderNo, String orderType, String status, String statusLabel,
+                       String fromAddress, String toAddress, String goodsDesc, int estimateFeeFen, int realFeeFen,
+                       Long riderId, String pickupCode, String createdTime, String acceptedTime, String deliveredTime, String finishTime) {
+            this(id, orderNo, orderType, status, statusLabel, fromAddress, toAddress, goodsDesc, estimateFeeFen, realFeeFen,
+                    riderId, pickupCode, createdTime, acceptedTime, deliveredTime, finishTime, false);
+        }
+    }
 
     // ---------- 骑手（对应详细设计 5.1/5.2）----------
     public record RiderRegisterReq(@NotBlank String mobile,
@@ -81,9 +88,9 @@ public final class ApiDtos {
                              String content) {}
 
     // ---------- 投诉 ----------
-    public record ComplaintReq(@NotNull Long orderId,
+    public record ComplaintReq(@NotNull @Min(1) Long orderId,
                                @NotBlank String type,
-                               String description) {}
+                               @NotBlank @jakarta.validation.constraints.Size(min = 1, max = 255) String description) {}
 
     // ---------- 后台 ----------
     public record StatsVO(long userCount, long riderCount, long orderCountToday,

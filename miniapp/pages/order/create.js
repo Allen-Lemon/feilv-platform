@@ -3,15 +3,17 @@ const { definePage, toast } = require('../../utils/page')
 const fmt = require('../../utils/format')
 const draftState = require('../../utils/draft')
 const addresses = require('../../utils/address')
-const initial = type => ({ orderType: type, fromContact: '', fromPhone: '', fromAddress: '', fromLng: null, fromLat: null, toContact: '', toPhone: '', toAddress: '', toLng: null, toLat: null, goodsDesc: '', remark: '' })
+const initial = type => Object.assign({ orderType: type, fromContact: '', fromPhone: '', fromAddress: '', fromLng: null, fromLat: null, toContact: '', toPhone: '', toAddress: '', toLng: null, toLat: null, goodsDesc: '', remark: '' }, type === 'CUSTOM' ? { taskTitle: '', taskContent: '', taskTagIds: '' } : {})
 definePage({
   data: { form: initial('SEND'), typeText: '跑腿送', distanceKm: '', weightKg: '1', busy: false, quote: null,
     fromContactEditing: false, toContactEditing: false, moreVisible: false, restored: false,
     goodsPlaceholder: '例如：文件一份、鲜花一束', goodsSuggestions: ['文件', '鲜花', '日用品'],
+    custom: false, taskTags: [], tagsLoading: false, tagsLoaded: false, tagsError: '', selectedTagCount: 0,
     addressOptions: [], addressLoading: false, addressError: '', fromAddressId: null, toAddressId: null, fromAddressIndex: 0, toAddressIndex: 0 },
   onLoad(q) {
     const type = fmt.types[q.type] ? q.type : 'SEND'
-    this.setData({ form: initial(type), typeText: fmt.types[type],
+    this._type = type
+    this.setData({ form: initial(type), typeText: fmt.types[type], custom: type === 'CUSTOM',
       goodsPlaceholder: type === 'BUY' ? '需要买什么、数量多少？' : type === 'ERRAND' ? '需要代办什么事？请简要说明' : '例如：文件一份、鲜花一束',
       goodsSuggestions: type === 'BUY' ? ['日用品', '食品饮料', '文具'] : type === 'ERRAND' ? ['代取快递', '代排队', '代送资料'] : ['文件', '鲜花', '日用品'] })
     this._version = 0
@@ -24,10 +26,54 @@ definePage({
     if (!session.token() || !draft || draft.owner !== owner || !draft.payload || draft.payload.orderType !== type) return
     const form = initial(type)
     for (const key of Object.keys(form)) if (draft.payload[key] !== undefined) form[key] = draft.payload[key]
-    if (!Number.isFinite(Number(draft.payload.distanceM)) || Number(draft.payload.distanceM) <= 0) return
-    this.safeSet({ form, distanceKm: String(Number(draft.payload.distanceM) / 1000), weightKg: String(draft.payload.weightKg || 1),
+    if (type !== 'CUSTOM' && (!Number.isFinite(Number(draft.payload.distanceM)) || Number(draft.payload.distanceM) <= 0)) return
+    this.safeSet({ form, distanceKm: Number(draft.payload.distanceM) > 0 ? String(Number(draft.payload.distanceM) / 1000) : '', weightKg: String(draft.payload.weightKg || 1),
       fromAddressId: draft.fromAddressId == null ? null : draft.fromAddressId, toAddressId: draft.toAddressId == null ? null : draft.toAddressId,
-      restored: true })
+      restored: true, selectedTagCount: type === 'CUSTOM' && form.taskTagIds ? String(form.taskTagIds).split(',').length : 0 })
+  },
+  persistCustomDraft() {
+    if (!this.data.custom || !session.token() || this._sessionRevision !== session.revision()) return
+    const owner = wx.getStorageSync('feilv_user_id')
+    const previous = wx.getStorageSync('native_draft')
+    const pending = wx.getStorageSync('native_pending_order')
+    // 编辑保存不能覆盖任何已创建或结果未知订单，也不能破坏另一类型的草稿。
+    if (previous && previous.owner === owner && (draftState.matches(pending, owner, previous.savedAt) || (!previous.payload || previous.payload.orderType !== 'CUSTOM'))) return
+    const payload = Object.assign({}, this.data.form, { distanceM: Number(this.data.distanceKm) * 1000, weightKg: Number(this.data.weightKg) })
+    wx.setStorageSync('native_draft', { owner, savedAt: draftState.timestamp(), payload, quote: null,
+      fromAddressId: this.data.fromAddressId, toAddressId: this.data.toAddressId })
+  },
+  async loadTaskTags() {
+    if (!this.data.custom || !session.token()) return
+    return this.run('tagsLoading', api => this.fetchTaskTags(api))
+  },
+  async fetchTaskTags(api) {
+    const revision = session.revision()
+    try {
+      const list = await api.taskTags()
+      if (this._dead || revision !== session.revision()) return
+      if (!Array.isArray(list)) throw new Error('任务标签返回异常，请重试')
+      const selected = String(this.data.form.taskTagIds || '').split(',').filter(Boolean)
+      const rows = list.filter(t => t && Number.isSafeInteger(t.id) && t.id > 0 && typeof t.name === 'string' && t.name.trim() && (t.enabled === true || t.enabled === 1))
+        .sort((a, b) => Number(a.sort || 0) - Number(b.sort || 0) || a.id - b.id)
+        .map(t => ({ id: t.id, name: t.name, selected: selected.includes(String(t.id)) }))
+      const valid = rows.filter(t => t.selected).map(t => t.id).sort((a, b) => a - b).join(',')
+      this.safeSet({ taskTags: rows, tagsLoaded: true, tagsError: '', 'form.taskTagIds': valid, selectedTagCount: rows.filter(t => t.selected).length })
+      if (valid !== selected.join(',')) this.invalidate()
+    } catch (e) {
+      this.safeSet({ taskTags: [], tagsLoaded: false, tagsError: e.message || '标签读取失败，请重试' })
+      throw e
+    }
+  },
+  tagChoice(e) {
+    if (this._working || !this.data.custom || !this.data.tagsLoaded) return
+    const id = Number(e.currentTarget.dataset.id)
+    const chosen = this.data.taskTags.find(t => t.id === id)
+    if (!chosen) return
+    if (!chosen.selected && this.data.selectedTagCount >= 5) return toast('最多选择5个标签')
+    const rows = this.data.taskTags.map(t => Object.assign({}, t, { selected: t.id === id ? !t.selected : t.selected }))
+    const ids = rows.filter(t => t.selected).map(t => t.id).sort((a, b) => a - b)
+    this.safeSet({ taskTags: rows, 'form.taskTagIds': ids.join(','), selectedTagCount: ids.length })
+    this.invalidate()
   },
   toggleContact(e) {
     const side = e.currentTarget.dataset.side
@@ -41,15 +87,19 @@ definePage({
     this.safeSet({ 'form.goodsDesc': value })
     this.invalidate()
   },
-  onShow() {
+  async onShow() {
     if (!session.requireLogin()) return
     if (this._defaultRevision !== session.revision()) {
       this._defaultRevision = session.revision()
       this._defaultApplied = false
       this._version++
+      this.safeSet({ form: initial(this._type), typeText: fmt.types[this._type], custom: this._type === 'CUSTOM' })
+      this.restoreDraft(this._type)
     }
     if (this._working) { this._showAfterRun = true; return }
-    return this.loadAddresses()
+    const revision = session.revision()
+    await this.loadAddresses()
+    if (revision === session.revision() && this.data.custom && !this._dead && this._visible) return this.loadTaskTags()
   },
   loadAddresses() {
     if (!session.token()) return
@@ -116,10 +166,10 @@ definePage({
       [side + 'ContactEditing']: !value.contact || !fmt.mobile(value.phone) })
     this.invalidate()
   },
-  invalidate() { this._version++; this.setData({ quote: null }); this._quotedPayload = null },
+  invalidate() { this._version++; this.setData({ quote: null }); this._quotedPayload = null; this.persistCustomDraft() },
   input(e) {
     const field = e.currentTarget.dataset.field
-    if (this._working || !['fromContact', 'fromPhone', 'toContact', 'toPhone', 'goodsDesc', 'remark'].includes(field)) return
+    if (this._working || !['fromContact', 'fromPhone', 'toContact', 'toPhone', 'goodsDesc', 'remark', 'taskTitle', 'taskContent'].includes(field)) return
     this.safeSet({ ['form.' + field]: e.detail.value })
     this.invalidate()
   },
@@ -141,6 +191,17 @@ definePage({
     ;['fromContact', 'fromPhone', 'fromAddress', 'toContact', 'toPhone', 'toAddress', 'goodsDesc', 'remark'].forEach(k => { data[k] = data[k].trim() })
     if (!data.fromContact || !data.toContact || !fmt.mobile(data.fromPhone) || !fmt.mobile(data.toPhone) || !data.fromAddress || !data.toAddress) throw new Error('请完整填写取送联系人、11位手机号与地址')
     if (data.fromAddress.length > 255 || data.toAddress.length > 255) throw new Error('完整地址不能超过255个字符，请修改地址簿')
+    if (data.orderType === 'CUSTOM') {
+      data.taskTitle = String(data.taskTitle || '').trim()
+      data.taskContent = String(data.taskContent || '').trim()
+      if (!data.taskTitle || data.taskTitle.length > 64) throw new Error('任务标题请填写1至64字')
+      if (!data.taskContent || data.taskContent.length > 1000) throw new Error('任务内容请填写1至1000字')
+      if (!this.data.tagsLoaded || this.data.tagsError) throw new Error('请先重试读取任务标签')
+      const ids = String(data.taskTagIds || '').split(',').filter(Boolean).map(Number)
+      if (ids.length > 5 || new Set(ids).size !== ids.length || ids.some(id => !this.data.taskTags.some(t => t.id === id))) throw new Error('任务标签已变化，请重新选择')
+      data.taskTagIds = ids.sort((a, b) => a - b).join(',')
+      data.goodsDesc = data.taskTitle
+    }
     if (!data.goodsDesc) throw new Error('请填写物品或代办事项')
     if (data.goodsDesc.length > 128 || data.remark.length > 255) throw new Error('物品说明最多128字，备注最多255字')
     const distance = Number(this.data.distanceKm)
@@ -166,7 +227,8 @@ definePage({
       return
     }
     const saved = { payload: data, quote: reuse ? previous.quote : null, owner, savedAt: reuse ? previous.savedAt : draftState.timestamp(),
-      fromAddressId: this.data.fromAddressId, toAddressId: this.data.toAddressId }
+      fromAddressId: this.data.fromAddressId, toAddressId: this.data.toAddressId,
+      tagNames: this.data.custom ? this.data.taskTags.filter(t => t.selected).map(t => t.name) : [] }
     wx.setStorageSync('native_draft', saved)
     return this.run('busy', async (api) => {
       const version = this._version

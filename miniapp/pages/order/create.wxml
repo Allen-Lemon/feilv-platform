@@ -30,12 +30,23 @@
 
   <view class="card requirements-card">
     <view class="section-head"><view class="section-title">任务需求</view><text class="section-note">简要说明即可</text></view>
+    <block wx:if="{{custom}}">
+      <view class="field"><label class="label" for="task-title">任务标题（1–64字）</label><input id="task-title" value="{{form.taskTitle}}" data-field="taskTitle" bindinput="input" maxlength="64" disabled="{{busy || addressLoading || tagsLoading}}" placeholder="用一句话说明需求"/></view>
+      <view class="field"><label class="label" for="task-content">任务内容（1–1000字）</label><textarea id="task-content" value="{{form.taskContent}}" data-field="taskContent" bindinput="input" maxlength="1000" disabled="{{busy || addressLoading || tagsLoading}}" placeholder="详细说明任务要求，请勿填写无关敏感信息"/></view>
+      <view class="label">任务标签 <text class="optional">选填，已选{{selectedTagCount}}/5</text></view>
+      <view class="loading-note" wx:if="{{tagsLoading}}">正在读取任务标签…</view>
+      <view class="error" wx:if="{{tagsError}}">{{tagsError}}<button class="secondary small" bindtap="loadTaskTags" disabled="{{busy || addressLoading || tagsLoading}}">重新读取标签</button></view>
+      <view class="goods-suggestions" wx:if="{{tagsLoaded}}"><button class="suggestion {{item.selected ? 'suggestion-selected' : ''}}" wx:for="{{taskTags}}" wx:key="id" data-id="{{item.id}}" bindtap="tagChoice" disabled="{{busy || addressLoading || tagsLoading}}">{{item.name}}</button></view>
+      <view class="measure-hint" wx:if="{{tagsLoaded && !taskTags.length}}">暂无可用标签，可不选继续。</view>
+    </block>
+    <block wx:else>
     <view class="field"><label class="label" for="goods-desc">{{form.orderType === 'BUY' ? '需要买什么？' : form.orderType === 'ERRAND' ? '需要帮你办什么？' : '这次送什么？'}}</label><input id="goods-desc" value="{{form.goodsDesc}}" data-field="goodsDesc" bindinput="input" maxlength="128" disabled="{{busy || addressLoading}}" placeholder="{{goodsPlaceholder}}"/></view>
     <view class="goods-suggestions"><button class="suggestion {{form.goodsDesc === item ? 'suggestion-selected' : ''}}" wx:for="{{goodsSuggestions}}" wx:key="*this" data-value="{{item}}" bindtap="goodsChoice" disabled="{{busy || addressLoading}}">{{item}}</button></view>
+    </block>
     <view class="field distance-field"><label class="label" for="distance-km">预估距离 <text class="optional">公里</text></label><input id="distance-km" type="digit" value="{{distanceKm}}" data-field="distanceKm" bindinput="number" disabled="{{busy || addressLoading}}" placeholder="请输入，例如 2.5"/><view class="measure-hint">距离为手工预估，非地图测距；大于0且不超过200公里。</view></view>
     <button class="more-toggle" bindtap="toggleMore" disabled="{{busy || addressLoading}}"><view class="grow"><view>更多要求 <text class="optional">选填</text></view><view class="more-summary">重量 {{weightKg}} 公斤{{form.remark ? ' · 已填写备注' : ' · 无备注'}}</view></view><text>{{moreVisible ? '收起 ↑' : '展开 ↓'}}</text></button>
     <view wx:if="{{moreVisible}}" class="more-fields"><view class="field"><label class="label" for="weight-kg">物品重量 <text class="optional">公斤</text></label><input id="weight-kg" type="number" value="{{weightKg}}" data-field="weightKg" bindinput="number" disabled="{{busy || addressLoading}}" maxlength="3"/><view class="measure-hint">默认按1公斤计费，实际超过请修改；支持1至100的整数。</view></view><view class="field"><label class="label" for="order-remark">备注</label><textarea id="order-remark" value="{{form.remark}}" data-field="remark" bindinput="input" maxlength="255" disabled="{{busy || addressLoading}}" placeholder="配送时间、轻拿轻放等特别要求"/></view></view>
   </view>
 
-  <view class="publish-actions"><view class="publish-note">按上方重量计费，费用将在下一页展示；确认前不会创建任务。</view><button class="primary" loading="{{busy}}" disabled="{{busy || addressLoading}}" bindtap="next">{{busy ? '正在核验与计价…' : '确认费用，下一步'}}</button><view class="footer-note">当前支付为 MOCK 演示，不发生真实扣款。</view></view>
+  <view class="publish-actions"><view class="publish-note">按上方重量计费，费用将在下一页展示；确认前不会创建任务。</view><button class="primary" loading="{{busy}}" disabled="{{busy || addressLoading || tagsLoading || custom && !tagsLoaded}}" bindtap="next">{{busy ? '正在核验与计价…' : '确认费用，下一步'}}</button><view class="footer-note">当前支付为 MOCK 演示，不发生真实扣款。</view></view>
 </view>

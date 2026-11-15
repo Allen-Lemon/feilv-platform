@@ -44,13 +44,25 @@ public class OrderService {
 
     // ---------- 计价 ----------
     public QuoteVO quote(QuoteReq req) {
-        OrderType.of(req.orderType());
+        if (OrderType.of(req.orderType()) == OrderType.CUSTOM) throw BizException.of(400, "请使用自定义任务计价接口");
         return pricingService.quote(req.distanceM(), req.weightKg());
     }
 
     // ---------- 下单（详细设计4.2：品类拦截→计价→建档） ----------
     @Transactional
     public OrderVO create(long userId, OrderCreateReq req) {
+        if (OrderType.of(req.orderType()) == OrderType.CUSTOM) throw BizException.of(400, "请使用自定义任务发布接口");
+        return createOrder(userId, req);
+    }
+
+    /** 仅自定义任务服务在同一事务内调用，任务元数据失败时订单同步回滚。 */
+    @Transactional
+    public OrderVO createCustom(long userId, OrderCreateReq req) {
+        if (OrderType.of(req.orderType()) != OrderType.CUSTOM) throw BizException.of(400, "自定义任务订单类型不匹配");
+        return createOrder(userId, req);
+    }
+
+    private OrderVO createOrder(long userId, OrderCreateReq req) {
         userProfileService.requireBoundMobile(userId);
         OrderType type = OrderType.of(req.orderType());
         banWordService.checkGoods(req.goodsDesc());   // 合规底线：禁发品类拦截
@@ -190,6 +202,8 @@ public class OrderService {
                 o.getCreatedTime() == null ? null : o.getCreatedTime().toString(),
                 o.getAcceptedTime() == null ? null : o.getAcceptedTime().toString(),
                 o.getDeliveredTime() == null ? null : o.getDeliveredTime().toString(),
-                o.getFinishTime() == null ? null : o.getFinishTime().toString());
+                o.getFinishTime() == null ? null : o.getFinishTime().toString(),
+                com.feilv.common.UserContext.get() != null && o.getUserId() != null
+                        && o.getUserId().equals(com.feilv.common.UserContext.get().id()));
     }
 }
