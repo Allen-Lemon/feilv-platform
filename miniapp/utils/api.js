@@ -7,6 +7,14 @@ function createApi(r) {
     login: (mobile, code) => r.post(root + '/auth/login', { mobile, code }, { public: true }),
     riderRegister: data => r.post(root + '/auth/rider-register', data, { public: true }),
     me: () => r.get(root + '/user/me'),
+    wallet: () => r.get(root + '/wallet'),
+    walletEntries: (page = 0) => r.get(root + '/wallet/entries', { page }),
+    withdrawals: (page = 0) => r.get(root + '/wallet/withdrawals', { page }),
+    requestWithdrawal: ({ amountFen, requestId }) => {
+      if (!Number.isSafeInteger(amountFen) || amountFen < 1 || amountFen > 100000000
+          || typeof requestId !== 'string' || requestId.length < 8 || requestId.length > 64) return Promise.reject(new Error('提现金额或请求编号无效'))
+      return r.post(root + '/wallet/withdrawals', { amountFen, requestId })
+    },
     updateProfile: nickname => r.put(root + '/user/profile', { nickname }),
     uploadAvatar: filePath => r.uploadAvatar(filePath),
     bindWechatPhone: code => r.post(root + '/user/wechat-phone', { code }),

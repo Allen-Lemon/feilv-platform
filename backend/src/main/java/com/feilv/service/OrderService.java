@@ -41,6 +41,10 @@ public class OrderService {
     private final MessageService messageService;
     private final RiderRepository riderRepository;
     private final UserProfileService userProfileService;
+    private final WalletAccountingService walletAccountingService;
+
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
 
     // ---------- 计价 ----------
     public QuoteVO quote(QuoteReq req) {
@@ -106,18 +110,36 @@ public class OrderService {
     // ---------- 状态机统一流转入口（功能设计文档8.1：单一事实源） ----------
     @Transactional
     public OrderMain changeStatus(OrderMain order, OrderStatus to, String operatorType, Long operatorId, String remark) {
+        // 所有履约入口共用订单锁；refresh确保并发完成/投诉等待后读取已提交状态，避免旧实体重复记账。
+        OrderMain supplied = order;
+        order = orderRepository.findByIdForUpdate(order.getId()).orElseThrow(() -> BizException.of(404, "订单不存在"));
+        entityManager.refresh(order, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
         OrderStatus from = order.getStatus();
+        if (from == OrderStatus.FINISHED && to == OrderStatus.FINISHED) {
+            // 已完成历史订单不在重复确认时补发钱包收入。
+            syncStatus(supplied, order);
+            return order;
+        }
         if (!from.canTo(to)) {
             throw BizException.of(4090, "订单当前[" + from.label() + "]状态不允许流转到[" + to.label() + "]");
         }
         if (to == OrderStatus.DELIVERED) order.setDeliveredTime(LocalDateTime.now());
         if (to == OrderStatus.FINISHED) order.setFinishTime(LocalDateTime.now());
         order.setStatus(to);
-        orderRepository.save(order);
+        orderRepository.saveAndFlush(order);
+        if (to == OrderStatus.FINISHED) walletAccountingService.settleFinishedOrder(order.getId());
+        syncStatus(supplied, order);
         saveLog(order.getId(), from, to, operatorType, operatorId, remark);
         messageService.notifyStatusChange(order.getOrderNo(), from.label(), to.label(),
                 "USER".equals(operatorType) ? "用户" : "骑手/平台");
         return order;
+    }
+
+    private void syncStatus(OrderMain supplied, OrderMain current) {
+        if (supplied == current) return;
+        supplied.setStatus(current.getStatus());
+        supplied.setDeliveredTime(current.getDeliveredTime());
+        supplied.setFinishTime(current.getFinishTime());
     }
 
     private void saveLog(Long orderId, OrderStatus from, OrderStatus to, String opType, Long opId, String remark) {
@@ -134,7 +156,8 @@ public class OrderService {
     // ---------- 取消（详细设计4.5.3：接单前免费，接单后按规则） ----------
     @Transactional
     public OrderVO cancel(long userId, long orderId, String reason) {
-        OrderMain order = mustGet(orderId);
+        OrderMain order = orderRepository.findByIdForUpdate(orderId).orElseThrow(() -> BizException.of(404, "订单不存在"));
+        entityManager.refresh(order, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
         if (order.getUserId() != userId) throw BizException.of(403, "无权操作他人订单");
         switch (order.getStatus()) {
             case WAIT_PAY -> messageService.notifyPush("用户", "取消成功，无需支付");
@@ -149,7 +172,8 @@ public class OrderService {
     // ---------- 用户确认收货（DELIVERED→FINISHED，触发分账） ----------
     @Transactional
     public OrderVO confirm(long userId, long orderId) {
-        OrderMain order = mustGet(orderId);
+        OrderMain order = orderRepository.findByIdForUpdate(orderId).orElseThrow(() -> BizException.of(404, "订单不存在"));
+        entityManager.refresh(order, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
         if (order.getUserId() != userId) throw BizException.of(403, "无权操作他人订单");
         if (order.getStatus() == OrderStatus.FINISHED) return toVO(order); // 幂等
         if (order.getStatus() != OrderStatus.DELIVERED) {

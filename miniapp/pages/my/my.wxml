@@ -11,6 +11,7 @@
   <view class="account-section-title">常用服务</view>
   <view class="card menu-card account-menu">
     <button class="menu-button" bindtap="orders" hover-class="tap-feedback"><view class="menu-icon">单</view><view class="grow"><view class="menu-title">我的订单</view><view class="menu-caption">查看配送进度与历史订单</view></view><view class="chevron"></view></button>
+    <button class="menu-button" bindtap="wallet" hover-class="tap-feedback"><view class="menu-icon">钱</view><view class="grow"><view class="menu-title">我的钱包</view><view class="menu-caption">钱包明细与 MOCK 模拟提现</view></view><view class="chevron"></view></button>
     <button class="menu-button" bindtap="address" hover-class="tap-feedback"><view class="menu-icon address-icon">址</view><view class="grow"><view class="menu-title">地址簿</view><view class="menu-caption">管理常用取件、收件地址</view></view><view class="chevron"></view></button>
     <button wx:if="{{isRider}}" class="menu-button" bindtap="workbench" hover-class="tap-feedback"><view class="menu-icon rider-icon">骑</view><view class="grow"><view class="menu-title">骑手工作台</view><view class="menu-caption">接单与配送工作入口</view></view><view class="chevron"></view></button>
     <button wx:else class="menu-button" bindtap="rider" hover-class="tap-feedback"><view class="menu-icon rider-icon">骑</view><view class="grow"><view class="menu-title">成为骑手</view><view class="menu-caption">了解并申请骑手入驻</view></view><view class="chevron"></view></button>

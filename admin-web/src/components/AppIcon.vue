@@ -8,6 +8,7 @@ const paths = {
   orders: 'M7 3h10l3 4v14H4V7l3-4z M4 7h16 M9 11h6 M9 15h6',
   riders: 'M5 15a4 4 0 1 0 0 .01 M19 15a4 4 0 1 0 0 .01 M5 15l5-8 5 8H5 M9 7h4 M15 4h3l1 11',
   wallet: 'M20 8V5H5a2 2 0 0 0 0 4h16v11H5a2 2 0 0 1-2-2V7 M21 12h-6v5h6 M17 14.5h.01',
+  withdrawal: 'M5 3h14v18H5z M8 7h8 M8 11h4 M9 16l2 2 5-5',
   marketing: 'M4 9h4l12-5v16L8 15H4V9z M8 15l2 6H6l-2-6 M8 9v6',
   content: 'M21 11a9 9 0 0 1-9 9H7l-5 2 2-5v-6a9 9 0 0 1 17 0z M8 10h8 M8 14h5',
   shield: 'M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3z M8 12l3 3 5-6',

@@ -19,7 +19,7 @@ class ComplaintServiceTest {
         complaints = mock(ComplaintRepository.class);
         service = new ComplaintService(complaints, mock(ComplaintActionRepository.class),
                 mock(ComplaintDeductionRepository.class), mock(ComplaintOrderLockRepository.class),
-                mock(PayRecordRepository.class), mock(RiderRepository.class), mock(AuditService.class));
+                mock(PayRecordRepository.class), mock(RiderRepository.class), mock(AuditService.class), mock(WalletAccountingService.class));
     }
 
     @Test

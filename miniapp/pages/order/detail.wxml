@@ -43,7 +43,7 @@
         请核对物品，收到后再确认收货。
       </view>
       <view class="status-description" wx:elif="{{order.status === 'FINISHED'}}">
-        服务已完成，可评价骑手或反馈问题。
+        服务已完成，可评价骑手或反馈问题。今后订单完成时，收入按结算规则记入承接者钱包（MOCK）；历史订单是否已入账，以钱包明细为准，不保证旧订单有余额。
       </view>
       <view class="status-description" wx:elif="{{order.status === 'CANCELED'}}">
         本单已取消，退款仅为模拟流程。
@@ -194,7 +194,7 @@
     <view class="card order-panel secondary-panel">
       <view class="panel-title">售后与投诉</view>
       <view class="form-note">仅订单发布者可申请，自已接单起受理；审核赔付以服务端规则及本单骑手可分账限额为准。</view>
-      <view class="mock-note"><text class="mock-badge">MOCK</text><text>赔付仅记账，未真实退款或转账。</text></view>
+      <view class="mock-note"><text class="mock-badge">MOCK</text><text>赔付模拟记入订单发布者钱包，未真实退款或转账。</text></view>
       <button class="outline-button" bindtap="loadComplaints" disabled="{{busy || loading || complaintsLoading}}">{{complaintsLoading ? '正在刷新…' : '刷新投诉记录'}}</button>
       <view class="error" wx:if="{{complaintsError}}">{{complaintsError}}，请刷新核实，不能据此认定没有投诉。</view>
       <view class="feedback-result" wx:if="{{activeComplaint}}">本单有活动工单，请等待处理，暂不可重复提交。</view>
@@ -204,7 +204,7 @@
         <view class="panel-title">{{item.statusText}}</view><view class="task-content">{{item.description}}</view>
         <view class="form-note">提交时间：{{item.createdText}}</view>
         <view class="task-content" wx:if="{{item.result}}">处理结果：{{item.result}}</view>
-        <view class="form-note">赔付金额：¥{{item.compensationText}}（MOCK 记账）</view>
+        <view class="form-note">赔付金额：¥{{item.compensationText}}（MOCK 钱包模拟入账）</view>
         <view class="form-note" wx:if="{{item.handledText !== '暂无'}}">处理时间：{{item.handledText}}</view>
       </view>
       <view class="feedback-result" wx:if="{{ticket}}">{{ticket}}</view>

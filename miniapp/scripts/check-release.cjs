@@ -35,4 +35,4 @@ if (errors.length) {
   console.log('PASS release config: native project, real AppID, official HTTPS origin, locked server, domain check and minification enabled.')
 }
 console.log('人工必核：微信后台 request/uploadFile 合法域名 https://xt.allms.cn、头像公开读取及持久化、后端匹配 AppID/AppSecret、头像昵称手机号隐私指引和定位权限、真机登录与下单绑定门禁验收。')
-console.log('注意：当前支付为 MOCK，短信/骑手审核仍有演示逻辑；本检查通过不等于生产业务或微信审核通过。')
+console.log('注意：当前支付、钱包赔付和提现均为 MOCK，无真实微信转账或到账；短信/骑手审核仍有演示逻辑，本检查通过不等于生产业务或微信审核通过。')

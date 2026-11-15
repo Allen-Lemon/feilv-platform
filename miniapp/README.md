@@ -59,8 +59,22 @@ npm run check:release --prefix miniapp
 - 仅自定义详情读取 `GET /api/v1/orders/{id}/custom-task`，返回 `TaskVO` 或 `null`。TaskVO 包含 `id,orderId,orderNo,status,statusLabel,userId,title,content,tags:[{id,name}],publishSource,createdBy,createdTime,amountFen,fromAddress,toAddress`。身份和来源等内部字段不额外展示；接口失败须可重试，不能伪造任务内容。
 - 投诉由订单发布者提出，不是骑手承运操作。订单状态为 `ACCEPTED/PICKING/DELIVERING/DELIVERED/FINISHED` 时可申请，提交保留 `POST /api/v1/complaints {orderId,type,description}`，描述去空白后为1–255字，返回 `ticketId,sla`。角色并不等同归属：骑手也可能是发布者。优先使用 `OrderVO.owner` 判断当前账号是否发布者；旧接口缺失该字段时，自定义单使用 TaskVO.userId 在页面私有内存判断，普通单仅对 USER 兼容开放、仍以后端403拒绝为准。不增加发布者身份展示。
 - 订单详情通过 `GET /api/v1/orders/{id}/complaints` 读取服务端工单列表，展示 `OPEN/PROCESSING/APPROVED/REJECTED/DONE` 状态、问题、处理原因与赔付金额。每订单最多一条活动工单（`OPEN/PROCESSING`）；有活动单时隐藏重复提交表单。`APPROVED/REJECTED/DONE` 为已终结，可再次提出新问题，但累计限额由后端控制。读取失败明确提示并提供重试，不能冒充“暂无投诉”；提交描述在失败时保留。
-- 审核通过后由后端扣减骑手**该订单**可分账金额赔付发布者，累计扣减和额度以服务端为准。当前资金为 **MOCK，仅记账，未真实退款或转账**。用户界面不展示内部骑手/经办人编号、扣款审计字段或内部操作明细；工单与赔付刷新不靠本地假状态。
+- 审核通过后由后端扣减骑手**该订单**可分账金额赔付发布者，累计扣减和额度以服务端为准。当前赔付为 **MOCK，模拟记入订单发布者钱包，未真实退款或转账**。用户界面不展示内部骑手/经办人编号、扣款审计字段或内部操作明细；工单与赔付刷新不靠本地假状态。
 - 后端须配套实现以上接口后才可联调；本地 wx-mock 验证不代表接口已部署、真实资金结算或微信审核通过。
+
+## 钱包与 MOCK 模拟提现
+
+- 入口为“我的 → 我的钱包”，只新增普通菜单行，不增加余额统计或KPI；`pages/wallet/wallet` 四件套提供余额表单、收支明细/提现记录 tabs，均为原生列表，不使用图表或npm依赖。USER/RIDER均只查看当前JWT所属钱包，不传 `userId/role`，授权与金额最终由后端决定。
+- `wallet()` → `GET /api/v1/wallet`：`{userId,availableFen,frozenFen,debtFen,totalIncomeFen,totalWithdrawnFen,channel:'MOCK',withdrawAllowed}`。仅显示可用、冻结、待抵扣欠款，不把查询失败伪造成0；每次进入及提交成功后实时读取，不缓存钱包余额。
+- `walletEntries(page=0)` → `GET /api/v1/wallet/entries?page=0`，每页15条，Spring Page `{content,number,last,...}`；EntryVO `{id,type,amountFen,availableAfterFen,frozenAfterFen,debtAfterFen,orderId,complaintId,withdrawalId,remark,createdTime}`。金额保留正负，展示必要关联编号、变动后三项余额与说明；不推算或制造本地收入。
+- `withdrawals(page=0)` → `GET /api/v1/wallet/withdrawals?page=0`，每页15条；WithdrawalVO `{id,userId,amountFen,status,requestId,reason,reviewedBy,reviewedTime,createdTime,channel:'MOCK'}`。状态为 `PENDING/APPROVED/REJECTED`，分别明确“待审核（已冻结）/已通过·MOCK模拟出账/已驳回（解冻先抵欠款）”；模板不透传内部经办人身份，归属不符响应不展示。两类分页独立，失败重试同页，切号/hide/unload及重入前的旧响应不能追加或推进新列表。
+- `requestWithdrawal({amountFen,requestId})` → `POST /api/v1/wallet/withdrawals`，只发送这两个字段，返回 WithdrawalVO。元输入仅接受十进制文本、最多两位小数，以整数元和小数位拼成整数分，范围 **1–100000000分（0.01–1000000元）**，不使用浮点元乘100/舍入；拒绝负数、多位小数、NaN/科学计数和超限。
+- 今后订单完成触发承接者按**原分账减本单投诉赔付**的模拟结算；投诉赔付模拟记入发布者钱包。历史订单是否已入账以服务端明细为准，不保证旧订单补记或有余额。待抵扣欠款是投诉扣减未扣清的部分，不是可用资金；后续入账和解冻先抵扣欠款，欠款未清不能申请新提现。
+- 新提现需实时钱包、手机号绑定状态及服务端 `withdrawAllowed` 允许，可用不足/有欠款/未加载均禁用；未绑手机引导 `/pages/profile/profile?from=wallet&mode=phone`；服务端403拒绝后重新读取钱包和me核实绑定状态，不假设4091、不把任意403判作未绑定。这些只是UI预检，不能替代服务端原子判定。已有不确定申请允许按原key核实，即使当前余额已冻结或有新欠款也不另建申请。
+- 确认弹窗明确冻结的**原金额**及 **MOCK、非真实微信转账、不代表真钱到账**。申请冻结余额，后台 approve 仅模拟出账，reject 解冻先抵欠款。不调用真实微信支付/转账API，小程序没有审核按钮，不声称真实资金到账；后端审核及记账不在本目录实现。
+- 幂等：新申请只生成一次独立随机UUID（优先 `wx.getRandomValues`，不可用时为时间+多段随机值，降级值仅用于幂等，不承担安全鉴权），**发送前**将 `{owner,amountFen,requestId}` 写入专用 `native_pending_withdrawal` 键。存储失败不发送。网络异常、未知/不匹配结果保留原key和原金额，锁定编辑，只能重试原申请；已确认响应须匹配owner/key/金额后才清除并实时刷新钱包与两类记录，不本地加减余额。
+- hide/unload、切号后的旧弹窗/随机数/网络回调不能保存、删除或覆盖任何待核实标记；以owner+会话revision+页面代次及各列表请求身份隔离，无钱包轮询定时器。退出/切号/401会清除专用key，但不能取消服务端申请或冻结；重新登录须先核对提现记录，勿对已冻结申请另建重复请求。手机号与钱包金额不缓存。
+- `scripts/test-native.cjs` 的wx-mock新增钱包四端点、元分边界、Page15/重试/终态、一次冻结与同key网络重试、错误不假余额、owner/revision/lifecycle隔离和展示最小化回归。mock“冻结一次”用于验证客户端复用幂等键，**不证明后端已部署、数据库幂等或真实微信到账**。
 
 ## 地址选择
 
@@ -83,7 +97,7 @@ npm run check:release --prefix miniapp
 
 ## 能力边界
 
-已覆盖微信登录/短信备用、地址簿、送买办及自定义任务发布/标签选择与报价、MOCK支付、订单列表/任务详情、评价、投诉状态/处理结果与MOCK赔付展示、轨迹、骑手入驻与工作台。自定义任务与投诉查询依赖配套后端接口。
+已覆盖微信登录/短信备用、地址簿、送买办及自定义任务发布/标签选择与报价、MOCK支付、订单列表/任务详情、评价、投诉状态/处理结果与MOCK钱包赔付展示、钱包/收支明细/模拟提现及提现记录、轨迹、骑手入驻与工作台。自定义任务、投诉及钱包均依赖配套后端接口。
 
 真实微信授权需配套后端凭据。微信及短信登录后在**同一登录页**以新会话获取 `me`，手机号未绑定或昵称未完善时直接展示头像、昵称及手机号表单，已完整则自动返回，不再跳转独立资料页。头像通过 `chooseAvatar` 主动选择，昵称通过 `type="nickname"` 主动选择或填写，点击一次“保存并继续”即可依次上传头像、保存昵称并核验资料。微信不支持一次登录授权自动获取真实头像昵称，手机号也需单独授权；微信默认昵称不算已完善。“我的”保留独立资料编辑入口，可单独保存头像、昵称。头像上传5MB以内 JPEG/PNG；登录页与资料页复用 `utils/profile-page.js` 的授权、校验和账户隔离逻辑。头像可保留默认，不影响浏览或下单。拒绝手机号授权保留登录态、可返回浏览，但**下单必须绑定手机号并保存非空昵称**。创建页继续和确认页提交均实时查询服务端 `me`，门禁失败保留草稿；服务端业务码 `4091` 也回到完善资料。手机号只展示服务端脱敏值，不缓存；头像只缓存服务端公开路径，不缓存临时路径。昵称不是微信号或真实姓名，手机号授权 code 与登录 code 不可混用。
 

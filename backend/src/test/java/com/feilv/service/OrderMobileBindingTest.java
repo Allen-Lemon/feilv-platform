@@ -28,6 +28,7 @@ class OrderMobileBindingTest {
     @MockBean MessageService messages;
     @MockBean WechatConfigService settings;
     @MockBean WechatPhoneClient phone;
+    @MockBean WalletAccountingService wallet;
 
     @Test void unboundDirectApiCallerCannotCreateAnyOrder() {
         User user = users.saveAndFlush(new User());

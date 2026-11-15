@@ -328,7 +328,7 @@ test('layout registers new icons and authorized menus without granting ordinary 
   const ordinary = harness(t, 'Layout', { overrides: { profile: async () => ({ menus: [{ code: 'tasks', path: '/tasks', name: '自定义任务' }], roles: [] }) } }); await tick()
   assert.deepEqual(snapshot(ordinary.provided.adminMenuCodes.value), ['tasks']); assert.equal(ordinary.state.iconFor('tasks'), 'orders'); assert.equal(ordinary.state.iconFor('complaints'), 'shield')
   const superAdmin = harness(t, 'Layout', { overrides: { profile: async () => ({ menus: [], roles: ['SUPER_ADMIN'] }) } }); await tick()
-  assert.deepEqual(snapshot(superAdmin.provided.adminMenuCodes.value), ['tasks', 'complaints', 'wechat-settings'])
+  assert.deepEqual(snapshot(superAdmin.provided.adminMenuCodes.value), ['tasks', 'complaints', 'wallets', 'withdrawals', 'wechat-settings'])
   const failed = harness(t, 'Layout', { overrides: { profile: async () => { throw new Error('403') } } }); await tick(); assert.deepEqual(snapshot(failed.provided.adminMenuCodes.value), [])
   const router = readFileSync(path.join(root, 'src/router/index.js'), 'utf8')
   assert.match(router, /path: 'tasks'.*title: '自定义任务', menu: 'tasks'/); assert.match(router, /path: 'complaints'.*title: '投诉审核', menu: 'complaints'/)

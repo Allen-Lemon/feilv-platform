@@ -34,7 +34,7 @@ const visibleMenus = ref(storedMenus())
 // 跨页面入口只使用最新 profile 的授权，加载中或失败时不开放跳转。
 const authorizedMenuCodes = ref([])
 provide('adminMenuCodes', authorizedMenuCodes)
-const icons = { dashboard: 'grid', orders: 'orders', tasks: 'orders', complaints: 'shield', users: 'riders', riders: 'riders', settlements: 'wallet', marketing: 'marketing', content: 'content', risk: 'shield', system: 'settings', 'wechat-settings': 'shield' }
+const icons = { dashboard: 'grid', orders: 'orders', tasks: 'orders', complaints: 'shield', users: 'riders', riders: 'riders', settlements: 'wallet', wallets: 'wallet', withdrawals: 'withdrawal', marketing: 'marketing', content: 'content', risk: 'shield', system: 'settings', 'wechat-settings': 'shield' }
 const iconFor = (code) => icons[code] || 'grid'
 adminApi.profile().then((data) => {
   nickname.value = data.nickname || '管理员'
@@ -44,6 +44,8 @@ adminApi.profile().then((data) => {
     for (const menu of [
       { code: 'tasks', name: '自定义任务', path: '/tasks' },
       { code: 'complaints', name: '投诉审核', path: '/complaints' },
+      { code: 'wallets', name: '用户钱包', path: '/wallets' },
+      { code: 'withdrawals', name: '提现审核', path: '/withdrawals' },
       { code: 'wechat-settings', name: '微信配置', path: '/wechat-settings' }
     ]) if (!visibleMenus.value.some(m => m.code === menu.code)) visibleMenus.value.push(menu)
   }

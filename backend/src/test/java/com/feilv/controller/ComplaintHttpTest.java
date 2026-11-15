@@ -46,6 +46,8 @@ class ComplaintHttpTest {
     @Autowired AdminMenuRepository menus;
     @Autowired AdminRoleMenuRepository roleMenus;
     @Autowired EntityManager em;
+    // 此套件隔离既有投诉JSON契约；钱包与真实完成/投诉整合由OrderWalletIntegrationTest覆盖。
+    @org.springframework.boot.test.mock.mockito.MockBean com.feilv.service.WalletAccountingService wallet;
     User publisher, riderUser, outsider, admin;
     Rider rider;
     AdminMenu complaintMenu, settlementMenu;

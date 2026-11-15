@@ -1722,6 +1722,327 @@ test('custom and complaint disclosure: templates and legal copy retain limits, r
   const env = environment(); const legal = env.page('pages/legal/legal'); legal.onLoad({ kind: 'privacy' }); const privacy = legal.data.sections.map(s => s.text).join(' ')
   for (const text of ['自定义任务', '投诉', '标签', 'MOCK', '草稿']) assert.ok(privacy.includes(text))
 })
+function walletValue(patch = {}) {
+  return Object.assign({ userId: 1, availableFen: 5000, frozenFen: 0, debtFen: 0, totalIncomeFen: 5000, totalWithdrawnFen: 0, channel: 'MOCK', withdrawAllowed: true }, patch)
+}
+function walletEntry(patch = {}) {
+  return Object.assign({ id: 1, type: 'ORDER_INCOME', amountFen: 5000, availableAfterFen: 5000, frozenAfterFen: 0, debtAfterFen: 0, orderId: 90, complaintId: null, withdrawalId: null, remark: '订单结算（MOCK）', createdTime: '2026-11-15T10:00:00' }, patch)
+}
+function withdrawalValue(patch = {}) {
+  return Object.assign({ id: 1, userId: 1, amountFen: 1234, status: 'PENDING', requestId: 'test-request-001', reason: '', reviewedBy: null, reviewedTime: null, createdTime: '2026-11-15T10:10:00', channel: 'MOCK' }, patch)
+}
+function walletApi(overrides = {}) {
+  return Object.assign({
+    async wallet() { return walletValue() }, async me() { return { userId: 1, mobileBound: true } },
+    async walletEntries(page) { return { number: page, content: [], last: true } },
+    async withdrawals(page) { return { number: page, content: [], last: true } },
+    async requestWithdrawal(value) { return withdrawalValue(value) }
+  }, overrides)
+}
+async function walletPage(env, overrides) {
+  env.authenticated()
+  const page = env.page('pages/wallet/wallet', walletApi(overrides))
+  page.onLoad({}); await page.onShow()
+  return page
+}
+test('wallet API: all four endpoints use JWT, page0 default, no userId or role and scoped calls', async () => {
+  const env = environment(); env.authenticated('RIDER')
+  const api = env.load(path.join(native, 'utils/api.js'))
+  const pending = [api.wallet(), api.walletEntries(), api.withdrawals(2), api.requestWithdrawal({ amountFen: 1, requestId: 'request-001', userId: 999, role: 'ADMIN' })]
+  const paths = ['/wallet', '/wallet/entries', '/wallet/withdrawals', '/wallet/withdrawals']
+  env.calls.requests.forEach((req, index) => {
+    assert.equal(req.url, 'https://xt.allms.cn/api/v1' + paths[index]); assert.equal(req.header.Authorization, 'Bearer token-1')
+    assert.equal(req.method, index === 3 ? 'POST' : 'GET'); assert.equal('userId' in req.data, false); assert.equal('role' in req.data, false)
+    if (index === 1) assert.equal(req.data.page, 0)
+    if (index === 2) assert.equal(req.data.page, 2)
+    if (index === 3) { assert.equal(req.data.amountFen, 1); assert.equal(req.data.requestId, 'request-001') }
+    req.success({ statusCode: 200, data: { code: 0, data: index === 0 ? walletValue() : index === 3 ? withdrawalValue() : { content: [], last: true } } })
+  })
+  await Promise.all(pending)
+  const session = env.load(path.join(native, 'utils/session.js')); const bound = api.forSession(session.revision()); session.clear()
+  await assert.rejects(bound.wallet(), /账户状态/); await assert.rejects(bound.walletEntries(0), /账户状态/)
+  await assert.rejects(bound.withdrawals(0), /账户状态/); await assert.rejects(bound.requestWithdrawal({ amountFen: 1, requestId: 'request-002' }), /账户状态/)
+  assert.equal(env.calls.requests.length, 4)
+})
+test('wallet amount: exact decimal string to integer fen boundaries, no float rounding or invalid input', async () => {
+  const env = environment(); const wallet = env.load(path.join(native, 'utils/wallet.js'))
+  for (const [text, fen] of [['0.01', 1], ['0.29', 29], ['1', 100], ['1.1', 110], ['12.34', 1234], ['999999.99', 99999999], ['1000000', 100000000], ['1000000.00', 100000000]]) {
+    assert.equal(wallet.amountFen(text), fen); assert.equal(wallet.fenText(fen), text.includes('.') && text.split('.')[1].length === 2 ? text : fen === 110 ? '1.10' : fen === 100 ? '1.00' : '1000000.00')
+  }
+  for (const text of ['', '0', '0.00', '-1', '-0.01', '+1', '.01', '1.', '1.001', '0.009', 'NaN', 'Infinity', '1e2', '1,000', ' 1.00', '1.00 ', '1000000.01', '1000001', '999999999999999999', '１２.３４', null, undefined, NaN, 0.01]) assert.throws(() => wallet.amountFen(text), /金额/)
+  assert.equal(wallet.fenText(-29), '-0.29'); assert.equal(wallet.fenText(0), '0.00')
+  for (const [type, label] of [['WITHDRAWAL_FREEZE', '提现冻结'], ['WITHDRAWAL_APPROVED', '提现模拟出账'], ['WITHDRAWAL_REJECTED', '提现驳回解冻']]) assert.equal(wallet.entryView(walletEntry({ type })).typeText, label)
+  assert.throws(() => wallet.fenText(NaN)); assert.throws(() => wallet.fenText(undefined))
+  const api = env.load(path.join(native, 'utils/api.js'))
+  for (const amountFen of [0, -1, 1.01, NaN, Infinity, 100000001, '1']) await assert.rejects(api.requestWithdrawal({ amountFen, requestId: 'request-001' }))
+  for (const requestId of ['', '1234567', 'x'.repeat(65), 12345678]) await assert.rejects(api.requestWithdrawal({ amountFen: 1, requestId }))
+  assert.equal(env.calls.requests.length, 0)
+})
+test('wallet request IDs: wx random UUID once; unsupported or failed platform has bounded idempotency fallback', async () => {
+  let randomCalls = 0
+  const env = environment({ getRandomValues(options) { randomCalls++; assert.equal(options.length, 16); options.success({ randomValues: new Uint8Array(Array.from({ length: 16 }, (_, i) => i)).buffer }) } })
+  const wallet = env.load(path.join(native, 'utils/wallet.js'))
+  assert.equal(await wallet.requestId(), '00010203-0405-4607-8809-0a0b0c0d0e0f'); assert.equal(randomCalls, 1)
+  for (const getRandomValues of [undefined, options => options.fail({}), () => { throw new Error('unsupported') }, options => options.success({ randomValues: [] })]) {
+    const fallback = environment({ getRandomValues }).load(path.join(native, 'utils/wallet.js'))
+    const one = await fallback.requestId(); const two = await fallback.requestId()
+    assert.match(one, /^wd-/); assert.ok(one.length >= 8 && one.length <= 64); assert.notEqual(one, two)
+  }
+})
+test('wallet loading: enter and reenter read live wallet/phone/records, My only links with no extra me request', async () => {
+  const env = environment(); let loads = 0
+  const page = await walletPage(env, { async wallet() { return walletValue({ availableFen: ++loads * 100 }) } })
+  assert.equal(page.data.wallet.availableText, '1.00'); assert.equal(page.data.mobileBound, true)
+  page.onHide(); await page.onShow(); assert.equal(page.data.wallet.availableText, '2.00')
+  assert.equal([...env.storage.keys()].some(k => /balance|wallet/i.test(k)), false)
+  const my = env.page('pages/my/my'); my.onLoad({}); const count = env.calls.requests.length
+  my.wallet(); assert.equal(env.calls.navigation.at(-1).url, '/pages/wallet/wallet'); assert.equal(env.calls.requests.length, count)
+  env.load(path.join(native, 'utils/session.js')).clear(); my.wallet(); assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
+})
+test('wallet errors: failed or invalid wallet never fabricates zero; retry loads truth and failures clear stale amount', async () => {
+  const env = environment(); let fail = true
+  const page = await walletPage(env, { async wallet() { if (fail) throw new Error('网络断开'); return walletValue() } })
+  assert.equal(page.data.wallet, null); assert.match(page.data.error, /网络断开/)
+  page.input(event('amount', '1.00')); assert.equal(page.data.canSubmit, false)
+  fail = false; await page.retryWallet(); assert.equal(page.data.wallet.availableText, '50.00'); assert.equal(page.data.canSubmit, true)
+  fail = true; await page.retryWallet(); assert.equal(page.data.wallet, null); assert.equal(page.data.canSubmit, false)
+  const wallet = env.load(path.join(native, 'utils/wallet.js'))
+  for (const bad of [null, walletValue({ userId: 2 }), walletValue({ availableFen: '0' }), walletValue({ debtFen: -1 }), walletValue({ frozenFen: NaN }), walletValue({ channel: 'WX' }), walletValue({ withdrawAllowed: undefined }), walletValue({ totalIncomeFen: undefined })]) assert.throws(() => wallet.walletView(bad, 1))
+})
+test('wallet eligibility: balance, debt, withdrawAllowed and phone status all gate NEW requests; server may still deny', async () => {
+  for (const patch of [{ availableFen: 0 }, { availableFen: 99 }, { debtFen: 1 }, { withdrawAllowed: false }]) {
+    const env = environment(); let posted = 0
+    const page = await walletPage(env, { async wallet() { return walletValue(patch) }, async requestWithdrawal() { posted++ } })
+    page.input(event('amount', '1.00')); assert.equal(page.data.canSubmit, false); await page.submit(); assert.equal(posted, 0)
+  }
+  for (const mobileBound of [false, undefined]) {
+    const env = environment(); const page = await walletPage(env, { async me() { return { userId: 1, mobileBound } } })
+    page.input(event('amount', '1')); assert.equal(page.data.canSubmit, false); if (mobileBound === undefined) assert.ok(page.data.profileError)
+    page.profile(); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=wallet&mode=phone')
+  }
+  const env = environment(); const page = await walletPage(env, { async requestWithdrawal() { throw Object.assign(new Error('服务端拒绝：欠款未清'), { code: 409 }) } })
+  page.input(event('amount', '1')); assert.equal(page.data.canSubmit, true); await page.submit()
+  assert.match(page.data.submitError, /服务端拒绝/); assert.equal(page.data.wallet.availableText, '50.00'); assert.ok(env.storage.get('native_pending_withdrawal'))
+})
+test('wallet server 403: refresh me to expose phone guidance without guessing a business code or treating every denial as unbound', async () => {
+  for (const mobileBound of [false, true]) {
+    const env = environment(); let meCalls = 0; let posts = 0
+    const page = await walletPage(env, { async me() { meCalls++; return { userId: 1, mobileBound: meCalls === 1 || mobileBound } },
+      async requestWithdrawal() { posts++; throw Object.assign(new Error(mobileBound ? '账户当前不可提现' : '请先绑定手机号'), { status: 403, code: 403 }) } })
+    page.input(event('amount', '1')); await page.submit()
+    assert.equal(posts, 1); assert.equal(meCalls, 2); assert.equal(page.data.mobileBound, mobileBound); assert.ok(page.data.submitError)
+    assert.ok(env.storage.get('native_pending_withdrawal')); assert.equal(page.data.busy, false)
+    if (!mobileBound) { page.profile(); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=wallet&mode=phone') }
+  }
+})
+test('wallet submit: modal states exact frozen amount and MOCK boundary, duplicate clicks freeze once and refresh live', async () => {
+  let modal; let randomCalls = 0; let resolvePost; let posts = 0; let loads = 0; let entriesLoads = 0; let recordLoads = 0
+  const env = environment({ showModal(options) { modal = options; options.success({ confirm: true }) }, getRandomValues(options) { randomCalls++; options.success({ randomValues: new Uint8Array(16).buffer }) } })
+  const page = await walletPage(env, {
+    async wallet() { loads++; return walletValue({ availableFen: posts ? 3766 : 5000, frozenFen: posts ? 1234 : 0 }) },
+    async walletEntries(page) { entriesLoads++; return { number: page, content: posts ? [walletEntry({ type: 'WITHDRAW_FREEZE', amountFen: -1234, availableAfterFen: 3766, frozenAfterFen: 1234, withdrawalId: 1 })] : [], last: true } },
+    async withdrawals(page) { recordLoads++; return { number: page, content: posts ? [withdrawalValue()] : [], last: true } },
+    requestWithdrawal(value) { posts++; const saved = env.storage.get('native_pending_withdrawal'); assert.equal(saved.amountFen, 1234); assert.equal(saved.owner, '1'); assert.equal(saved.requestId, value.requestId); return new Promise(resolve => { resolvePost = () => resolve(withdrawalValue(value)) }) }
+  })
+  page.input(event('amount', '12.34')); const submitting = page.submit(); await flush(); await page.submit()
+  assert.equal(posts, 1); assert.equal(randomCalls, 1); assert.ok(modal.content.includes('¥12.34')); assert.ok(modal.content.includes('冻结')); assert.ok(modal.content.includes('MOCK')); assert.ok(modal.content.includes('非真实微信转账')); assert.ok(modal.content.includes('不代表真钱到账'))
+  resolvePost(); await submitting
+  assert.equal(env.storage.has('native_pending_withdrawal'), false); assert.equal(page.data.pending, null); assert.equal(page.data.amount, '')
+  assert.equal(page.data.wallet.availableText, '37.66'); assert.equal(page.data.wallet.frozenText, '12.34'); assert.equal(page.data.entries[0].amountText, '-12.34')
+  assert.equal(loads, 2); assert.equal(entriesLoads, 2); assert.equal(recordLoads, 2); assert.equal(page.data.busy, false)
+  assert.equal([...env.storage.keys()].some(k => /balance/i.test(k)), false)
+})
+test('wallet uncertain network retry: same key and amount survive page recreation, no duplicate mock freeze even with debt', async () => {
+  const env = environment(); const seen = new Map(); const posted = []; let freezeCount = 0; let availableFen = 5000
+  const mock = walletApi({
+    async wallet() { return walletValue({ availableFen, frozenFen: freezeCount * 1234, debtFen: freezeCount ? 50 : 0, withdrawAllowed: !freezeCount }) },
+    async requestWithdrawal(value) {
+      posted.push(value)
+      if (!seen.has(value.requestId)) { seen.set(value.requestId, withdrawalValue(value)); freezeCount++; availableFen -= value.amountFen; throw new Error('网络异常：服务端响应丢失') }
+      return seen.get(value.requestId)
+    }
+  })
+  env.authenticated(); let page = env.page('pages/wallet/wallet', mock); page.onLoad({}); await page.onShow()
+  page.input(event('amount', '12.34')); await page.submit(); const saved = env.storage.get('native_pending_withdrawal')
+  assert.ok(saved); assert.match(page.data.submitError, /原编号与金额已保留/); assert.equal(page.data.wallet.availableText, '50.00', 'never invent a freeze locally')
+  page.onUnload(); page = env.page('pages/wallet/wallet', mock); page.onLoad({}); await page.onShow()
+  assert.equal(page.data.wallet.debtText, '0.50'); assert.equal(page.data.canSubmit, false); assert.equal(page.data.amount, '12.34')
+  page.input(event('amount', '9.99')); assert.equal(page.data.amount, '12.34')
+  await page.submit(); assert.equal(posted.length, 2); assert.equal(posted[0].requestId, posted[1].requestId); assert.equal(posted[0].amountFen, posted[1].amountFen)
+  assert.equal(freezeCount, 1); assert.equal(availableFen, 3766); assert.equal(env.storage.has('native_pending_withdrawal'), false)
+  assert.equal(page.data.wallet.availableText, '37.66'); assert.equal(page.data.wallet.debtText, '0.50')
+})
+test('wallet cancellation or failed pending persistence never sends a withdrawal', async () => {
+  const env = environment({ showModal(options) { options.success({ confirm: false }) } }); let posted = 0
+  const page = await walletPage(env, { async requestWithdrawal() { posted++ } }); page.input(event('amount', '1'))
+  await page.submit(); assert.equal(posted, 0); assert.equal(env.storage.has('native_pending_withdrawal'), false)
+  env.wx.showModal = options => options.success({ confirm: true })
+  env.wx.setStorageSync = () => { throw new Error('存储空间不足') }; await page.submit(); assert.equal(posted, 0); assert.match(page.data.submitError, /存储空间不足/)
+})
+test('wallet response errors retain exact pending ID and never assume funds or clear mismatched result', async () => {
+  for (const patch of [null, { userId: 2 }, { amountFen: 999 }, { requestId: 'wrong-request' }, { status: 'UNKNOWN' }, { channel: 'WX' }]) {
+    const env = environment(); const page = await walletPage(env, { async requestWithdrawal(value) { return patch === null ? null : withdrawalValue(Object.assign({}, value, patch)) } })
+    page.input(event('amount', '1')); await page.submit()
+    assert.ok(env.storage.get('native_pending_withdrawal')); assert.ok(page.data.pending); assert.ok(page.data.submitError); assert.equal(page.data.wallet.availableText, '50.00')
+  }
+})
+test('wallet records: independent Page15 pagination, repeat clicks, failure retry same page and terminal labels', async () => {
+  const env = environment(); const entriesCalls = []; const withdrawalsCalls = []; let resolveEntries; let failWithdrawals = true
+  const page = await walletPage(env, {
+    walletEntries(page) {
+      entriesCalls.push(page)
+      if (page === 1) return new Promise(resolve => { resolveEntries = () => resolve({ number: 1, content: [walletEntry({ id: 16, amountFen: -29, complaintId: 7, type: 'COMPLAINT_DEDUCTION' })], last: true }) })
+      return Promise.resolve({ number: page, content: Array.from({ length: 15 }, (_, i) => walletEntry({ id: i + 1 })), last: false })
+    },
+    async withdrawals(page) {
+      withdrawalsCalls.push(page)
+      if (page === 1 && failWithdrawals) throw new Error('第二页断网')
+      return { number: page, content: page === 0 ? [withdrawalValue()] : [withdrawalValue({ id: 2, status: 'APPROVED', reviewedBy: 888, reviewedTime: '2026-11-15T11:00:00' }), withdrawalValue({ id: 3, status: 'REJECTED', reason: '资料需核实', reviewedBy: 888 })], last: page === 1 }
+    }
+  })
+  const next = page.more(); await page.more(); assert.equal(entriesCalls.join(','), '0,1'); resolveEntries(); await next
+  assert.equal(page.data.entries.length, 16); assert.equal(page.data.entries[15].amountText, '-0.29'); assert.equal(page.data.entries[15].complaintId, 7); assert.equal(page.data.entriesMore, false)
+  await page.more(); assert.equal(entriesCalls.length, 2)
+  page.tabChange({ currentTarget: { dataset: { tab: 'withdrawals' } } }); await page.more()
+  assert.match(page.data.withdrawalsError, /第二页断网/); assert.equal(page.data.withdrawals.length, 1)
+  failWithdrawals = false; await page.retryRecords(); assert.equal(withdrawalsCalls.join(','), '0,1,1'); assert.equal(page.data.withdrawals.length, 3)
+  assert.match(page.data.withdrawals[0].statusText, /待审核/); assert.match(page.data.withdrawals[1].statusText, /MOCK 模拟出账/); assert.match(page.data.withdrawals[2].statusText, /解冻先抵欠款/)
+  assert.equal(page.data.withdrawals[2].reason, '资料需核实'); assert.equal(page.data.withdrawals[1].reviewedText, '2026-11-15 11:00:00')
+  for (const row of page.data.withdrawals) { assert.equal('reviewedBy' in row, false); assert.equal('userId' in row, false) }
+})
+test('wallet records: initial failure not empty success, invalid page/foreign withdrawals fail closed, dedup overlapping pages', async () => {
+  const env = environment(); let mode = 'error'
+  const page = await walletPage(env, { async walletEntries(page) {
+    if (mode === 'error') throw new Error('明细查询失败')
+    if (mode === 'invalid') return { content: [], last: undefined }
+    return { number: page, content: [walletEntry()], last: page > 0 }
+  }, async withdrawals() { return { number: 0, content: [withdrawalValue({ userId: 2 })], last: true } } })
+  assert.equal(page.data.entriesLoaded, false); assert.ok(page.data.entriesError); assert.equal(page.data.withdrawalsLoaded, false); assert.equal(page.data.withdrawals.length, 0); assert.ok(page.data.withdrawalsError)
+  mode = 'invalid'; await page.retryRecords(); assert.equal(page.data.entriesLoaded, false); assert.ok(page.data.entriesError)
+  mode = 'ok'; await page.retryRecords(); await page.more(); assert.equal(page.data.entries.length, 1)
+  const wallet = env.load(path.join(native, 'utils/wallet.js'))
+  assert.throws(() => wallet.pageRows({ number: 2, content: [], last: true }, 0, wallet.entryView))
+  assert.throws(() => wallet.pageRows({ content: Array.from({ length: 16 }, () => walletEntry()), last: false }, 0, wallet.entryView))
+})
+test('wallet successful response followed by failed refresh never substitutes cached or optimistic funds', async () => {
+  const env = environment(); let loads = 0
+  const page = await walletPage(env, { async wallet() { if (++loads > 1) throw new Error('刷新钱包失败'); return walletValue() } })
+  page.input(event('amount', '1')); await page.submit()
+  assert.equal(env.storage.has('native_pending_withdrawal'), false); assert.equal(page.data.pending, null)
+  assert.equal(page.data.wallet, null); assert.match(page.data.error, /刷新钱包失败/); assert.equal(page.data.canSubmit, false)
+})
+test('wallet account isolation: stale wallet, me and pagination never expose previous account after a failed replacement', async () => {
+  const env = environment(); let resolveWallet; let resolveMe; let resolveEntries
+  const page = await walletPage(env)
+  page.input(event('amount', '1')); assert.equal(page.data.canSubmit, true)
+  const old = page.loadWallet({ generation: page._generation, revision: 0, owner: '1' }); await old
+  // 启动真实异步旧页请求，再切号；新账号请求故意失败，不能回填旧钱包和记录。
+  const api = env.load(path.join(native, 'utils/api.js'))
+  api.forSession = revision => ({
+    wallet: () => revision === 0 ? new Promise(resolve => { resolveWallet = resolve }) : Promise.reject(new Error('B钱包失败')),
+    me: () => revision === 0 ? new Promise(resolve => { resolveMe = resolve }) : Promise.reject(new Error('B资料失败')),
+    walletEntries: () => revision === 0 ? new Promise(resolve => { resolveEntries = resolve }) : Promise.reject(new Error('B明细失败')),
+    withdrawals: () => Promise.reject(new Error('提现记录失败'))
+  })
+  const refreshing = page.refresh(); await flush()
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' }); await page.onShow()
+  assert.equal(page.data.wallet, null); assert.equal(page.data.entries.length, 0); assert.equal(page.data.amount, '')
+  resolveWallet(walletValue()); resolveMe({ userId: 1, mobileBound: true }); resolveEntries({ number: 0, content: [walletEntry()], last: true }); await refreshing
+  assert.equal(page.data.wallet, null); assert.equal(page.data.entries.length, 0); assert.match(page.data.error, /B钱包失败/); assert.equal(page.data.mobileBound, null)
+})
+test('wallet lifecycle: old modal/random callbacks cannot send, save or navigate after hide/unload/switch', async () => {
+  for (const phase of ['modal', 'random']) for (const change of ['hide', 'unload', 'switch']) {
+    let callback; let posted = 0
+    const env = environment({ showModal(options) { if (phase === 'modal') callback = () => options.success({ confirm: true }); else options.success({ confirm: true }) },
+      getRandomValues(options) { callback = () => options.success({ randomValues: new Uint8Array(16).buffer }) } })
+    const page = await walletPage(env, { async requestWithdrawal(value) { posted++; return withdrawalValue(value) } })
+    page.input(event('amount', '1')); const submitting = page.submit(); await flush()
+    if (change === 'switch') env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
+    else page[change === 'hide' ? 'onHide' : 'onUnload']()
+    const other = { owner: change === 'switch' ? '2' : '1', amountFen: 500, requestId: 'another-request' }
+    env.storage.set('native_pending_withdrawal', other)
+    callback(); await submitting
+    assert.equal(posted, 0); assert.equal(env.storage.get('native_pending_withdrawal'), other)
+  }
+})
+test('wallet lifecycle: in-flight submit response after hide/unload/switch never clears pending or other owner storage', async () => {
+  for (const change of ['hide', 'unload', 'switch']) {
+    let reply; let sent
+    const env = environment(); const page = await walletPage(env, { requestWithdrawal(value) { sent = value; return new Promise(resolve => { reply = resolve }) } })
+    page.input(event('amount', '1')); const submitting = page.submit(); await flush(); const previous = env.storage.get('native_pending_withdrawal')
+    if (change === 'switch') env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
+    else page[change === 'hide' ? 'onHide' : 'onUnload']()
+    const other = change === 'switch' ? { owner: '2', amountFen: 500, requestId: 'other-account-request' } : previous
+    env.storage.set('native_pending_withdrawal', other); const data = JSON.stringify(page.data)
+    reply(withdrawalValue(sent)); await submitting
+    assert.equal(env.storage.get('native_pending_withdrawal'), other); assert.equal(JSON.stringify(page.data), data); assert.equal(env.timers.size, 0)
+  }
+})
+test('wallet pagination: stale page1 after hide and reenter cannot append or advance the new list cursor', async () => {
+  const env = environment(); let resolveOld; let requests = 0
+  const page = await walletPage(env, { async walletEntries(page) {
+    requests++
+    if (requests === 2) return new Promise(resolve => { resolveOld = resolve })
+    return { number: page, content: [walletEntry({ id: requests === 1 ? 1 : 100 + page })], last: false }
+  } })
+  const more = page.more(); await flush(); page.onHide(); await page.onShow()
+  assert.equal(page.data.entries[0].id, 100)
+  resolveOld({ number: 1, content: [walletEntry({ id: 2 })], last: true }); await more
+  assert.equal(page.data.entries.length, 1); assert.equal(page.data.entriesMore, true)
+  await page.more(); assert.equal(page.data.entries[1].id, 101)
+})
+test('wallet refresh generations: newer same-account loads supersede old wallet and page requests', async () => {
+  const env = environment(); let walletCalls = 0; let listCalls = 0; let resolveWallet; let resolveList
+  const page = await walletPage(env, { wallet() { if (++walletCalls === 2) return new Promise(resolve => { resolveWallet = resolve }); return Promise.resolve(walletValue({ availableFen: walletCalls * 100 })) },
+    walletEntries(page) { if (++listCalls === 2) return new Promise(resolve => { resolveList = resolve }); return Promise.resolve({ number: page, content: [walletEntry({ id: listCalls })], last: true }) } })
+  const ctx = { generation: page._generation, revision: 0, owner: '1' }
+  const oldWallet = page.loadWallet(ctx); const oldList = page.loadRecords('entries', true, ctx)
+  await page.loadWallet(ctx); await page.loadRecords('entries', true, ctx)
+  assert.equal(page.data.wallet.availableText, '3.00'); assert.equal(page.data.entries[0].id, 3)
+  resolveWallet(walletValue({ availableFen: 99999 })); resolveList({ number: 0, content: [walletEntry({ id: 999 })], last: false }); await oldWallet; await oldList
+  assert.equal(page.data.wallet.availableText, '3.00'); assert.equal(page.data.entries[0].id, 3); assert.equal(page.data.entriesMore, false)
+})
+test('wallet multi-instance protection: pending created during confirmation cannot be overwritten by another key', async () => {
+  const env = environment(); let finishModal; let posted = 0
+  env.wx.showModal = options => { finishModal = () => options.success({ confirm: true }) }
+  const page = await walletPage(env, { async requestWithdrawal() { posted++ } }); page.input(event('amount', '1'))
+  const submitting = page.submit(); const other = { owner: '1', amountFen: 200, requestId: 'other-wallet-instance-key' }
+  env.storage.set('native_pending_withdrawal', other); finishModal(); await submitting
+  assert.equal(posted, 0); assert.equal(env.storage.get('native_pending_withdrawal'), other); assert.equal(page.data.amount, '2.00'); assert.ok(page.data.pending)
+})
+test('wallet hidden and stale events cannot refresh, bind or submit for a replacement account', async () => {
+  const env = environment(); let loads = 0; let posts = 0
+  const page = await walletPage(env, { async wallet() { loads++; return walletValue() }, async requestWithdrawal() { posts++ } })
+  page.input(event('amount', '1')); page.onHide(); await page.refresh(); page.profile(); await page.submit()
+  assert.equal(loads, 1); assert.equal(posts, 0); assert.equal(env.calls.navigation.length, 0)
+  await page.onShow(); env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' })
+  await page.refresh(); page.profile(); await page.submit(); page.input(event('amount', '2'))
+  assert.equal(loads, 2); assert.equal(posts, 0); assert.equal(env.calls.navigation.length, 0); assert.equal(env.storage.has('native_pending_withdrawal'), false)
+})
+test('wallet storage: owner/revision isolation, logout cleanup and corrupted pending fail closed', async () => {
+  const env = environment(); env.authenticated(); const wallet = env.load(path.join(native, 'utils/wallet.js')); const session = env.load(path.join(native, 'utils/session.js'))
+  const saved = { owner: '1', amountFen: 1, requestId: 'stable-key-001' }; wallet.savePending(saved, '1', session.revision())
+  assert.equal(wallet.pending('2'), null)
+  assert.throws(() => wallet.savePending({ owner: '1', amountFen: 2, requestId: 'other-key-002' }, '1', session.revision()), /已有/)
+  assert.equal(wallet.clearPending({ owner: '1', amountFen: 2, requestId: 'wrong-key' }, '1', session.revision()), false)
+  const revision = session.revision(); session.save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' }); assert.equal(env.storage.has('native_pending_withdrawal'), false)
+  env.storage.set('native_pending_withdrawal', { owner: '2', amountFen: 99, requestId: 'new-key-002' })
+  assert.equal(wallet.clearPending(saved, '1', revision), false); assert.throws(() => wallet.savePending(saved, '1', revision))
+  session.clear(); assert.equal(env.storage.has('native_pending_withdrawal'), false)
+  const page = await walletPage(env); env.storage.set('native_pending_withdrawal', { owner: '1', amountFen: NaN, requestId: 'broken-key' }); await page.onShow()
+  assert.ok(page.data.pendingError); page.input(event('amount', '1')); assert.equal(page.data.canSubmit, false)
+})
+test('wallet disclosure: native form not KPI/chart, safe records, debt/refund rules and no real payment or transfer API', () => {
+  const app = JSON.parse(fs.readFileSync(path.join(native, 'app.json'), 'utf8')); assert.ok(app.pages.includes('pages/wallet/wallet'))
+  const template = fs.readFileSync(path.join(native, 'pages/wallet/wallet.wxml'), 'utf8')
+  for (const text of ['待抵扣欠款', '全流程为模拟记账', '不代表真钱到账', '驳回', '先抵扣欠款', '重试原申请', '收支明细', '提现记录', 'disabled="{{!canSubmit || busy}}"']) assert.ok(template.includes(text), text)
+  for (const text of ['reviewedBy', 'item.userId', 'canvas', 'chart', 'KPI', 'totalIncome', 'totalWithdrawn']) assert.equal(template.includes(text), false)
+  const my = fs.readFileSync(path.join(native, 'pages/my/my.wxml'), 'utf8'); assert.ok(my.includes('bindtap="wallet"')); assert.equal(/availableFen|totalIncome|totalWithdrawn/.test(my), false)
+  const detail = fs.readFileSync(path.join(native, 'pages/order/detail.wxml'), 'utf8'); assert.ok(detail.includes('历史订单是否已入账')); assert.ok(detail.includes('模拟记入订单发布者钱包'))
+  const env = environment(); const legal = env.page('pages/legal/legal'); legal.onLoad({ kind: 'privacy' }); const privacy = legal.data.sections.map(s => s.text).join(' ')
+  for (const text of ['钱包', '冻结', '欠款', '原申请金额', '幂等编号', 'MOCK', '不代表真钱到账']) assert.ok(privacy.includes(text), text)
+  for (const file of ['pages/wallet/wallet.js', 'utils/wallet.js', 'utils/api.js']) assert.equal(/wx\.(?:requestPayment|requestMerchantTransfer|requestTransfer)\s*\(/.test(fs.readFileSync(path.join(native, file), 'utf8')), false)
+})
 ;(async () => {
   let failures = 0
   for (const { name, fn } of tests) {

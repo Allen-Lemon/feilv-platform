@@ -27,11 +27,15 @@ public class PayService {
 
     private final PayRecordRepository payRecordRepository;
     private final OrderService orderService;
+    private final com.feilv.repository.OrderRepository orderRepository;
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
 
     /** 模拟支付成功：生成流水 + 计算分账 + 推进订单待接单 */
     @Transactional
     public PayRecord pay(long userId, long orderId) {
-        OrderMain order = orderService.mustGet(orderId);
+        OrderMain order = orderRepository.findByIdForUpdate(orderId).orElseThrow(() -> BizException.of(404, "订单不存在"));
+        entityManager.refresh(order, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
         if (order.getUserId() != userId) throw BizException.of(403, "无权支付他人订单");
         if (order.getStatus() == OrderStatus.WAIT_GRAB) {
             return payRecordRepository.findByOrderId(orderId).stream().findFirst()

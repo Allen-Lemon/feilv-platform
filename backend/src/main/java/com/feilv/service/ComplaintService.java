@@ -37,6 +37,7 @@ public class ComplaintService {
     private final PayRecordRepository payRecordRepository;
     private final RiderRepository riderRepository;
     private final AuditService auditService;
+    private final WalletAccountingService walletAccountingService;
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public long create(long userId, ComplaintReq req) {
@@ -137,7 +138,8 @@ public class ComplaintService {
             entry.setChannel("MOCK");
             entry.setCreatedBy(operatorId);
             entry.setCreatedTime(LocalDateTime.now());
-            deductionRepository.saveAndFlush(entry);
+            entry = deductionRepository.saveAndFlush(entry);
+            walletAccountingService.applyComplaintDeduction(entry);
         }
         complaint.setStatus(status);
         complaint.setResult(reason);

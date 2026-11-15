@@ -10,6 +10,8 @@ const routes = [
     { path: 'complaints', name: 'complaints', component: () => import('../views/Complaints.vue'), meta: { title: '投诉审核', menu: 'complaints' } },
     { path: 'riders', name: 'riders', component: () => import('../views/RiderList.vue'), meta: { title: '运力管理', menu: 'riders' } },
     { path: 'settlements', name: 'settlements', component: () => import('../views/Settlement.vue'), meta: { title: '结算中心', menu: 'settlements' } },
+    { path: 'wallets', name: 'wallets', component: () => import('../views/Wallets.vue'), meta: { title: '用户钱包', menu: 'wallets' } },
+    { path: 'withdrawals', name: 'withdrawals', component: () => import('../views/Withdrawal.vue'), meta: { title: '提现审核', menu: 'withdrawals' } },
     { path: 'marketing', name: 'marketing', component: () => import('../views/Placeholder.vue'), meta: { title: '营销管理', menu: 'marketing' } },
     { path: 'content', name: 'content', component: () => import('../views/Placeholder.vue'), meta: { title: '内容与客服', menu: 'content' } },
     { path: 'risk', name: 'risk', component: () => import('../views/Placeholder.vue'), meta: { title: '风控与合规', menu: 'risk' } },
@@ -23,8 +25,8 @@ router.beforeEach((to) => {
   if (to.path !== '/login' && !token) return '/login'
   let menus = []
   try { menus = JSON.parse(localStorage.getItem('feilv_admin_menus') || '[]') } catch { /* 失效的菜单缓存交给 profile 刷新。 */ }
-  // 微信配置页使用最新 profile 判权，拒绝时留在页面显示错误，不依赖旧缓存回退。
-  if (to.meta?.menu && to.meta.menu !== 'wechat-settings' && menus.length && !menus.includes(to.meta.menu)) return '/dashboard'
+  // 这些页面使用最新 profile 判权；旧缓存不授予权限，也不阻挡新授权，拒绝时留页提示。
+  if (to.meta?.menu && !['wechat-settings', 'wallets', 'withdrawals'].includes(to.meta.menu) && menus.length && !menus.includes(to.meta.menu)) return '/dashboard'
   if (to.meta?.title) document.title = to.meta.title + ' · 飞毛腿管理后台'
   return true
 })

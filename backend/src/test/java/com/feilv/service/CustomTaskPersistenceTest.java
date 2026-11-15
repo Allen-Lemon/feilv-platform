@@ -37,6 +37,7 @@ class CustomTaskPersistenceTest {
     @MockBean AuditService audit;
     @MockBean WechatPhoneClient phone;
     @MockBean WechatConfigService settings;
+    @MockBean WalletAccountingService wallet;
 
     private User user(String mobile, String role) { User user = new User(); user.setMobile(mobile); user.setRole(role); return users.saveAndFlush(user); }
     private PublishReq request(List<Long> tagIds) {

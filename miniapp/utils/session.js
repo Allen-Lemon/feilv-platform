@@ -3,7 +3,7 @@ let navigating = false
 let revision = 0
 function clear() {
   KEYS.forEach(k => wx.removeStorageSync(k))
-  ;['native_draft', 'native_pending_order'].forEach(k => wx.removeStorageSync(k))
+  ;['native_draft', 'native_pending_order', 'native_pending_withdrawal'].forEach(k => wx.removeStorageSync(k))
   revision++
 }
 function save(value) {

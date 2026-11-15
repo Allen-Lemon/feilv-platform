@@ -17,6 +17,10 @@ public interface OrderRepository extends JpaRepository<OrderMain, Long> {
 
     Optional<OrderMain> findByOrderNo(String orderNo);
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from OrderMain o where o.id = :id")
+    Optional<OrderMain> findByIdForUpdate(@Param("id") long id);
+
     Page<OrderMain> findByUserId(Long userId, Pageable pageable);
 
     Page<OrderMain> findByRiderId(Long riderId, Pageable pageable);

@@ -9,7 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -34,8 +33,8 @@ public class OrderTimeoutTask {
 
     /** 每60秒巡检一轮（演示节奏，生产可调至30秒） */
     @Scheduled(fixedDelay = 60_000, initialDelay = 30_000)
-    @Transactional
     public void scan() {
+        // 每单由OrderService独立事务完成并入账，避免扫描批量持有多笔订单/钱包锁。
         LocalDateTime now = LocalDateTime.now();
 
         // 待支付15分钟 → 自动关单

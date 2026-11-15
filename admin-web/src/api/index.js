@@ -17,6 +17,10 @@ export const adminApi = {
   handleComplaint: (id, data) => request.post(`/v1/admin/complaints/${id}/handle`, data),
   riders: () => request.get('/v1/admin/riders'),
   settlements: () => request.get('/v1/admin/settlements'),
+  wallets: (params) => request.get('/v1/admin/wallets', { params }),
+  walletEntries: (userId, params) => request.get(`/v1/admin/wallets/${userId}/entries`, { params }),
+  withdrawals: (params) => request.get('/v1/admin/withdrawals', { params }),
+  reviewWithdrawal: (id, data) => request.post(`/v1/admin/withdrawals/${id}/review`, data),
   // 兼容旧调用 complaints('OPEN')；独立投诉页使用分页 / 订单筛选参数。
   complaints: (params = 'OPEN') => request.get('/v1/admin/complaints', { params: typeof params === 'string' ? { status: params } : params }),
   reviewComplaint: (id, data) => request.post(`/v1/admin/complaints/${id}/review`, data),

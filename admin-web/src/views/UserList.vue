@@ -33,9 +33,10 @@
         <el-table-column label="手机绑定" width="110"><template #default="{ row }"><el-tag :type="row.mobileBound ? 'success' : 'info'">{{ row.mobileBound ? '已绑定' : '未绑定' }}</el-tag></template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 1 ? 'success' : 'danger'">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
         <el-table-column prop="createdTime" label="注册时间" min-width="180" />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" :width="canViewWallets ? 215 : 160" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row.userId)">详情</el-button>
+            <el-button v-if="canViewWallets" link type="primary" @click="viewWallet(row.userId)">钱包</el-button>
             <el-button link :type="row.status === 1 ? 'danger' : 'success'" :disabled="statusBusy !== null || ![0, 1].includes(row.status)" :loading="statusBusy === row.userId" @click="changeStatus(row)">{{ row.status === 1 ? '冻结' : '解冻' }}</el-button>
           </template>
         </el-table-column>
@@ -63,6 +64,7 @@
       <template #footer>
         <el-button @click="detailOpen = false">关闭</el-button>
         <el-button v-if="canViewOrders && detail" :disabled="detailLoading" @click="viewOrders">查看该用户订单</el-button>
+        <el-button v-if="canViewWallets && detail" :disabled="detailLoading" @click="viewWallet(detail.userId)">查看钱包</el-button>
         <el-button v-if="detail" :type="detail.status === 1 ? 'danger' : 'success'" :disabled="detailLoading || statusBusy !== null || ![0, 1].includes(detail.status)" :loading="statusBusy === detail.userId" @click="changeStatus(detail)">{{ detail.status === 1 ? '冻结账户' : '解冻账户' }}</el-button>
       </template>
     </el-dialog>
@@ -79,6 +81,7 @@ const route = useRoute()
 const router = useRouter()
 const menuCodes = inject('adminMenuCodes', ref([]))
 const canViewOrders = computed(() => menuCodes.value.includes('orders'))
+const canViewWallets = computed(() => menuCodes.value.includes('wallets'))
 const query = reactive({ keyword: '', status: '', mobileBound: '' })
 const rows = ref([])
 const page = ref(1)
@@ -186,6 +189,10 @@ async function changeStatus(user) {
   } finally {
     statusBusy.value = null
   }
+}
+
+function viewWallet(userId) {
+  if (!disposed && canViewWallets.value && validUserId(String(userId))) router.push({ path: '/wallets', query: { userId: String(userId) } })
 }
 
 function viewOrders() {

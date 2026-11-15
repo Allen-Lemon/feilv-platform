@@ -27,6 +27,7 @@ definePage({
   profile() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/profile/profile?from=my' }) },
   phone() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/profile/profile?from=my&mode=phone' }) },
   address() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/address/address' }) },
+  wallet() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/wallet/wallet' }) },
   rider() { wx.navigateTo({ url: '/pages/rider/register' }) },
   workbench() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/rider/workbench' }) },
   settings() { wx.navigateTo({ url: '/pages/settings/settings' }) },

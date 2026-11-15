@@ -42,6 +42,7 @@ class ComplaintPersistenceTest {
     @Autowired RiderRepository riders;
     @Autowired PlatformTransactionManager transactions;
     @SpyBean AuditService audit;
+    @org.springframework.boot.test.mock.mockito.MockBean WalletAccountingService wallet;
 
     @AfterEach void clearContext() { UserContext.clear(); }
 

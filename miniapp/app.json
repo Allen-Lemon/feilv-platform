@@ -10,6 +10,7 @@
     "pages/order/detail",
     "pages/order/track",
     "pages/my/my",
+    "pages/wallet/wallet",
     "pages/rider/register",
     "pages/rider/workbench",
     "pages/settings/settings",
