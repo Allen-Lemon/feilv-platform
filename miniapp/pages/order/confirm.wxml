@@ -1,7 +1,7 @@
 <view class="page confirm-page">
   <view class="empty" wx:if="{{invalid}}">
     <view class="empty-mark">!</view><view class="empty-title">请重新填写任务</view>
-    <view>任务草稿不存在、费用尚未计算或账户已变化</view>
+    <view>{{legacyDraft ? '旧自定义配送草稿需重新填写场景、总价及联系信息；不会自动提交旧配送资料。' : '任务草稿不存在、费用尚未计算或账户已变化'}}</view>
     <button class="secondary" bindtap="back">返回填写</button>
   </view>
   <block wx:else>
@@ -14,14 +14,17 @@
     </view>
 
     <view class="card confirm-panel">
+      <block wx:if="{{!isService}}">
       <view class="panel-title">配送路线</view>
       <view class="route-node route-origin"><text class="route-marker">取</text><view class="route-content"><view class="address-text">{{draft.fromAddress}}</view><view class="contact-line"><text class="contact-name">{{draft.fromContact}}</text><text>{{draft.fromPhone}}</text></view></view></view>
       <view class="route-node"><text class="route-marker destination-marker">送</text><view class="route-content"><view class="address-text">{{draft.toAddress}}</view><view class="contact-line"><text class="contact-name">{{draft.toContact}}</text><text>{{draft.toPhone}}</text></view></view></view>
+      </block>
+      <block wx:else><view class="panel-title">{{modeText}}</view><view class="address-text">{{draft.taskMode === 'ONLINE' ? '线上任务 · 无需地址' : draft.locationAddress}}</view><view class="contact-line">{{draft.contact}} · {{draft.phone}}</view><view class="summary-row" wx:if="{{draft.serviceTime}}"><text class="summary-label">服务时间</text><text class="summary-value">{{draft.serviceTime}}</text></view></block>
       <view class="task-summary">
-        <view class="summary-row"><text class="summary-label">需求</text><text class="summary-value">{{draft.goodsDesc}}</text></view>
+        <view class="summary-row"><text class="summary-label">需求</text><text class="summary-value">{{isService ? draft.taskTitle : draft.goodsDesc}}</text></view>
         <view class="summary-row" wx:if="{{draft.orderType === 'CUSTOM'}}"><text class="summary-label">详细内容</text><text class="summary-value">{{draft.taskContent}}</text></view>
         <view class="summary-row" wx:if="{{draft.orderType === 'CUSTOM'}}"><text class="summary-label">任务标签</text><view class="summary-value"><text wx:for="{{tagNames}}" wx:key="*this">{{item}} </text><text wx:if="{{!tagNames.length}}">未选择</text></view></view>
-        <view class="summary-row"><text class="summary-label">距离 / 重量</text><text class="summary-value">{{draft.distanceM}}米 · {{draft.weightKg}}公斤</text></view>
+        <view class="summary-row" wx:if="{{!isService}}"><text class="summary-label">距离 / 重量</text><text class="summary-value">{{draft.distanceM}}米 · {{draft.weightKg}}公斤</text></view>
         <view class="summary-row" wx:if="{{draft.remark}}"><text class="summary-label">备注</text><text class="summary-value">{{draft.remark}}</text></view>
       </view>
     </view>
@@ -29,8 +32,9 @@
     <view class="card confirm-panel submit-panel">
       <view class="panel-title">费用与发布</view>
       <view class="fee-row" wx:for="{{quote.items}}" wx:key="key"><text class="fee-label">{{item.label}}</text><text class="fee-value">¥{{item.amountText}}</text></view>
-      <view class="confirm-total"><text class="total-label">预估合计</text><text class="total-amount"><text class="amount-currency">¥</text>{{quote.totalText}}</text></view>
-      <view class="fee-note">距离为手工预估，最终金额以服务端为准。</view>
+      <view class="confirm-total"><text class="total-label">{{isService ? '发布任务总价' : '预估合计'}}</text><text class="total-amount"><text class="amount-currency">¥</text>{{quote.totalText}}</text></view>
+      <block wx:if="{{isService && quote}}"><view class="fee-row"><text class="fee-label">骑手预计所得</text><text class="fee-value">¥{{quote.riderShareText}}</text></view><view class="fee-row"><text class="fee-label">平台分成</text><text class="fee-value">¥{{quote.platformShareText}}</text></view><view class="fee-note">总价不是骑手实拿。以上分成来自服务端报价，最终结算受本单售后等规则影响；仅现有骑手承接，无取件配送步骤。</view></block>
+      <view class="fee-note" wx:elif="{{!isService}}">距离为手工预估，最终金额以服务端为准。</view>
       <view class="mock-note confirm-mock"><text class="mock-badge">MOCK</text><text class="mock-description">点击发布将创建任务并模拟支付，不拉起微信支付，不发生真实扣款。</text></view>
       <view class="notice submission-notice" wx:if="{{orderId}}"><view class="notice-title">订单已创建，请勿重复下单</view><view class="created-order-id">订单ID：{{orderId}}</view><view>重试仅对该订单进行 MOCK 模拟支付，不会重复创建。</view></view>
       <view class="notice submission-notice" wx:if="{{uncertain}}"><view class="notice-title">创建结果待核实，已阻止重复提交</view><view>请先在订单列表检查，再从已有订单继续操作。</view></view>

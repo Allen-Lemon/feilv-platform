@@ -43,7 +43,7 @@ npm run check:release --prefix miniapp
 
 ## 发布任务（简化流程）
 
-- 首页保留送件、代买、代办，并增加独立的第四个“自定义任务”入口；普通用户和骑手账号均可作为发布者发布。订单统一走底部“订单”，地址簿与服务设置集中在“我的”，不重复放在首页。
+- 首页仅两个入口：“跑腿服务”默认进入SEND，填写页选项切换SEND/BUY/ERRAND；另一个为“自定义任务”。旧BUY/ERRAND深链继续有效，切换类型清理不适用的表单、地址与报价，不能覆盖待核实订单。普通用户和骑手账号均可作为发布者发布。订单统一走底部“订单”，地址簿与服务设置集中在“我的”，不重复放在首页。
 - 填写页选择取送地址后展示联系人摘要，需要时才展开修改。已有默认地址会在空白取件地址处自动带出，送达地址仍需明确选择。
 - 常见物品/事项可点选；重量默认1公斤并明确展示，实际更重请在“更多要求”修改，备注也在该区域。预估距离仍必须手填，不伪造地图测距。
 - 点击“确认费用，下一步”会保存当前账号草稿、校验手机号和昵称、获取服务端报价并直接进入确认页，不再要求单独计算费用。
@@ -52,11 +52,13 @@ npm run check:release --prefix miniapp
 
 ## 自定义任务与投诉接口
 
-- 自定义任务沿用“填写 → 确认并 MOCK 支付”两步发布。标题去除首尾空白后为1–64字，内容为1–1000字；保留取送地址、联系人摘要、手工距离、重量与备注。订单 `goodsDesc` 使用任务标题，订单列表显示标题和“自定义任务”类型，详情另外读取完整内容与标签。
+- 自定义任务沿用“填写 → 确认并 MOCK 支付”两步发布，标题1–64字、内容1–1000字。场景为 `ONLINE`（资料整理/设计，无地址）、默认 `ONSITE`（通马桶/家电清洁，一个服务地点）、`PART_TIME`（搬水泥/搬运，一个工作地点及必填时间）。联系人及11位电话始终必填；地点从已保存地址下拉选择或新增，自动带出联系人电话且可改；时间为最多100字人类说明，上门可选。切换场景清空地点和时间，ONLINE不提交地址或时间。CUSTOM无重量、距离、取送两地址或配送步骤。
 - 标签来自 `GET /api/v1/task-tags` 的启用记录（`id,name,enabled,sort,version`），最多选5个，也可不选。后台配置是唯一来源；加载失败显示错误与重试，不生成演示标签或静默当作空列表。草稿保存任务标题、内容与已选标签，切号响应不得覆盖当前账号数据。
-- `POST /api/v1/custom-tasks/quote {distanceM,weightKg}` 返回原 `QuoteVO`，复用原计价；普通类型仍调用 `/orders/quote`。
-- `POST /api/v1/custom-tasks {title,content,tagIds,order}`：`tagIds` 为数字数组，`order` 包含 `orderType:'CUSTOM'` 及现有 `OrderCreateReq` 字段；返回既有 `OrderVO`（包括 `id`），确认页继续使用原订单支付接口。草稿内部用逗号字符串 `taskTagIds` 保持浅比较稳定，API 边界才转换数组；`taskTitle/taskContent/taskTagIds` 不作为 `order` 的额外字段发送。普通类型仍调用 `/orders`。
-- 仅自定义详情读取 `GET /api/v1/orders/{id}/custom-task`，返回 `TaskVO` 或 `null`。TaskVO 包含 `id,orderId,orderNo,status,statusLabel,userId,title,content,tags:[{id,name}],publishSource,createdBy,createdTime,amountFen,fromAddress,toAddress`。身份和来源等内部字段不额外展示；接口失败须可重试，不能伪造任务内容。
+- 总价由用户填写 **0.01–1000000元，最多两位小数**，复用钱包十进制字符串精确元分转换，不使用浮点舍入。用户价是总额，不是骑手实拿。`POST /api/v1/custom-tasks/quote {priceFen}` 返回 `{totalFen,items,riderShareFen,platformShareFen}`；确认页展示发布总价/骑手预计所得/平台分成，校验返回总价相等及两项分成非负整数且合计一致。默认70%/30%只是规则说明，实际数值必须来自后端，不补算缺失分成。普通报价仍调用 `/orders/quote`。
+- `POST /api/v1/custom-tasks {title,content,tagIds,taskMode,priceFen,contact,phone,locationAddress,serviceTime}`，无 `order` 嵌套或配送字段。内部保留 `taskTitle/taskContent/taskTagIds`，新增 `taskMode/taskPriceFen/contact/phone/locationAddress/serviceTime` 在API边界映射；编辑态金额为独立data.taskPrice字符串，tag IDs为排序逗号串，API才转数字数组。返回含订单ID的 `OrderVO`，继续复用原支付/确认接口；普通创建仍调用 `/orders`。旧CUSTOM配送草稿提示重新填写，已创建ID和未知结果保护不能被覆盖，已创建订单继续原确认支付流程。
+- 仅自定义详情读取 `GET /api/v1/orders/{id}/custom-task`，返回 `TaskVO` 或 `null`，在旧字段上增加 `taskMode,priceFen,contact,phone,locationAddress,serviceTime,riderShareFen,platformShareFen`。`OrderVO.taskMode` 普通及旧CUSTOM为 `DELIVERY`，缺字段也兼容DELIVERY；非配送列表/详情展示线上任务或单服务地点、联系人与时间，隐藏取送、取件码及地图。身份和来源等内部字段不额外展示；接口失败须可重试，不能伪造任务内容。
+- 仅现有RIDER从工作台承接，不增加普通用户任务大厅。`GET /grab/list` 追加 `title,taskMode,locationAddress,serviceTime`，不展示联系方式；`/rider/orders` 追加 `orderType,taskMode,title,serviceTime,locationAddress`，`rewardFen`仍表示骑手预计所得。承接订单可点击“查看任务详情”查看有权访问的完整要求与联系方式，`owner:false`不展示发布者支付、取消、确认或评价按钮。
+- 非DELIVERY CUSTOM履约为 `ACCEPTED → POST /orders/{id}/service-start → PICKING服务中 → POST /orders/{id}/service-complete → DELIVERED待用户确认 → 用户确认完成`。无取件码、不调用pickup/depart/deliver或定位；grab返回空pickupCode不展示核对取件码弹窗。普通及旧DELIVERY订单继续原配送工作流。
 - 投诉由订单发布者提出，不是骑手承运操作。订单状态为 `ACCEPTED/PICKING/DELIVERING/DELIVERED/FINISHED` 时可申请，提交保留 `POST /api/v1/complaints {orderId,type,description}`，描述去空白后为1–255字，返回 `ticketId,sla`。角色并不等同归属：骑手也可能是发布者。优先使用 `OrderVO.owner` 判断当前账号是否发布者；旧接口缺失该字段时，自定义单使用 TaskVO.userId 在页面私有内存判断，普通单仅对 USER 兼容开放、仍以后端403拒绝为准。不增加发布者身份展示。
 - 订单详情通过 `GET /api/v1/orders/{id}/complaints` 读取服务端工单列表，展示 `OPEN/PROCESSING/APPROVED/REJECTED/DONE` 状态、问题、处理原因与赔付金额。每订单最多一条活动工单（`OPEN/PROCESSING`）；有活动单时隐藏重复提交表单。`APPROVED/REJECTED/DONE` 为已终结，可再次提出新问题，但累计限额由后端控制。读取失败明确提示并提供重试，不能冒充“暂无投诉”；提交描述在失败时保留。
 - 审核通过后由后端扣减骑手**该订单**可分账金额赔付发布者，累计扣减和额度以服务端为准。当前赔付为 **MOCK，模拟记入订单发布者钱包，未真实退款或转账**。用户界面不展示内部骑手/经办人编号、扣款审计字段或内部操作明细；工单与赔付刷新不靠本地假状态。

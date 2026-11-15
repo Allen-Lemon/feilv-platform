@@ -40,6 +40,11 @@ public interface OrderRepository extends JpaRepository<OrderMain, Long> {
     /** 已送达订单按送达时间判断默认完成，不能使用创建时间替代。 */
     List<OrderMain> findByStatusAndDeliveredTimeBefore(OrderStatus status, LocalDateTime time);
 
+    /** 大厅仅展示真实已支付且不是自己发布的待接单订单，数据库端限制条数。 */
+    @Query("select o from OrderMain o where o.status = :status and o.userId <> :userId " +
+            "and exists (select p.id from PayRecord p where p.orderId = o.id and p.channel = 'MOCK' and p.status = 'SUCCESS') order by o.id desc")
+    List<OrderMain> findPaidGrabOrders(@Param("status") OrderStatus status, @Param("userId") long userId, Pageable pageable);
+
     /** 经营看板：今日订单量 */
     long countByCreatedTimeAfter(LocalDateTime time);
 

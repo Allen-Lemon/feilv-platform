@@ -43,7 +43,7 @@ definePage({
       if (value !== null && (!value || typeof value.title !== 'string' || typeof value.content !== 'string' || !Array.isArray(value.tags))) throw new Error('任务资料返回异常，请重试')
       this._taskOwner = value ? Number(value.userId) : null
       this._taskOwnerRevision = revision
-      this.safeSet({ task: value ? { title: value.title, content: value.content, tags: value.tags.map(t => ({ id: t.id, name: t.name })) } : null, taskError: '' })
+      this.safeSet({ task: value ? fmt.task(value) : null, taskError: '' })
     } catch (e) { this.safeSet({ taskError: e.message || '任务资料读取失败' }) }
   },
   loadTask() {
@@ -66,11 +66,12 @@ definePage({
     return this.run('complaintsLoading', async (api) => { await this.fetchComplaints(api); this.updateComplaintAllowed() })
   },
 
-  track() { wx.navigateTo({ url: '/pages/order/track?id=' + this._id }) },
+  track() { if (this.data.order && !this.data.order.isService) wx.navigateTo({ url: '/pages/order/track?id=' + this._id }) },
   input(e) { const k = e.currentTarget.dataset.field; if (['content', 'complaintDescription', 'cancelReason'].includes(k)) this.setData({ [k]: e.detail.value }) },
   starsChange(e) { this.setData({ starIndex: Number(e.detail.value) }) },
   complaintChange(e) { this.setData({ complaintIndex: Number(e.detail.value) }) },
   pay() {
+    if (this.data.order && this.data.order.owner === false) return
     return this.run('busy', async (api) => {
       if (!(await modal({ title: 'MOCK 模拟支付', content: '仅调用模拟支付接口，不发生真实扣款，确认继续？' })).confirm) return
       await api.payOrder(this._id)
@@ -79,21 +80,25 @@ definePage({
     })
   },
   cancel() {
+    if (this.data.order && this.data.order.owner === false) return
     return this.run('busy', async (api) => {
       const accepted = ['ACCEPTED', 'PICKING'].includes(this.data.order.status)
-      const text = accepted ? '骑手已接单，后端规则可能收取起步价50%的取消费。退款为模拟流程，是否继续？' : '确认取消此订单？待接单退款为模拟流程，不发生真实资金退回。'
+      const text = accepted ? (this.data.order.isService ? '骑手已接单，取消费用以服务端规则为准。退款为模拟流程，是否继续？' : '骑手已接单，后端规则可能收取起步价50%的取消费。退款为模拟流程，是否继续？') : '确认取消此订单？待接单退款为模拟流程，不发生真实资金退回。'
       if (!(await modal({ title: '取消订单', content: text })).confirm) return
       const value = await api.cancelOrder(this._id, this.data.cancelReason.trim() || '用户取消')
       this.safeSet({ order: fmt.order(value) }); this.updateComplaintAllowed(); toast('订单已取消')
     })
   },
   confirm() {
+    if (this.data.order && this.data.order.owner === false) return
     return this.run('busy', async (api) => {
-      if (!(await modal({ title: '确认收货', content: '请确认已收到物品，确认后订单完成。' })).confirm) return
-      this.safeSet({ order: fmt.order(await api.confirmOrder(this._id)) }); this.updateComplaintAllowed(); toast('已确认收货')
+      const isService = this.data.order.isService
+      if (!(await modal({ title: isService ? '确认服务完成' : '确认收货', content: isService ? '请核实约定服务已完成，确认后订单完成。' : '请确认已收到物品，确认后订单完成。' })).confirm) return
+      this.safeSet({ order: fmt.order(await api.confirmOrder(this._id)) }); this.updateComplaintAllowed(); toast(isService ? '已确认服务完成' : '已确认收货')
     })
   },
   review() {
+    if (this.data.order && this.data.order.owner === false) return
     return this.run('busy', async (api) => {
       await api.review({ orderId: this._id, stars: this.data.starIndex + 1, content: this.data.content.trim() })
       wx.setStorageSync('native_review_' + wx.getStorageSync('feilv_user_id') + '_' + this._id, true)

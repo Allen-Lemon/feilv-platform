@@ -57,7 +57,13 @@ public final class ApiDtos {
                           String fromAddress, String toAddress, String goodsDesc,
                           int estimateFeeFen, int realFeeFen, Long riderId,
                           String pickupCode, String createdTime, String acceptedTime,
-                          String deliveredTime, String finishTime, boolean owner) {
+                          String deliveredTime, String finishTime, boolean owner, String taskMode) {
+        public OrderVO(long id, String orderNo, String orderType, String status, String statusLabel,
+                       String fromAddress, String toAddress, String goodsDesc, int estimateFeeFen, int realFeeFen,
+                       Long riderId, String pickupCode, String createdTime, String acceptedTime, String deliveredTime, String finishTime, boolean owner) {
+            this(id, orderNo, orderType, status, statusLabel, fromAddress, toAddress, goodsDesc, estimateFeeFen, realFeeFen,
+                    riderId, pickupCode, createdTime, acceptedTime, deliveredTime, finishTime, owner, "DELIVERY");
+        }
         public OrderVO(long id, String orderNo, String orderType, String status, String statusLabel,
                        String fromAddress, String toAddress, String goodsDesc, int estimateFeeFen, int realFeeFen,
                        Long riderId, String pickupCode, String createdTime, String acceptedTime, String deliveredTime, String finishTime) {
@@ -75,7 +81,13 @@ public final class ApiDtos {
     public record RiderVO(long riderId, String name, int creditScore, int onlineStatus, String status) {}
 
     public record GrabVO(long orderId, String orderNo, String orderType, String fromAddress,
-                        String toAddress, int distanceM, int rewardFen, String createdTime) {}
+                        String toAddress, int distanceM, int rewardFen, String createdTime,
+                        String title, String taskMode, String locationAddress, String serviceTime) {
+        public GrabVO(long orderId, String orderNo, String orderType, String fromAddress,
+                      String toAddress, int distanceM, int rewardFen, String createdTime) {
+            this(orderId, orderNo, orderType, fromAddress, toAddress, distanceM, rewardFen, createdTime, "", "DELIVERY", "", "");
+        }
+    }
 
     // ---------- 轨迹 ----------
     public record TrackPointReq(@NotNull Long orderId, BigDecimal lng, BigDecimal lat, BigDecimal speed) {}

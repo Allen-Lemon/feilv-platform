@@ -31,16 +31,16 @@
         请关注骑手接单状态，可刷新查看最新进度。
       </view>
       <view class="status-description" wx:elif="{{order.status === 'ACCEPTED'}}">
-        骑手已接单，可查看配送轨迹与最新进度。
+        {{order.isService ? '骑手已接单，请联系沟通服务安排。' : '骑手已接单，可查看配送轨迹与最新进度。'}}
       </view>
       <view class="status-description" wx:elif="{{order.status === 'PICKING'}}">
-        骑手取件中，请留意取件信息。
+        {{order.isService ? '骑手已开始服务，请关注约定工作内容。' : '骑手取件中，请留意取件信息。'}}
       </view>
       <view class="status-description" wx:elif="{{order.status === 'DELIVERING'}}">
         配送进行中，可查看骑手已上报的轨迹。
       </view>
       <view class="status-description" wx:elif="{{order.status === 'DELIVERED'}}">
-        请核对物品，收到后再确认收货。
+        {{order.isService ? '骑手已提交完成，请核实服务后确认完成。' : '请核对物品，收到后再确认收货。'}}
       </view>
       <view class="status-description" wx:elif="{{order.status === 'FINISHED'}}">
         服务已完成，可评价骑手或反馈问题。今后订单完成时，收入按结算规则记入承接者钱包（MOCK）；历史订单是否已入账，以钱包明细为准，不保证旧订单有余额。
@@ -52,7 +52,7 @@
         订单进度以服务端最新状态为准。
       </view>
       <view class="status-tools">
-        <button class="quiet-button" bindtap="track" disabled="{{loading || busy}}">查看配送轨迹</button>
+        <button wx:if="{{!order.isService}}" class="quiet-button" bindtap="track" disabled="{{loading || busy}}">查看配送轨迹</button>
         <button class="quiet-button" bindtap="load" disabled="{{loading || busy}}">
           刷新订单状态
         </button>
@@ -71,14 +71,14 @@
     </view>
 
     <view class="card order-panel primary-panel" wx:if="{{order.canConfirm}}">
-      <view class="panel-title">物品已送达</view>
-      <view class="panel-description">请确认已收到物品，确认收货后订单完成。</view>
+      <view class="panel-title">{{order.isService ? '服务待确认完成' : '物品已送达'}}</view>
+      <view class="panel-description">{{order.isService ? '请核实约定服务已完成后再确认。' : '请确认已收到物品，确认收货后订单完成。'}}</view>
       <button class="primary" disabled="{{busy || loading}}" loading="{{busy}}" bindtap="confirm">
-        确认收货
+        {{order.isService ? '确认服务完成' : '确认收货'}}
       </button>
     </view>
 
-    <view class="card order-panel">
+    <view class="card order-panel" wx:if="{{!order.isService}}">
       <view class="panel-title">配送路线</view>
       <view class="delivery-route">
         <view class="route-node route-origin">
@@ -98,6 +98,8 @@
       </view>
     </view>
 
+    <view class="card order-panel" wx:if="{{order.isService}}"><view class="panel-title">{{order.modeText}}</view><view class="address-text">{{order.taskMode === 'ONLINE' ? '线上任务 · 无需地址' : task.locationAddress || order.locationAddress || order.fromAddress || '服务地点待核实'}}</view><view class="info-row" wx:if="{{task.contact}}"><text class="info-label">联系人</text><text class="info-value">{{task.contact}} · {{task.phone}}</text></view><view class="info-row" wx:if="{{task.serviceTime || order.serviceTime}}"><text class="info-label">服务时间</text><text class="info-value">{{task.serviceTime || order.serviceTime}}</text></view></view>
+
     <view class="card order-panel" wx:if="{{order.orderType === 'CUSTOM'}}">
       <view class="panel-title">自定义任务</view>
       <view class="error" wx:if="{{taskError}}">{{taskError}}<button class="outline-button" bindtap="loadTask" disabled="{{busy || loading || taskLoading}}">重试读取任务</button></view>
@@ -105,7 +107,7 @@
       <view class="form-note" wx:if="{{!task && !taskError}}">该订单暂无自定义任务资料。</view>
     </view>
 
-    <view class="card order-panel">
+    <view class="card order-panel" wx:if="{{!order.isService}}">
       <view class="panel-title">物品信息</view>
       <view class="info-row">
         <text class="info-label">物品 / 事项</text>
@@ -123,9 +125,10 @@
     <view class="card order-panel">
       <view class="panel-title">费用与订单</view>
       <view class="amount-row">
-        <text class="amount-label">订单金额</text>
+        <text class="amount-label">{{order.isService ? '发布任务总价' : '订单金额'}}</text>
         <text class="order-amount"><text class="amount-currency">¥</text>{{order.feeText}}</text>
       </view>
+      <block wx:if="{{order.isService && task}}"><view class="info-row" wx:if="{{task.priceText}}"><text class="info-label">发任务总价</text><text class="info-value">¥{{task.priceText}}</text></view><block wx:if="{{task.hasShares}}"><view class="info-row"><text class="info-label">骑手预计所得</text><text class="info-value">¥{{task.riderShareText}}</text></view><view class="info-row"><text class="info-label">平台分成</text><text class="info-value">¥{{task.platformShareText}}</text></view><view class="form-note">总价不是骑手实拿；分成来自服务端，最终结算受本单售后等规则影响，以钱包明细为准。</view></block><view class="form-note" wx:else>分成信息待核实，请刷新任务资料；不会按固定比例推算。</view></block>
       <view class="order-metadata">
         <view class="info-row">
           <text class="info-label">订单编号</text>

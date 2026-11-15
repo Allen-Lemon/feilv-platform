@@ -11,6 +11,7 @@ import java.util.Optional;
 
 public interface CustomTaskRepository extends JpaRepository<CustomTask, Long> {
     Optional<CustomTask> findByOrderId(Long orderId);
+    java.util.List<CustomTask> findByOrderIdIn(java.util.Collection<Long> orderIds);
     @Query("select t from CustomTask t join OrderMain o on o.id=t.orderId " +
             "where (:userId is null or t.userId=:userId) and (:status is null or o.status=:status)")
     Page<CustomTask> findAdminTasks(@Param("userId") Long userId, @Param("status") OrderStatus status, Pageable pageable);

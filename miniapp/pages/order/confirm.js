@@ -1,19 +1,26 @@
 const session = require('../../utils/session')
 const draftState = require('../../utils/draft')
 const { definePage, toast } = require('../../utils/page')
-const { types } = require('../../utils/format')
+const { types, taskModes, service, validShares } = require('../../utils/format')
 const paidStates = ['WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED']
 definePage({
-  data: { draft: null, quote: null, typeText: '', tagNames: [], busy: false, orderId: null, invalid: false, uncertain: false },
+  data: { draft: null, quote: null, typeText: '', modeText: '', isService: false, legacyDraft: false, tagNames: [], busy: false, orderId: null, invalid: false, uncertain: false },
   onLoad() { this.restore() },
   onShow() { session.requireLogin() },
   restore() {
     const draft = wx.getStorageSync('native_draft')
     const owner = wx.getStorageSync('feilv_user_id')
     const pending = wx.getStorageSync('native_pending_order')
-    if (!draft || draft.owner !== owner || !draft.payload || !draft.quote) { this.setData({ invalid: true }); return }
+    if (!draft || draft.owner !== owner || !draft.payload) { this.setData({ invalid: true }); return }
     const matching = draftState.matches(pending, owner, draft.savedAt)
-    this.setData({ draft: draft.payload, quote: draft.quote, tagNames: draft.tagNames || [], typeText: types[draft.payload.orderType], orderId: matching ? pending.id || null : null, uncertain: !!(matching && pending.uncertain) })
+    const isService = service(draft.payload)
+    const legacyDraft = draft.payload.orderType === 'CUSTOM' && !isService
+    const pendingWork = matching && (pending.id || pending.uncertain)
+    if (!pendingWork && (legacyDraft || !draft.quote || isService && (draft.quote.totalFen !== draft.payload.taskPriceFen || !validShares(draft.quote, draft.payload.taskPriceFen)))) {
+      this.setData({ invalid: true, legacyDraft }); return
+    }
+    this.setData({ draft: draft.payload, quote: draft.quote, tagNames: draft.tagNames || [], isService, legacyDraft, modeText: taskModes[draft.payload.taskMode],
+      typeText: types[draft.payload.orderType], orderId: matching ? pending.id || null : null, uncertain: !!(matching && pending.uncertain) })
     this._savedAt = draft.savedAt
     this._owner = owner
     this._revision = session.revision()

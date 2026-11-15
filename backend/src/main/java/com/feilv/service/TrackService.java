@@ -32,6 +32,7 @@ public class TrackService {
         Rider rider = riderRepository.findByUserId(riderUserId)
                 .orElseThrow(() -> BizException.of(403, "当前账户未注册为骑手"));
         var order = orderService.mustGet(orderId);
+        requireDelivery(order);
         if (order.getRiderId() == null || !rider.getId().equals(order.getRiderId())) {
             throw BizException.of(403, "该订单不属于当前骑手");
         }
@@ -50,9 +51,14 @@ public class TrackService {
     /** 用户端查询轨迹（最多最近50个点，倒序存储前端自行反转） */
     @Transactional(readOnly = true)
     public List<TrackPoint> query(long orderId) {
+        requireDelivery(orderService.mustGet(orderId));
         return trackRepository.findTop50ByOrderIdOrderByIdDesc(orderId).stream()
                 .map(t -> new TrackPoint(t.getLng(), t.getLat(),
                         t.getReportTime() == null ? "" : t.getReportTime().toString()))
                 .toList();
+    }
+
+    private void requireDelivery(com.feilv.domain.OrderMain order) {
+        if (orderService.isServiceTask(order)) throw BizException.of(4090, "服务型任务不提供配送轨迹");
     }
 }

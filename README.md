@@ -116,9 +116,12 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 ### 7）自定义任务与投诉审核扣款
 
 - 管理后台新增“自定义任务”(`/tasks`)和“投诉审核”(`/complaints`)菜单，仅默认授权SUPER_ADMIN；其他角色需明确授权。任务、标签、投诉审核、结算接口均检查数据库中的实时菜单权限。升级后重新登录刷新菜单。
-- 小程序首页新增独立“自定义任务”。用户填写标题（1–64字）、内容（1–1000字），可选最多5个当前启用标签，沿用地址选择、距离/重量计价及两步确认发布。后台可指定已绑定手机号的正常USER/RIDER代发布，创建后待支付，由发布者在小程序完成MOCK支付；后台不会代付或冒充真实支付成功。
+- 小程序首页收敛为“同城跑腿”和“自定义任务”两个入口：同城跑腿发布页内切换送件、代买、代办，继续使用原配送计价；自定义任务填写标题（1–64字）、内容（1–1000字）、最多5个可选标签与发布者自定总价，不再按距离/重量计价。后台也支持代正常且已绑手机号USER/RIDER发布，创建后仍待支付，由发布者在小程序完成MOCK支付，不会后台代付。
 - 标签支持新增、改名、排序和启停，更新必须带version，冲突返回409。历史任务保存发布时标签名称快照，不因停用/改名改变。用户发布接口 `/api/v1/custom-tasks`、报价 `/custom-tasks/quote`、标签 `/task-tags`；后台对应 `/api/v1/admin/custom-tasks`、`/admin/task-tags`。普通 `/orders` 不允许绕过任务元数据直接创建CUSTOM订单。
-- 自定义任务复用原订单履约，任务和订单、费用明细在同一事务创建。列表/详情可查看标题、内容、标签；只有订单发布者、承运骑手或有权限管理员可查询对应资料。
+- 自定义任务分 `ONLINE` 线上任务（无需地点）、`ONSITE` 上门服务（一个服务地点，如通马桶）、`PART_TIME` 兼职劳务（一个工作地点及必填工作时间，如搬水泥）；三类均填写联系人电话，由现有骑手承接，不向普通用户开放接单。非配送服务使用“接单 → 开始服务 → 提交完成 → 发布者确认”并复用钱包/投诉，不能用配送取件码或轨迹接口替代服务履约；历史 `DELIVERY` 自定义订单继续原配送流程。
+- 用户填写价格是任务总价，范围0.01至1000000元、最多两位小数；接口只接受JSON整数分 `priceFen`，拒绝小数分、字符串或布尔值。报价仅回显用户设价并返回当前规则下的 `riderShareFen/platformShareFen`（默认70/30），不按重量距离或夜间附加费用加价；支付使用创建时保存金额，钱包按原支付分账结算，不把总价冒充骑手全部收入。
+- 任务和订单、费用明细同事务创建，列表/详情显示场景、时间、价格与分账；完整内容/联系方式仅发布者、承运骑手或有权限管理员可查。未接单的任务大厅只提供接单所需的有限信息，禁止发布者自抢。
+- 新版 `/custom-tasks` 接收 `{title,content,tagIds,taskMode,priceFen,contact,phone,locationAddress,serviceTime}`（后台另加userId），不再需要order嵌套或取送两地。线上不提交地点，兼职必须工作时间；价格、场景必填，不接受缺价格请求回退距离计价。旧已创建订单不重写金额。
 - 已接单起（ACCEPTED/PICKING/DELIVERING/DELIVERED/FINISHED）订单发布者可提交投诉，描述必填1–255字；每单最多一张OPEN/PROCESSING活动工单。`GET /api/v1/orders/{id}/complaints` 查询服务端处理记录，发布者/承运骑手可看，其他用户不可看。APPROVED/REJECTED/DONE为终态，可针对新问题再次投诉，但累计金额仍受本单额度限制。
 - 投诉审核接口 `/api/v1/admin/complaints/{id}/review` 接收 `{decision,reason,amountFen}`，金额单位分且必须为JSON非负整数。受理/驳回必须0元，成立可0元；正额成立要求订单已送达/完成、存在承运骑手与成功MOCK支付，**从骑手本单分账扣除并等额赔付发布者，累计不超过本单骑手原分账**。订单级行锁串行化并发审核，终态不可重复审核。
 - `t_complaint_deduction` 另记扣款/赔付账本，不改写原支付流水、订单金额或原分账。审核状态、扣款、操作记录、审计同事务，任何失败全部回滚。旧投诉handle仅支持0元受理/办结，不能绕过新审核直接赔付。
@@ -136,6 +139,10 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 - **本轮钱包收入和提现仅MOCK账务，不代表有真实充值资金，不发送微信/银行卡转账，不扣真实余额，不声称真实提现到账。** 当前MOCK余额绝不可接真实出款；接入真实支付/提现前必须隔离资金来源、实名/合规审核、商户能力、回调验签、幂等及对账。
 - API：`GET /api/v1/wallet`、`GET /wallet/entries`、`GET/POST /wallet/withdrawals`；后台 `GET /api/v1/admin/wallets`、`GET /wallets/{userId}/entries`、`GET /withdrawals`、`POST /withdrawals/{id}/review`。查询均15条分页、0-based，钱包响应no-store，后台分别校验wallets/withdrawals实时权限。
 - 新增幂等迁移 `db/migrations/20261115_wallet.sql`（5张表+2菜单及超级管理员授权），默认/local/docker启动接入，不扫描历史数据。先备份并升级后端/数据库，再更新后台和小程序；没有自动执行远程钱包迁移。
+
+### 9）服务型自定义任务升级
+
+`db/migrations/20261115_task_service_pricing.sql` 幂等追加 `t_custom_task` 的 `task_mode/price_fen/contact/phone/location_address/service_time` 及自定价范围约束；历史任务默认 `DELIVERY`，`price_fen` 保留NULL并按原订单金额展示，**不更新历史订单、支付或钱包**。默认/local/docker启动按钱包迁移后执行本脚本。请先备份并升级后端数据库，再同时更新后台、小程序；尚未在远程数据库自动执行。线上/上门/兼职仍沿用“提交完成15分钟后默认确认”的演示规则，发布者须及时核对；通马桶、建材搬运等实际服务上线前需另行核对人员资质、劳动安全、服务范围与保险，不代表已实现正式用工/实名或安全审核。
 
 ## 三、Docker 部署
 

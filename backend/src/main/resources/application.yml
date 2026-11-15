@@ -25,7 +25,7 @@ spring:
     init:
       mode: always
       encoding: UTF-8
-      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql,classpath:db/migrations/20261113_wechat_config.sql,classpath:db/migrations/20261114_user_profile.sql,classpath:db/migrations/20261115_address_region.sql,classpath:db/migrations/20261115_custom_tasks.sql,classpath:db/migrations/20261115_wallet.sql
+      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql,classpath:db/migrations/20261113_wechat_config.sql,classpath:db/migrations/20261114_user_profile.sql,classpath:db/migrations/20261115_address_region.sql,classpath:db/migrations/20261115_custom_tasks.sql,classpath:db/migrations/20261115_wallet.sql,classpath:db/migrations/20261115_task_service_pricing.sql
 
 # 调度参数（对应功能设计文档 8.2 调度引擎 / 详细设计 3.3 计价，全部可配置化）
 feilv:

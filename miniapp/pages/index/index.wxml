@@ -21,8 +21,8 @@
       <view class="service-icon">{{item.code === 'SEND' ? '送' : item.code === 'BUY' ? '买' : item.code === 'CUSTOM' ? '自' : '办'}}</view>
       <view class="service-copy">
         <view class="service-name">{{item.label}}</view>
-        <view class="service-desc">{{item.code === 'CUSTOM' ? item.desc : item.code === 'SEND' ? '文件、鲜花、日常物品，同城送达' : item.code === 'BUY' ? '商超好物，帮你买回来' : '代取件、代排队，少跑一趟'}}</view>
-        <view class="service-cta">{{item.code === 'CUSTOM' ? '发布自定义任务' : item.code === 'SEND' ? '发布送件任务' : item.code === 'BUY' ? '发布代买任务' : '发布代办任务'}} <text>↗</text></view>
+        <view class="service-desc">{{item.desc}}</view>
+        <view class="service-cta">{{item.code === 'CUSTOM' ? '发布自定义任务' : '发布跑腿任务'}} <text>↗</text></view>
       </view>
     </button>
   </view>

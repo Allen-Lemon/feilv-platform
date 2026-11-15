@@ -1,1 +1,3 @@
 /* 通用表单、卡片与布局由 app.wxss 提供。 */
+.task-title { margin-top: 16rpx; color: #202939; font-size: 29rpx; font-weight: 600; line-height: 1.6; word-break: break-all; }
+.item .line, .item .hint { white-space: pre-wrap; word-break: break-all; }

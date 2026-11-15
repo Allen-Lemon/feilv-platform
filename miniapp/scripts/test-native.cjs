@@ -862,11 +862,11 @@ test('orders: backend 4091 redirects to profile with draft intact and no uncerta
 })
 test('login: home order intent resumes after profile return without trapping browsing on cancellation', async () => {
   const env = environment(); const home = env.page('pages/index/index', {})
-  home.onLoad({}); home.onShow(); home.create({ currentTarget: { dataset: { type: 'BUY' } } })
+  home.onLoad({}); home.onShow(); home.create({ currentTarget: { dataset: { type: 'SEND' } } })
   assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
   home.onHide(); home.onShow(); assert.equal(env.calls.navigation.length, 1)
   env.load(path.join(native, 'utils/session.js')).save({ token: 'new', userId: 1, role: 'USER', nickname: '微信用户' })
-  home.onShow(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=BUY')
+  home.onShow(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=SEND')
   home.onHide(); home.onShow(); assert.equal(env.calls.navigation.length, 2)
 })
 test('copy: avatar selection and required phone are explicit; no legacy no-avatar or optional-phone claims', () => {
@@ -1214,7 +1214,7 @@ test('simple publish: home keeps only distinct service entries and routes shared
   assert.equal(home.includes('home-shortcuts'), false)
   for (const handler of ['orders', 'address', 'settings']) assert.equal(home.includes('bindtap="' + handler + '"'), false)
   assert.equal((home.match(/bindtap="create"/g) || []).length, 1)
-  assert.ok(home.includes('wx:for="{{types}}"')); assert.ok(home.includes('发布送件任务')); assert.ok(home.includes('MOCK'))
+  assert.ok(home.includes('wx:for="{{types}}"')); assert.ok(home.includes('发布跑腿任务')); assert.ok(home.includes('MOCK'))
   const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8')
   assert.equal(create.includes('bindtap="calculate"'), false); assert.equal((create.match(/bindtap="next"/g) || []).length, 1)
   assert.ok(create.includes('wx:if="{{fromContactEditing}}"')); assert.ok(create.includes('wx:if="{{moreVisible}}"'))
@@ -1533,32 +1533,39 @@ test('development options: failed or missing backend endpoint gives actionable e
 const taskTagRows = () => Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: '后台标签' + (i + 1), enabled: true, sort: i, version: 1 }))
 async function customCreate(env, api = {}) {
   env.authenticated()
-  const page = env.page('pages/order/create', Object.assign({ async addressList() { return [] }, async taskTags() { return taskTagRows() }, async me() { return profileValue({ mobileBound: true }) }, async quote() { return { totalFen: 650, items: [] } } }, api))
+  const page = env.page('pages/order/create', Object.assign({ async addressList() { return [] }, async taskTags() { return taskTagRows() }, async me() { return profileValue({ mobileBound: true }) }, async quote(data) { return { totalFen: data.taskPriceFen, riderShareFen: 455, platformShareFen: 195, items: [] } } }, api))
   page.onLoad({ type: 'CUSTOM' }); await page.onShow()
-  Object.assign(page.data.form, { fromContact: '甲', fromPhone: '13800000000', fromAddress: 'A', toContact: '乙', toPhone: '13900000000', toAddress: 'B' })
-  page.data.distanceKm = '2'; page.data.weightKg = '5'
+  Object.assign(page.data.form, { contact: '甲', phone: '13800000000', locationAddress: 'A' })
+  page.data.taskPrice = '6.50'
   page.input(event('taskTitle', '  自定义标题  ')); page.input(event('taskContent', '  完整任务要求  '))
   return page
 }
 function tagEvent(id) { return { currentTarget: { dataset: { id } } } }
 function okRequest(req, value) { req.success({ statusCode: 200, data: { code: 0, data: value } }) }
-test('custom task API: quote routes only CUSTOM and create separates task fields from OrderCreateReq', async () => {
+test('custom task API: exact service body and price-only quote never include nested order or delivery fields', async () => {
   const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
   for (const type of ['CUSTOM', 'SEND']) {
-    const quoting = api.quote({ orderType: type, distanceM: 2500, weightKg: 2 }); const req = env.calls.requests.at(-1)
+    const quoting = api.quote({ orderType: type, taskPriceFen: 650, distanceM: 2500, weightKg: 2 }); const req = env.calls.requests.at(-1)
     assert.ok(req.url.endsWith(type === 'CUSTOM' ? '/custom-tasks/quote' : '/orders/quote'))
-    assert.equal(req.data.distanceM, 2500); assert.equal('orderType' in req.data, type !== 'CUSTOM'); okRequest(req, { totalFen: 650, items: [] }); await quoting
+    if (type === 'CUSTOM') assert.deepEqual(JSON.parse(JSON.stringify(req.data)), { priceFen: 650 })
+    else { assert.equal(req.data.distanceM, 2500); assert.equal(req.data.weightKg, 2) }
+    okRequest(req, { totalFen: 650, riderShareFen: 455, platformShareFen: 195, items: [] }); await quoting
   }
-  const payload = { orderType: 'CUSTOM', taskTitle: '标题', taskContent: '内容', taskTagIds: '2,5', fromAddress: '取件地址', goodsDesc: '标题', distanceM: 2500, weightKg: 2 }
+  const payload = { orderType: 'CUSTOM', taskTitle: '标题', taskContent: '内容', taskTagIds: '5,2', taskMode: 'ONSITE', taskPriceFen: 650,
+    contact: '甲', phone: '13800000000', locationAddress: '服务地点', serviceTime: '周六上午', fromAddress: '禁止发送', distanceM: 2500, weightKg: 2 }
   const creating = api.createOrder(payload); const req = env.calls.requests.at(-1)
-  assert.ok(req.url.endsWith('/api/v1/custom-tasks')); assert.equal(req.data.title, '标题'); assert.equal(req.data.content, '内容')
-  assert.deepEqual(Array.from(req.data.tagIds), [2, 5]); assert.equal(req.data.order.orderType, 'CUSTOM'); assert.equal(req.data.order.fromAddress, '取件地址')
-  assert.equal('taskTitle' in req.data.order, false); assert.equal('taskContent' in req.data.order, false); assert.equal('taskTagIds' in req.data.order, false)
-  assert.equal(payload.taskTagIds, '2,5'); okRequest(req, { id: 77 }); assert.equal((await creating).id, 77)
+  assert.ok(req.url.endsWith('/api/v1/custom-tasks'))
+  assert.deepEqual(JSON.parse(JSON.stringify(req.data)), { title: '标题', content: '内容', tagIds: [2, 5], taskMode: 'ONSITE', priceFen: 650, contact: '甲', phone: '13800000000', locationAddress: '服务地点', serviceTime: '周六上午' })
+  assert.equal(payload.taskTagIds, '5,2'); okRequest(req, { id: 77 }); assert.equal((await creating).id, 77)
   const ordinary = { orderType: 'SEND', goodsDesc: '文件' }; const sending = api.createOrder(ordinary)
   assert.ok(env.calls.requests.at(-1).url.endsWith('/api/v1/orders')); assert.equal(env.calls.requests.at(-1).data, ordinary); okRequest(env.calls.requests.at(-1), { id: 78 }); await sending
-  const empty = api.createOrder(Object.assign({}, payload, { taskTagIds: '' })); assert.equal(env.calls.requests.at(-1).data.tagIds.length, 0); okRequest(env.calls.requests.at(-1), { id: 79 }); await empty
+  const empty = api.createOrder(Object.assign({}, payload, { taskTagIds: '', taskMode: 'ONLINE' })); assert.equal(env.calls.requests.at(-1).data.tagIds.length, 0); assert.equal(env.calls.requests.at(-1).data.locationAddress, ''); assert.equal(env.calls.requests.at(-1).data.serviceTime, ''); okRequest(env.calls.requests.at(-1), { id: 79 }); await empty
   for (const taskTagIds of ['1,1', '0', 'not-an-id', '1,2,3,4,5,6']) await assert.rejects(api.createOrder(Object.assign({}, payload, { taskTagIds })))
+  for (const taskPriceFen of [0, -1, 100000001, 0.5, '650', NaN]) {
+    const count = env.calls.requests.length
+    await assert.rejects(api.quote({ orderType: 'CUSTOM', taskPriceFen })); await assert.rejects(api.createOrder(Object.assign({}, payload, { taskPriceFen })))
+    assert.equal(env.calls.requests.length, count)
+  }
 })
 test('custom task API: authenticated tag, task metadata and complaint reads retain session scope', async () => {
   const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
@@ -1569,17 +1576,17 @@ test('custom task API: authenticated tag, task metadata and complaint reads reta
   const session = env.load(path.join(native, 'utils/session.js')); const bound = api.forSession(session.revision()); session.clear()
   const count = env.calls.requests.length; await assert.rejects(bound.taskTags()); assert.equal(env.calls.requests.length, count)
 })
-test('custom task home: exactly fourth independent service is available to users and riders without duplicate shortcuts', () => {
+test('custom task home: exactly two independent services are available to users and riders without duplicate shortcuts', () => {
   for (const role of ['USER', 'RIDER']) {
     const env = environment(); env.authenticated(role); const page = env.page('pages/index/index', {}); page.onLoad({}); page.onShow()
-    assert.deepEqual(Array.from(page.data.types, t => t.code), ['SEND', 'BUY', 'ERRAND', 'CUSTOM'])
+    assert.deepEqual(Array.from(page.data.types, t => t.code), ['SEND', 'CUSTOM'])
     page.create({ currentTarget: { dataset: { type: 'CUSTOM' } } }); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=CUSTOM')
     for (const name of ['orders', 'address', 'settings']) assert.equal(page[name], undefined)
   }
 })
-test('custom task form: title/content boundaries, optional tags, canonical string IDs and existing route constraints', async () => {
+test('custom task form: title/content boundaries, optional tags and canonical string IDs without route constraints', async () => {
   const env = environment(); const page = await customCreate(env)
-  let payload = page.buildPayload(); assert.equal(payload.taskTitle, '自定义标题'); assert.equal(payload.taskContent, '完整任务要求'); assert.equal(payload.goodsDesc, payload.taskTitle); assert.equal(payload.taskTagIds, '')
+  let payload = page.buildPayload(); assert.equal(payload.taskTitle, '自定义标题'); assert.equal(payload.taskContent, '完整任务要求'); assert.equal(payload.goodsDesc, undefined); assert.equal(payload.taskTagIds, '')
   for (const [field, max] of [['taskTitle', 64], ['taskContent', 1000]]) {
     const original = page.data.form[field]
     for (const value of ['', '  ', '字'.repeat(max + 1)]) { page.data.form[field] = value; assert.throws(() => page.buildPayload()) }
@@ -1589,7 +1596,8 @@ test('custom task form: title/content boundaries, optional tags, canonical strin
   assert.equal(page.data.form.taskTagIds, '1,2,3,4,5'); page.tagChoice(tagEvent(6)); assert.equal(page.data.selectedTagCount, 5)
   assert.ok(env.calls.toast.includes('最多选择5个标签')); page.tagChoice(tagEvent(3)); assert.equal(page.data.form.taskTagIds, '1,2,4,5')
   payload = page.buildPayload(); assert.equal(env.load(path.join(native, 'utils/draft.js')).samePayload(payload, page.buildPayload()), true)
-  page.data.distanceKm = ''; assert.throws(() => page.buildPayload()); page.data.distanceKm = '2'; page.data.weightKg = '1.5'; assert.throws(() => page.buildPayload())
+  page.data.distanceKm = ''; page.data.weightKg = 'not-a-weight'; assert.doesNotThrow(() => page.buildPayload())
+  for (const key of ['distanceM', 'weightKg', 'fromAddress', 'toAddress', 'goodsDesc']) assert.equal(key in page.buildPayload(), false)
 })
 test('custom task tags: errors are visible and retryable with no fabricated options, disabled tags stay excluded', async () => {
   const env = environment(); let fail = true
@@ -1609,7 +1617,7 @@ test('custom task drafts: partial editing persists; restored title/content/tags 
   assert.equal(env.storage.get('native_draft').savedAt, saved.savedAt); await restored.next(); assert.equal(env.storage.get('native_draft').savedAt, saved.savedAt)
   assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
   const other = environment(); const partial = await customCreate(other); partial.data.distanceKm = ''; partial.input(event('taskContent', '未填完也保存'))
-  const again = other.page('pages/order/create', {}); again.onLoad({ type: 'CUSTOM' }); assert.equal(again.data.form.taskContent, '未填完也保存'); assert.equal(again.data.distanceKm, '')
+  const again = other.page('pages/order/create', {}); again.onLoad({ type: 'CUSTOM' }); assert.equal(again.data.form.taskContent, '未填完也保存'); assert.equal(again.data.taskPrice, '6.50')
 })
 test('custom task tags: stale account responses cannot replace new account form or tags', async () => {
   const env = environment(); env.authenticated(); let respond
@@ -2042,6 +2050,205 @@ test('wallet disclosure: native form not KPI/chart, safe records, debt/refund ru
   const env = environment(); const legal = env.page('pages/legal/legal'); legal.onLoad({ kind: 'privacy' }); const privacy = legal.data.sections.map(s => s.text).join(' ')
   for (const text of ['钱包', '冻结', '欠款', '原申请金额', '幂等编号', 'MOCK', '不代表真钱到账']) assert.ok(privacy.includes(text), text)
   for (const file of ['pages/wallet/wallet.js', 'utils/wallet.js', 'utils/api.js']) assert.equal(/wx\.(?:requestPayment|requestMerchantTransfer|requestTransfer)\s*\(/.test(fs.readFileSync(path.join(native, file), 'utf8')), false)
+})
+test('service price: custom form shares exact decimal wallet parsing and inclusive boundaries', async () => {
+  const page = await customCreate(environment())
+  for (const [text, fen] of [['0.01', 1], ['0.29', 29], ['1', 100], ['1.1', 110], ['1000000', 100000000], ['1000000.00', 100000000]]) {
+    page.number(event('taskPrice', text)); const payload = page.buildPayload()
+    assert.equal(payload.taskPriceFen, fen); assert.equal(page.data.taskPrice, text); assert.equal(page.data.quote, null)
+  }
+  for (const text of ['', ' ', '0', '0.00', '-1', '+1', '.29', '1.', '1.001', '1e2', 'Infinity', 'NaN', '1000000.01', '1000001', '1,000', ' 1', '1 ']) {
+    page.number(event('taskPrice', text)); assert.throws(() => page.buildPayload(), /金额/)
+  }
+})
+test('service scenes: ONLINE no address, ONSITE single saved address, PART_TIME location plus required human time', async () => {
+  const env = environment(); const page = await customCreate(env)
+  assert.equal(page.data.form.taskMode, 'ONSITE')
+  page.data.form.locationAddress = ''; assert.throws(() => page.buildPayload(), /地点/)
+  page.data.addressOptions = [regionAddress()]
+  page.addressChange({ currentTarget: { dataset: { side: 'location' } }, detail: { value: 0 } })
+  assert.ok(page.data.form.locationAddress.includes('德江')); assert.equal(page.data.form.contact, regionAddress().contact)
+  page.input(event('contact', '本次联系人')); page.input(event('phone', '13900000000'))
+  assert.equal(page.buildPayload().contact, '本次联系人'); assert.equal(page.buildPayload().phone, '13900000000')
+  page.input(event('serviceTime', '周日上门')); page.data.quote = { totalText: '6.50' }
+  await page.sceneChoice({ currentTarget: { dataset: { mode: 'ONLINE' } } })
+  assert.equal(page.data.quote, null); assert.equal(page.data.form.locationAddress, ''); assert.equal(page.data.form.serviceTime, ''); assert.equal(page.data.locationAddressId, null)
+  assert.equal(page.buildPayload().locationAddress, '')
+  page.data.form.locationAddress = '旧残留地址'; assert.equal(page.buildPayload().locationAddress, '')
+  for (const field of ['contact', 'phone']) { const old = page.data.form[field]; page.data.form[field] = ''; assert.throws(() => page.buildPayload(), /联系人/); page.data.form[field] = old }
+  await page.sceneChoice({ currentTarget: { dataset: { mode: 'PART_TIME' } } }); page.applyAddress('location', regionAddress())
+  assert.throws(() => page.buildPayload(), /兼职/)
+  page.input(event('serviceTime', '周六9点至12点搬水泥')); assert.equal(page.buildPayload().serviceTime, '周六9点至12点搬水泥')
+  page.data.form.serviceTime = '字'.repeat(100); assert.doesNotThrow(() => page.buildPayload())
+  page.data.form.serviceTime += '字'; assert.throws(() => page.buildPayload(), /100/)
+  await page.sceneChoice({ currentTarget: { dataset: { mode: 'ONSITE' } } }); assert.equal(page.data.form.serviceTime, ''); assert.equal(page.data.form.locationAddress, '')
+})
+test('service address: refresh invalidates edited or removed selection and ONLINE never restores saved location', async () => {
+  const env = environment(); let rows = [regionAddress()]
+  const page = await customCreate(env, { async addressList() { return rows } })
+  page.addressChange({ currentTarget: { dataset: { side: 'location' } }, detail: { value: 0 } })
+  assert.equal(page.data.locationAddressId, rows[0].id)
+  rows = [Object.assign({}, regionAddress(), { detailAddress: '服务地点新门牌', address: '新地址' })]
+  await page.loadAddresses(); assert.ok(page.data.form.locationAddress.includes('新门牌'))
+  rows = []; await page.loadAddresses(); assert.equal(page.data.form.locationAddress, ''); assert.equal(page.data.locationAddressId, null)
+  await page.sceneChoice({ currentTarget: { dataset: { mode: 'ONLINE' } } }); page.applyAddress('location', regionAddress()); assert.equal(page.data.form.locationAddress, '')
+})
+test('delivery tabs: shared home defaults SEND, old BUY/ERRAND deep links and clean type switching preserve pending identity', async () => {
+  const env = environment(); env.authenticated()
+  const home = env.page('pages/index/index', {}); home.onLoad({}); home.onShow()
+  for (const type of ['SEND', 'CUSTOM']) { home.create({ currentTarget: { dataset: { type } } }); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=' + type) }
+  for (const type of ['BUY', 'ERRAND']) { const deep = env.page('pages/order/create', {}); deep.onLoad({ type }); assert.equal(deep.data.form.orderType, type) }
+  const page = env.page('pages/order/create', { async addressList() { return [] } }); page.onLoad({}); page._visible = true; fillCreate(page)
+  page.data.quote = { totalText: '5.00' }; page.data.fromAddressId = 12
+  const saved = { owner: 1, savedAt: 888, payload: { orderType: 'SEND' }, quote: {} }; env.storage.set('native_draft', saved)
+  env.storage.set('native_pending_order', { owner: 1, savedAt: 888, uncertain: true })
+  await page.typeChoice({ currentTarget: { dataset: { type: 'BUY' } } })
+  assert.equal(page.data.form.orderType, 'BUY'); assert.equal(page.data.form.goodsDesc, ''); assert.equal(page.data.form.fromAddress, ''); assert.equal(page.data.quote, null); assert.equal(page.data.fromAddressId, null)
+  await page.next(); assert.equal(env.storage.get('native_draft'), saved); assert.equal(env.storage.get('native_pending_order').savedAt, 888)
+  assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
+})
+test('service quote: total and both shares must come from backend and match without hardcoded percentage', async () => {
+  for (const bad of [{ totalFen: 650, items: [] }, { totalFen: 650, riderShareFen: 455, items: [] },
+    { totalFen: 651, riderShareFen: 456, platformShareFen: 195, items: [] }, { totalFen: 650, riderShareFen: -1, platformShareFen: 651, items: [] },
+    { totalFen: 650, riderShareFen: 454, platformShareFen: 195, items: [] }, { totalFen: 650, riderShareFen: '455', platformShareFen: 195, items: [] }]) {
+    const env = environment(); const page = await customCreate(env, { async quote() { return bad } }); await page.next()
+    assert.equal(env.calls.navigation.length, 0); assert.equal(env.storage.get('native_draft').quote, null); assert.ok(env.calls.toast.some(t => t.includes('分成响应异常')))
+  }
+  const formatter = environment().load(path.join(native, 'utils/format.js'))
+  assert.equal(formatter.validShares({ riderShareFen: 0, platformShareFen: 650 }, 650), true)
+  assert.equal(formatter.validShares({ riderShareFen: 650, platformShareFen: 0 }, 650), true)
+  const env = environment(); let seen
+  const page = await customCreate(env, { async quote(data) { seen = data; return { totalFen: 650, riderShareFen: 500, platformShareFen: 150, items: [] } } })
+  await page.next(); assert.deepEqual(JSON.parse(JSON.stringify(seen)), { orderType: 'CUSTOM', taskPriceFen: 650 })
+  const quote = env.storage.get('native_draft').quote; assert.equal(quote.riderShareText, '5.00'); assert.equal(quote.platformShareText, '1.50')
+  const confirm = env.page('pages/order/confirm', {}); confirm.onLoad({}); assert.equal(confirm.data.isService, true); assert.equal(confirm.data.quote.totalText, '6.50'); assert.equal(confirm.data.invalid, false)
+})
+test('service draft: amount and scene restore, unchanged payload stable, new scene invalidates quote', async () => {
+  const env = environment(); const page = await customCreate(env); await page.sceneChoice({ currentTarget: { dataset: { mode: 'ONLINE' } } })
+  page.number(event('taskPrice', '0.29')); page.input(event('serviceTime', '今天下午'))
+  const again = env.page('pages/order/create', { async addressList() { return [] }, async taskTags() { return taskTagRows() } }); again.onLoad({ type: 'CUSTOM' }); await again.onShow()
+  assert.equal(again.data.taskPrice, '0.29'); assert.equal(again.data.form.taskMode, 'ONLINE'); assert.equal(again.data.form.serviceTime, '')
+  const a = again.buildPayload(); assert.equal(env.load(path.join(native, 'utils/draft.js')).samePayload(a, again.buildPayload()), true)
+})
+test('legacy CUSTOM drafts: uncreated requires rewrite, known ID retries old order, unknown result never recreates', async () => {
+  for (const pending of [null, { id: 77 }, { uncertain: true }]) {
+    const env = environment(); env.authenticated(); let creates = 0; let pays = 0
+    const saved = { owner: 1, savedAt: 876, payload: { orderType: 'CUSTOM', taskTitle: '旧配送', fromAddress: 'A', toAddress: 'B', distanceM: 2000, weightKg: 1 }, quote: { totalText: '6.50', items: [] } }
+    env.storage.set('native_draft', saved)
+    if (pending) env.storage.set('native_pending_order', Object.assign({ owner: 1, savedAt: 876 }, pending))
+    const form = env.page('pages/order/create', { async addressList() { return [] }, async taskTags() { return taskTagRows() } }); form.onLoad({ type: 'CUSTOM' }); await form.onShow()
+    assert.equal(form.data.legacyDraft, true); assert.equal(form.data.form.taskTitle, ''); assert.equal(form.data.taskPrice, '')
+    if (pending) { form.input(event('taskTitle', '新标题')); await form.next(); assert.equal(env.storage.get('native_draft'), saved) }
+    const confirm = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async orderDetail() { return { id: 77, status: 'WAIT_PAY' } }, async payOrder(id) { pays++; assert.equal(id, 77) }, async createOrder() { creates++; return { id: 99 } } })
+    confirm.onLoad({}); confirm.onShow(); await confirm.submit()
+    assert.equal(creates, 0); assert.equal(pays, pending && pending.id ? 1 : 0)
+    if (!pending) assert.equal(confirm.data.invalid, true)
+    if (pending && pending.uncertain) { assert.equal(confirm.data.uncertain, true); assert.equal(env.storage.get('native_draft'), saved) }
+    if (!pending) { form.input(event('taskTitle', '重新填写')); assert.equal(env.storage.get('native_draft').payload.taskMode, 'ONSITE'); assert.equal(env.storage.get('native_draft').payload.fromAddress, undefined) }
+  }
+})
+test('service confirmation: corrupted or incomplete shares cannot create a new order', async () => {
+  const env = environment(); const page = await customCreate(env); await page.next()
+  env.storage.get('native_draft').quote.riderShareFen = undefined
+  let creates = 0; const confirm = env.page('pages/order/confirm', { async createOrder() { creates++ } }); confirm.onLoad({}); confirm.onShow(); await confirm.submit()
+  assert.equal(confirm.data.invalid, true); assert.equal(creates, 0)
+})
+test('service API: start and complete POST empty body to exact endpoints with session binding', async () => {
+  const env = environment(); env.authenticated('RIDER'); const api = env.load(path.join(native, 'utils/api.js'))
+  for (const [name, suffix] of [['serviceStart', 'service-start'], ['serviceComplete', 'service-complete']]) {
+    const pending = api[name](81); const req = env.calls.requests.at(-1)
+    assert.ok(req.url.endsWith('/api/v1/orders/81/' + suffix)); assert.equal(req.method, 'POST'); assert.equal(Object.keys(req.data).length, 0)
+    okRequest(req, { id: 81 }); await pending
+  }
+  const session = env.load(path.join(native, 'utils/session.js')); const bound = api.forSession(session.revision()); session.clear(); const count = env.calls.requests.length
+  await assert.rejects(bound.serviceStart(81)); await assert.rejects(bound.serviceComplete(81)); assert.equal(env.calls.requests.length, count)
+})
+async function riderPage(env, patch = {}) {
+  env.authenticated('RIDER')
+  const page = env.page('pages/rider/workbench', Object.assign({ async riderMe() { return { onlineStatus: 1 } }, async grabList() { return [] }, async riderOrders() { return { content: [], last: true } } }, patch))
+  page.onLoad({}); await page.onShow(); return page
+}
+test('rider service workflow: accepted start, PICKING complete, DELIVERED waits owner with no delivery or location calls', async () => {
+  const env = environment(); let statusCode = 'ACCEPTED'; const calls = []
+  const page = await riderPage(env, {
+    async riderOrders() { return { content: [{ id: 81, orderType: 'CUSTOM', taskMode: 'ONLINE', title: '设计资料', statusCode, status: statusCode, rewardFen: 700 }], last: true } },
+    async serviceStart(id) { calls.push(['start', id]); statusCode = 'PICKING' }, async serviceComplete(id) { calls.push(['complete', id]); statusCode = 'DELIVERED' },
+    async pickup() { assert.fail('no pickup') }, async depart() { assert.fail('no depart') }, async deliver() { assert.fail('no deliver') }, async reportTrack() { assert.fail('no track') }
+  })
+  let row = page.data.orders[0]; assert.equal(row.canServiceStart, true); assert.equal(row.canPickup, false); assert.equal(row.rewardText, '7.00')
+  const tap = { currentTarget: { dataset: { id: 81 } } }; page.detail(tap); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/detail?id=81')
+  await page.pickup(tap); await page.depart(tap); await page.deliver(tap); await page.report(tap)
+  await page.serviceComplete(tap); assert.equal(calls.length, 0)
+  await page.serviceStart(tap); row = page.data.orders[0]; assert.equal(row.canServiceComplete, true); assert.equal(row.canDepart, false); assert.equal(row.statusText, '服务中')
+  await page.serviceComplete(tap); row = page.data.orders[0]; assert.equal(row.statusText, '待用户确认完成'); assert.equal(row.canServiceStart, false); assert.equal(row.canServiceComplete, false)
+  assert.deepEqual(calls, [['start', 81], ['complete', 81]]); assert.equal(env.calls.locations, 0)
+})
+test('rider legacy DELIVERY workflow: pickup, depart, deliver remain available and never service actions', async () => {
+  for (const orderType of ['SEND', 'CUSTOM']) {
+    const env = environment(); let statusCode = 'ACCEPTED'; const calls = []
+    const page = await riderPage(env, { async riderOrders() { return { content: [{ id: 82, orderType, taskMode: 'DELIVERY', status: statusCode, statusCode, rewardFen: 455 }], last: true } },
+      async pickup(id, code) { calls.push(['pickup', id, code]); statusCode = 'PICKING' }, async depart(id) { calls.push(['depart', id]); statusCode = 'DELIVERING' }, async deliver(id) { calls.push(['deliver', id]); statusCode = 'DELIVERED' }, async serviceStart() { assert.fail('no service') }, async serviceComplete() { assert.fail('no service') } })
+    const tap = { currentTarget: { dataset: { id: 82 } } }; assert.equal(page.data.orders[0].canPickup, true); assert.equal(page.data.orders[0].canServiceStart, false)
+    await page.serviceStart(tap); page.codeInput({ currentTarget: tap.currentTarget, detail: { value: '012345' } }); await page.pickup(tap)
+    assert.equal(page.data.orders[0].canDepart, true); await page.depart(tap); assert.equal(page.data.orders[0].canDeliver, true); await page.deliver(tap)
+    assert.deepEqual(calls, [['pickup', 82, '012345'], ['depart', 82], ['deliver', 82]])
+  }
+})
+test('rider service grab: missing pickup code is normal and never exposes code prompt or undefined text', async () => {
+  for (const taskMode of ['ONLINE', 'ONSITE', 'PART_TIME']) {
+    const env = environment(); const modals = []; env.wx.showModal = options => { modals.push(options); options.success({ confirm: true }) }
+    const page = await riderPage(env, { async grabList() { return [{ orderId: 81, orderType: 'CUSTOM', taskMode, title: '服务任务', locationAddress: '地点', serviceTime: '明天', rewardFen: 500 }] }, async grab() { return { orderId: 81, pickupCode: null } } })
+    assert.equal(page.data.halls[0].isService, true); assert.equal(page.data.halls[0].rewardText, '5.00')
+    await page.grab({ currentTarget: { dataset: { id: 81 } } }); assert.equal(page.data.lastGrabCode, '')
+    assert.ok(modals[0].content.includes('开始服务')); assert.equal(/核对.*取件码|undefined|null/.test(modals[0].content), false); assert.equal(env.calls.locations, 0)
+  }
+})
+test('rider service actions: canceled, failed, duplicate and stale-session operations do not advance service', async () => {
+  const env = environment(); let starts = 0; let resolve
+  const page = await riderPage(env, { async riderOrders() { return { content: [{ id: 81, orderType: 'CUSTOM', taskMode: 'ONSITE', statusCode: 'ACCEPTED' }], last: true } }, serviceStart() { starts++; return new Promise(r => { resolve = r }) } })
+  const tap = { currentTarget: { dataset: { id: 81 } } }
+  env.wx.showModal = options => options.success({ confirm: false }); await page.serviceStart(tap); assert.equal(starts, 0)
+  env.wx.showModal = options => options.success({ confirm: true }); const pending = page.serviceStart(tap); await flush(); await page.serviceStart(tap); assert.equal(starts, 1); resolve({}); await pending
+  let finishModal; env.wx.showModal = options => { finishModal = options.success }; const stale = page.serviceStart(tap); await flush()
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'new-rider', userId: 2, role: 'RIDER' }); finishModal({ confirm: true }); await stale; assert.equal(starts, 1)
+})
+test('rider service failures: failed start or completion retains service state and allows refresh retry', async () => {
+  for (const [action, statusCode] of [['serviceStart', 'ACCEPTED'], ['serviceComplete', 'PICKING']]) {
+    const env = environment(); let attempts = 0
+    const page = await riderPage(env, { async riderOrders() { return { content: [{ id: 81, orderType: 'CUSTOM', taskMode: 'ONSITE', statusCode }], last: true } }, async [action]() { attempts++; throw new Error('服务接口暂不可用') } })
+    await page[action]({ currentTarget: { dataset: { id: 81 } } }); assert.equal(attempts, 1); assert.equal(page.data.busy, false); assert.equal(page.data.orders[0].statusCode, statusCode); assert.ok(env.calls.toast.includes('服务接口暂不可用'))
+    await page.load(); await page[action]({ currentTarget: { dataset: { id: 81 } } }); assert.equal(attempts, 2)
+  }
+})
+test('service display: mode/status classification retains historical DELIVERY and hides owner-only carrier actions', async () => {
+  const env = environment(); const fmt = env.load(path.join(native, 'utils/format.js'))
+  for (const taskMode of [undefined, 'DELIVERY']) assert.equal(fmt.order({ orderType: 'CUSTOM', taskMode, status: 'PICKING' }).isService, false)
+  for (const taskMode of ['ONLINE', 'ONSITE', 'PART_TIME']) {
+    const row = fmt.order({ orderType: 'CUSTOM', taskMode, status: 'PICKING' }); assert.equal(row.isService, true); assert.equal(row.statusText, '服务中')
+    assert.equal(fmt.order({ orderType: 'CUSTOM', taskMode, status: 'DELIVERED' }).statusText, '待确认完成')
+  }
+  for (const status of ['WAIT_PAY', 'ACCEPTED', 'DELIVERED', 'FINISHED']) {
+    const row = fmt.order({ orderType: 'CUSTOM', taskMode: 'ONLINE', status, owner: false }); assert.equal(row.canPay || row.canCancel || row.canConfirm || row.canReview, false)
+  }
+  const page = await detailPage(env, { async customTask() { return { title: '清洁', content: '清洁厨房', tags: [], taskMode: 'ONSITE', priceFen: 1000, contact: '甲', phone: '13800000000', locationAddress: '单个地点', serviceTime: '明天上午', riderShareFen: 800, platformShareFen: 200, createdBy: 999 } },
+    async payOrder() { assert.fail('carrier cannot pay') }, async confirmOrder() { assert.fail('carrier cannot confirm') }, async cancelOrder() { assert.fail('carrier cannot cancel') }, async review() { assert.fail('carrier cannot review') } }, { orderType: 'CUSTOM', taskMode: 'ONSITE', owner: false, status: 'DELIVERED' }, 'RIDER')
+  assert.equal(page.data.task.modeText, '上门服务'); assert.equal(page.data.task.priceText, '10.00'); assert.equal(page.data.task.riderShareText, '8.00'); assert.equal(page.data.task.hasShares, true); assert.equal(page.data.task.phone, '13800000000'); assert.equal('createdBy' in page.data.task, false)
+  page.track(); assert.equal(env.calls.navigation.length, 0); await page.pay(); await page.confirm(); await page.cancel(); await page.review()
+})
+test('service detail: owner confirms service completion and missing shares are not invented', async () => {
+  const env = environment(); const modals = []; env.wx.showModal = options => { modals.push(options); options.success({ confirm: true }) }
+  const page = await detailPage(env, { async customTask() { return { title: '线上整理', content: '整理资料', tags: [], taskMode: 'ONLINE', priceFen: 1000, contact: '甲', phone: '13800000000' } }, async confirmOrder() { return orderValue({ orderType: 'CUSTOM', taskMode: 'ONLINE', status: 'FINISHED' }) } }, { orderType: 'CUSTOM', taskMode: 'ONLINE', status: 'DELIVERED' })
+  assert.equal(page.data.task.hasShares, false); await page.confirm(); assert.equal(modals[0].title, '确认服务完成'); assert.equal(page.data.order.status, 'FINISHED')
+})
+test('service disclosure: scene examples, single address selector, precise total/shares, rider-only actions and privacy stay explicit', () => {
+  const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8'); const createJS = fs.readFileSync(path.join(native, 'pages/order/create.js'), 'utf8')
+  for (const text of ['data-side="location"', 'form.taskMode !== \'ONLINE\'', 'taskPrice', 'serviceTime', 'maxlength="100"', '不是骑手实拿', '70%', '30%']) assert.ok(create.includes(text), text)
+  for (const text of ['通马桶', '家电清洁', '搬水泥', '搬运', '资料整理', '设计']) assert.ok(createJS.includes(text), text)
+  const confirm = fs.readFileSync(path.join(native, 'pages/order/confirm.wxml'), 'utf8'); for (const text of ['发布任务总价', '骑手预计所得', '平台分成', 'quote.riderShareText', 'quote.platformShareText']) assert.ok(confirm.includes(text))
+  const detail = fs.readFileSync(path.join(native, 'pages/order/detail.wxml'), 'utf8'); assert.ok(detail.includes('wx:if="{{!order.isService}}"')); assert.ok(detail.includes('task.serviceTime')); assert.ok(detail.includes('task.phone'))
+  const rider = fs.readFileSync(path.join(native, 'pages/rider/workbench.wxml'), 'utf8'); for (const text of ['canServiceStart', 'canServiceComplete', 'bindtap="detail"', '查看任务详情', '骑手预计所得']) assert.ok(rider.includes(text))
+  const env = environment(); const legal = env.page('pages/legal/legal'); legal.onLoad({ kind: 'privacy' }); const privacy = legal.data.sections.map(s => s.text).join(' ')
+  for (const text of ['ONLINE', 'PART_TIME', '单服务地点', '总价', '联系方式', '仅由有权访问', '无取件码']) assert.ok(privacy.includes(text), text)
 })
 ;(async () => {
   let failures = 0

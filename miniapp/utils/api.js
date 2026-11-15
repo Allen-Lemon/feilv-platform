@@ -1,5 +1,19 @@
 const transport = require('./request')
 const root = '/api/v1'
+function validPrice(value) { return Number.isSafeInteger(value) && value >= 1 && value <= 100000000 }
+function customBody(data) {
+  const tagIds = data.taskTagIds ? String(data.taskTagIds).split(',').map(Number) : []
+  if (tagIds.length > 5 || tagIds.some(id => !Number.isSafeInteger(id) || id <= 0) || new Set(tagIds).size !== tagIds.length) throw new Error('任务标签无效，请重新选择')
+  const body = { title: String(data.taskTitle || '').trim(), content: String(data.taskContent || '').trim(), tagIds: tagIds.sort((a, b) => a - b),
+    taskMode: data.taskMode, priceFen: data.taskPriceFen, contact: String(data.contact || '').trim(), phone: String(data.phone || '').trim(),
+    locationAddress: data.taskMode === 'ONLINE' ? '' : String(data.locationAddress || '').trim(), serviceTime: data.taskMode === 'ONLINE' ? '' : String(data.serviceTime || '').trim() }
+  if (!['ONLINE', 'ONSITE', 'PART_TIME'].includes(body.taskMode) || !validPrice(body.priceFen)) throw new Error('任务场景或总价无效，请重新填写')
+  if (!body.title || body.title.length > 64 || !body.content || body.content.length > 1000) throw new Error('任务标题或内容无效')
+  if (!body.contact || body.contact.length > 30 || !/^1\d{10}$/.test(body.phone)) throw new Error('请填写联系人及11位手机号')
+  if ((body.taskMode !== 'ONLINE' && !body.locationAddress) || body.locationAddress.length > 255 || body.serviceTime.length > 100
+      || (body.taskMode === 'PART_TIME' && !body.serviceTime)) throw new Error('请核对服务地点与时间说明')
+  return body
+}
 function createApi(r) {
   return {
     wechatLogin: code => r.post(root + '/auth/wechat-login', { code, agreed: true }, { public: true }),
@@ -27,15 +41,14 @@ function createApi(r) {
     updateAddress: (id, data) => r.put(root + '/user/address/' + id, data),
     deleteAddress: id => r.delete(root + '/user/address/' + id),
     taskTags: () => r.get(root + '/task-tags'),
-    quote: data => data.orderType === 'CUSTOM'
-      ? r.post(root + '/custom-tasks/quote', { distanceM: data.distanceM, weightKg: data.weightKg })
-      : r.post(root + '/orders/quote', data),
+    quote: data => {
+      if (data.orderType !== 'CUSTOM') return r.post(root + '/orders/quote', data)
+      if (!validPrice(data.taskPriceFen)) return Promise.reject(new Error('任务总价无效，请重新填写'))
+      return r.post(root + '/custom-tasks/quote', { priceFen: data.taskPriceFen })
+    },
     createOrder: data => {
       if (data.orderType !== 'CUSTOM') return r.post(root + '/orders', data)
-      const { taskTitle, taskContent, taskTagIds, ...order } = data
-      const tagIds = taskTagIds ? String(taskTagIds).split(',').map(Number) : []
-      if (tagIds.length > 5 || tagIds.some(id => !Number.isSafeInteger(id) || id <= 0) || new Set(tagIds).size !== tagIds.length) return Promise.reject(new Error('任务标签无效，请重新选择'))
-      return r.post(root + '/custom-tasks', { title: taskTitle, content: taskContent, tagIds, order })
+      try { return r.post(root + '/custom-tasks', customBody(data)) } catch (e) { return Promise.reject(e) }
     },
     customTask: id => r.get(root + '/orders/' + id + '/custom-task'),
     orderComplaints: id => r.get(root + '/orders/' + id + '/complaints'),
@@ -55,6 +68,8 @@ function createApi(r) {
     pickup: (id, pickupCode) => r.post(root + '/orders/' + id + '/pickup', { pickupCode }),
     depart: id => r.post(root + '/orders/' + id + '/depart'),
     deliver: id => r.post(root + '/orders/' + id + '/deliver'),
+    serviceStart: id => r.post(root + '/orders/' + id + '/service-start'),
+    serviceComplete: id => r.post(root + '/orders/' + id + '/service-complete'),
     reportTrack: data => r.post(root + '/track/report', data),
     creditLogs: () => r.get(root + '/credit/logs')
   }

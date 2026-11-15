@@ -1,7 +1,6 @@
 package com.feilv.controller;
 
 import com.feilv.common.*;
-import com.feilv.dto.ApiDtos.QuoteVO;
 import com.feilv.dto.CustomTaskDtos.*;
 import com.feilv.service.*;
 import jakarta.validation.Valid;
@@ -40,7 +39,7 @@ public class AdminCustomTaskController {
     @Transactional
     public Result<TaskVO> publish(@Valid @RequestBody AdminPublishReq req) {
         access.requireMenu("tasks");
-        var order = tasks.publish(req.userId(), UserContext.userId(), "ADMIN", new PublishReq(req.title(), req.content(), req.tagIds(), req.order()));
+        var order = tasks.publish(req.userId(), UserContext.userId(), "ADMIN", req.publication());
         return Result.ok(tasks.detail(order.id(), null));
     }
 

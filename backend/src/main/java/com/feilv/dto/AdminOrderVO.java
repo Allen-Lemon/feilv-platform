@@ -11,12 +11,12 @@ public record AdminOrderVO(long id, String orderNo, String orderType, String sta
                            String pickupCode, String createdTime, String acceptedTime,
                            String deliveredTime, String finishTime,
                            Long userId, String userNickname, String userAvatarUrl,
-                           String userMobile, boolean userMobileBound) {
+                           String userMobile, boolean userMobileBound, String taskMode) {
     public static AdminOrderVO from(OrderVO order, Long userId, User user) {
         return new AdminOrderVO(order.id(), order.orderNo(), order.orderType(), order.status(), order.statusLabel(),
                 order.fromAddress(), order.toAddress(), order.goodsDesc(), order.estimateFeeFen(), order.realFeeFen(),
                 order.riderId(), order.pickupCode(), order.createdTime(), order.acceptedTime(), order.deliveredTime(),
                 order.finishTime(), userId, user == null ? "" : UserViews.text(user.getNickname()),
-                user == null ? "" : UserViews.text(user.getAvatarUrl()), UserViews.maskedMobile(user), UserViews.mobileBound(user));
+                user == null ? "" : UserViews.text(user.getAvatarUrl()), UserViews.maskedMobile(user), UserViews.mobileBound(user), order.taskMode());
     }
 }

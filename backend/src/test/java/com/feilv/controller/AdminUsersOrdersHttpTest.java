@@ -207,7 +207,7 @@ class AdminUsersOrdersHttpTest {
             if (!"owner".equals(component.getName())) assertTrue(row.has(component.getName()), component.getName());
         }
         assertFalse(row.has("owner"), "C端所有者布尔值无需增加到后台订单DTO");
-        assertEquals("WAIT_PAY", row.path("status").asText()); assertFalse(row.has("statusCode")); assertEquals(21, row.size());
+        assertEquals("WAIT_PAY", row.path("status").asText()); assertFalse(row.has("statusCode")); assertEquals(22, row.size()); assertEquals("DELIVERY", row.path("taskMode").asText());
         assertFalse(result.toString().contains("13800138001")); assertFalse(row.has("user"));
         JsonNode filtered = data(mvc.perform(get("/api/v1/admin/orders").header("Authorization", token)
                 .param("userId", customer.getId().toString()).param("status", "WAIT_PAY")).andReturn());
@@ -237,7 +237,8 @@ class AdminUsersOrdersHttpTest {
         }
         mvc.perform(get("/api/v1/admin/users/" + legacy.getId()).header("Authorization", token))
                 .andExpect(jsonPath("$.data.mobile").value("****")).andExpect(jsonPath("$.data.mobileBound").value(true));
-        assertEquals(17, com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents().length);
+        assertEquals(18, com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents().length);
+        assertEquals("taskMode", com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()[17].getName());
         assertEquals(boolean.class, com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()[16].getType());
         assertEquals("owner", com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()[16].getName());
     }

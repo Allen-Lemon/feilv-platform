@@ -35,6 +35,7 @@ public class AdminOrderService {
         var ids = result.stream().map(OrderMain::getUserId).filter(Objects::nonNull).distinct().toList();
         Map<Long, User> indexed = ids.isEmpty() ? Map.of() : users.findAllById(ids).stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
-        return result.map(order -> AdminOrderVO.from(orderService.toVO(order), order.getUserId(), indexed.get(order.getUserId())));
+        var tasks = orderService.taskIndex(result.getContent());
+        return result.map(order -> AdminOrderVO.from(orderService.toVO(order, OrderService.taskMode(tasks.get(order.getId()))), order.getUserId(), indexed.get(order.getUserId())));
     }
 }

@@ -4,7 +4,7 @@ import com.feilv.common.BizException;
 import com.feilv.domain.*;
 import com.feilv.dto.ApiDtos.OrderCreateReq;
 import com.feilv.dto.ApiDtos.OrderVO;
-import com.feilv.dto.ApiDtos.QuoteVO;
+import com.feilv.dto.ApiDtos.FeeItem;
 import com.feilv.dto.CustomTaskDtos.*;
 import com.feilv.enums.OrderStatus;
 import com.feilv.repository.*;
@@ -25,13 +25,13 @@ public class CustomTaskService {
     private final OrderRepository orders;
     private final UserRepository users;
     private final OrderService orderService;
-    private final PricingService pricing;
     private final BanWordService banWords;
     private final AuditService audit;
 
     public QuoteVO quote(QuoteReq req) {
-        validateMeasure(req.distanceM(), req.weightKg());
-        return pricing.quote(req.distanceM(), req.weightKg());
+        int price = price(req.priceFen());
+        int rider = orderService.estimatedRiderShare(price);
+        return new QuoteVO(price, List.of(new FeeItem("CUSTOM", "发布者自定任务总价", price)), rider, price - rider);
     }
 
     @Transactional
@@ -41,8 +41,15 @@ public class CustomTaskService {
         String title = TaskTagService.text(req.title(), 64, "任务标题");
         String content = TaskTagService.text(req.content(), 1000, "任务内容");
         banWords.checkGoods(title + " " + content);
-        if (req.order() == null || !"CUSTOM".equals(req.order().orderType())) throw BizException.of(400, "请使用CUSTOM订单类型");
-        var order = normalizeOrder(req.order(), title);
+        if (req.taskMode() == null || !Set.of("ONLINE", "ONSITE", "PART_TIME").contains(req.taskMode())) throw BizException.of(400, "请选择有效任务场景");
+        int price = price(req.priceFen());
+        String contact = TaskTagService.text(req.contact(), 32, "联系人");
+        String phone = phone(req.phone());
+        String location = optionalText(req.locationAddress(), 255, "服务地址");
+        String serviceTime = optionalText(req.serviceTime(), 100, "工作时间");
+        if (!"ONLINE".equals(req.taskMode()) && location.isBlank()) throw BizException.of(400, "上门或兼职任务必须填写服务地址");
+        if ("PART_TIME".equals(req.taskMode()) && serviceTime.isBlank()) throw BizException.of(400, "兼职任务必须填写工作时间");
+        if ("ONLINE".equals(req.taskMode())) { location = ""; serviceTime = ""; }
         List<Long> ids = req.tagIds() == null ? List.of() : req.tagIds();
         if (ids.size() > 5 || ids.stream().anyMatch(id -> id == null || id <= 0) || new HashSet<>(ids).size() != ids.size()) throw BizException.of(400, "请选择最多5个不同标签");
         List<TaskTag> chosen = new ArrayList<>();
@@ -51,56 +58,63 @@ public class CustomTaskService {
             TaskTag tag = tags.findByIdForUpdate(id).filter(TaskTag::isEnabled).orElseThrow(() -> BizException.of(409, "标签已停用或不存在，请刷新标签"));
             chosen.add(tag);
         }
-        OrderVO result = orderService.createCustom(userId, order);
+        // 兼容订单表非空字段：服务任务只有一个地点，ONLINE不要求地点、不伪造坐标。
+        String internalAddress = "ONLINE".equals(req.taskMode()) ? "线上任务，无需到场" : location;
+        OrderCreateReq internal = new OrderCreateReq("CUSTOM", contact, phone, internalAddress, null, null,
+                contact, phone, internalAddress, null, null, 0, 1, title, "");
+        OrderVO result = orderService.createCustom(userId, internal, price);
         CustomTask task = new CustomTask(); task.setOrderId(result.id()); task.setUserId(userId);
         task.setTitle(title); task.setContent(content); task.setPublishSource(source); task.setCreatedBy(operatorId);
+        task.setTaskMode(req.taskMode()); task.setPriceFen(price); task.setContact(contact); task.setPhone(phone);
+        task.setLocationAddress(location); task.setServiceTime(serviceTime);
         task = tasks.saveAndFlush(task);
         for (TaskTag tag : chosen) {
             CustomTaskTag snapshot = new CustomTaskTag(); snapshot.setTaskId(task.getId()); snapshot.setTagId(tag.getId()); snapshot.setTagName(tag.getName()); snapshots.save(snapshot);
         }
         audit.record("CUSTOM_TASK_PUBLISH", "taskId=" + task.getId() + ", orderId=" + result.id() + ", userId=" + userId + ", source=" + source);
-        return result;
+        return orderService.toVO(orderService.mustGet(result.id()), task.getTaskMode());
     }
 
     @Transactional(readOnly = true)
     public TaskVO detail(long orderId, Long participantId) {
         if (orderId <= 0) throw BizException.of(400, "订单ID必须为正整数");
         OrderMain order = orders.findById(orderId).orElseThrow(() -> BizException.of(404, "订单不存在"));
+        // null仅由已检查tasks菜单权限的管理端控制器传入；普通骑手待接单只可查看GrabVO。
         if (participantId != null && !orderService.isOrderParticipant(participantId, order)) throw BizException.of(403, "无权查看此任务");
         CustomTask task = tasks.findByOrderId(orderId).orElse(null);
         if (task == null) return null;
-        var tags = snapshots.findByTaskIdInOrderByIdAsc(List.of(task.getId())).stream().map(t -> new TagSnapshot(t.getTagId(), t.getTagName())).toList();
-        return view(task, order, tags);
+        var labels = snapshots.findByTaskIdInOrderByIdAsc(List.of(task.getId())).stream().map(t -> new TagSnapshot(t.getTagId(), t.getTagName())).toList();
+        return view(task, order, labels, orderService.riderShares(List.of(order)).get(orderId));
     }
 
     @Transactional(readOnly = true)
     public Page<TaskVO> list(int page, Long userId, OrderStatus status) {
         if (page < 0 || userId != null && userId <= 0) throw BizException.of(400, "分页或用户ID不合法");
         var result = tasks.findAdminTasks(userId, status, PageRequest.of(page, 15, Sort.by(Sort.Direction.DESC, "id")));
-        var orderMap = orders.findAllById(result.map(CustomTask::getOrderId).toList()).stream().collect(Collectors.toMap(OrderMain::getId, o -> o));
+        var orderList = orders.findAllById(result.map(CustomTask::getOrderId).toList());
+        var orderMap = orderList.stream().collect(Collectors.toMap(OrderMain::getId, o -> o));
+        var shares = orderService.riderShares(orderList);
         var tagMap = snapshots.findByTaskIdInOrderByIdAsc(result.map(CustomTask::getId).toList()).stream().collect(Collectors.groupingBy(CustomTaskTag::getTaskId));
-        return result.map(task -> view(task, orderMap.get(task.getOrderId()), tagMap.getOrDefault(task.getId(), List.of()).stream().map(t -> new TagSnapshot(t.getTagId(), t.getTagName())).toList()));
+        return result.map(task -> view(task, orderMap.get(task.getOrderId()), tagMap.getOrDefault(task.getId(), List.of()).stream().map(t -> new TagSnapshot(t.getTagId(), t.getTagName())).toList(), shares.getOrDefault(task.getOrderId(), 0)));
     }
 
-    private TaskVO view(CustomTask task, OrderMain order, List<TagSnapshot> labels) {
+    private TaskVO view(CustomTask task, OrderMain order, List<TagSnapshot> labels, int riderShare) {
         if (order == null) throw BizException.of(409, "任务关联订单不存在，请联系客服");
-        return new TaskVO(task.getId(), order.getId(), order.getOrderNo(), order.getStatus().name(), order.getStatus().label(),
-                task.getUserId(), task.getTitle(), task.getContent(), labels, task.getPublishSource(), task.getCreatedBy(), task.getCreatedTime(), order.getRealFee(), order.getFromAddress(), order.getToAddress());
+        int amount = task.getPriceFen() == null ? order.getRealFee() : task.getPriceFen();
+        return new TaskVO(task.getId(), order.getId(), order.getOrderNo(), order.getStatus().name(), OrderService.statusLabel(order.getStatus(), OrderService.taskMode(task)),
+                task.getUserId(), task.getTitle(), task.getContent(), labels, task.getPublishSource(), task.getCreatedBy(), task.getCreatedTime(),
+                amount, order.getFromAddress(), order.getToAddress(), OrderService.taskMode(task), amount,
+                task.getContact() == null ? order.getFromContact() : task.getContact(), task.getPhone() == null ? order.getFromPhone() : task.getPhone(),
+                task.getLocationAddress(), task.getServiceTime(), riderShare, amount - riderShare);
     }
 
-    private OrderCreateReq normalizeOrder(OrderCreateReq req, String title) {
-        validateMeasure(req.distanceM(), req.weightKg());
-        String fromPhone = phone(req.fromPhone()), toPhone = phone(req.toPhone());
-        String remark = req.remark() == null ? "" : req.remark().strip();
-        if (remark.codePointCount(0, remark.length()) > 255) throw BizException.of(400, "备注不能超过255个字符");
-        return new OrderCreateReq("CUSTOM", TaskTagService.text(req.fromContact(), 32, "取件联系人"), fromPhone,
-                TaskTagService.text(req.fromAddress(), 255, "取件地址"), req.fromLng(), req.fromLat(),
-                TaskTagService.text(req.toContact(), 32, "收件联系人"), toPhone, TaskTagService.text(req.toAddress(), 255, "送达地址"),
-                req.toLng(), req.toLat(), req.distanceM(), req.weightKg(), title, remark);
+    private static int price(Integer price) {
+        if (price == null || price < 1 || price > 100000000) throw BizException.of(400, "发布价必须为1至100000000分的整数");
+        return price;
     }
-
-    private static void validateMeasure(Integer distance, Integer weight) {
-        if (distance == null || distance < 1 || distance > 200000 || weight == null || weight < 1 || weight > 100) throw BizException.of(400, "距离须为1至200000米，重量须为1至100公斤");
+    private static String optionalText(String value, int max, String label) {
+        if (value == null || value.isBlank()) return "";
+        return TaskTagService.text(value, max, label);
     }
     private static String phone(String value) {
         String result = value == null ? "" : value.strip();

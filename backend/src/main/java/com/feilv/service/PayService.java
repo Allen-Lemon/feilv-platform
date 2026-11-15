@@ -46,7 +46,7 @@ public class PayService {
         }
 
         int amount = order.getEstimateFee();
-        int shareRider = amount * riderPercent / 100;
+        int shareRider = Math.toIntExact((long) amount * riderPercent / 100);
         int sharePlatform = amount - shareRider;
 
         PayRecord record = new PayRecord();

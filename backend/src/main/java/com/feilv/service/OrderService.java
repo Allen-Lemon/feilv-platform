@@ -42,6 +42,11 @@ public class OrderService {
     private final RiderRepository riderRepository;
     private final UserProfileService userProfileService;
     private final WalletAccountingService walletAccountingService;
+    private final com.feilv.repository.CustomTaskRepository customTaskRepository;
+    private final com.feilv.repository.PayRecordRepository payRecordRepository;
+
+    @org.springframework.beans.factory.annotation.Value("${feilv.share.rider-percent}")
+    private int riderPercent;
 
     @jakarta.persistence.PersistenceContext
     private jakarta.persistence.EntityManager entityManager;
@@ -59,19 +64,32 @@ public class OrderService {
         return createOrder(userId, req);
     }
 
-    /** 仅自定义任务服务在同一事务内调用，任务元数据失败时订单同步回滚。 */
-    @Transactional
+    /** 旧签名仅保留源码兼容，不允许绕过任务元数据与必填发布价。 */
+    @Deprecated
     public OrderVO createCustom(long userId, OrderCreateReq req) {
-        if (OrderType.of(req.orderType()) != OrderType.CUSTOM) throw BizException.of(400, "自定义任务订单类型不匹配");
-        return createOrder(userId, req);
+        throw BizException.of(400, "请使用自定义任务发布接口并填写发布价");
+    }
+
+    /** 包内专用：只能由CustomTaskService传入已验证的服务任务总价，外部API不绑定此方法。 */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    OrderVO createCustom(long userId, OrderCreateReq req, int priceFen) {
+        if (OrderType.of(req.orderType()) != OrderType.CUSTOM || priceFen < 1 || priceFen > 100000000) {
+            throw BizException.of(400, "自定义任务类型或发布价不合法");
+        }
+        return createOrder(userId, req, new QuoteVO(priceFen, List.of(
+                new com.feilv.dto.ApiDtos.FeeItem("CUSTOM", "发布者自定任务总价", priceFen))), true);
     }
 
     private OrderVO createOrder(long userId, OrderCreateReq req) {
+        return createOrder(userId, req, null, false);
+    }
+
+    private OrderVO createOrder(long userId, OrderCreateReq req, QuoteVO manualQuote, boolean serviceTask) {
         userProfileService.requireBoundMobile(userId);
         OrderType type = OrderType.of(req.orderType());
         banWordService.checkGoods(req.goodsDesc());   // 合规底线：禁发品类拦截
 
-        QuoteVO q = pricingService.quote(req.distanceM(), req.weightKg());
+        QuoteVO q = manualQuote != null ? manualQuote : pricingService.quote(req.distanceM(), req.weightKg());
         OrderMain order = new OrderMain();
         order.setOrderNo(BizNoUtil.orderNo());
         order.setOrderType(type.name());
@@ -93,7 +111,7 @@ public class OrderService {
         order.setEstimateFee(q.totalFen());
         order.setRealFee(q.totalFen());
         order.setStatus(OrderStatus.WAIT_PAY);
-        order.setPickupCode(BizNoUtil.pickupCode());
+        order.setPickupCode(serviceTask ? "" : BizNoUtil.pickupCode());
         order = orderRepository.save(order);
 
         for (var item : q.items()) {
@@ -177,15 +195,17 @@ public class OrderService {
         if (order.getUserId() != userId) throw BizException.of(403, "无权操作他人订单");
         if (order.getStatus() == OrderStatus.FINISHED) return toVO(order); // 幂等
         if (order.getStatus() != OrderStatus.DELIVERED) {
-            throw BizException.of(4090, "订单尚未送达，无法确认收货");
+            throw BizException.of(4090, isServiceTask(order) ? "任务尚未提交完成，无法确认" : "订单尚未送达，无法确认收货");
         }
-        changeStatus(order, OrderStatus.FINISHED, "USER", userId, "用户确认收货");
+        changeStatus(order, OrderStatus.FINISHED, "USER", userId, isServiceTask(order) ? "发布者确认服务完成" : "用户确认收货");
         return toVO(order);
     }
 
     // ---------- 查询 ----------
     public Page<OrderVO> myList(long userId, int page, int size) {
-        return orderRepository.findByUserId(userId, PageRequest.of(page, size)).map(this::toVO);
+        var result = orderRepository.findByUserId(userId, PageRequest.of(page, size));
+        var tasks = taskIndex(result.getContent());
+        return result.map(o -> toVO(o, taskMode(tasks.get(o.getId()))));
     }
 
     @Transactional(readOnly = true)
@@ -212,22 +232,81 @@ public class OrderService {
                 OrderStatus.WAIT_GRAB.label(), OrderStatus.ACCEPTED.label(), "用户与骑手");
     }
 
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    OrderMain lockForDispatch(long orderId) {
+        var order = orderRepository.findByIdForUpdate(orderId).orElseThrow(() -> BizException.of(404, "订单不存在"));
+        entityManager.refresh(order, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+        return order;
+    }
+
     public OrderMain mustGet(long orderId) {
         return orderRepository.findById(orderId)
                 .orElseThrow(() -> BizException.of(404, "订单不存在"));
     }
 
-    public OrderVO toVO(OrderMain o) {
+    /** 列表统一批量取任务元数据，普通订单和历史无元数据CUSTOM均视作DELIVERY。 */
+    public java.util.Map<Long, com.feilv.domain.CustomTask> taskIndex(List<OrderMain> orders) {
+        var ids = orders.stream().filter(o -> "CUSTOM".equals(o.getOrderType())).map(OrderMain::getId).toList();
+        if (ids.isEmpty()) return java.util.Map.of();
+        return customTaskRepository.findByOrderIdIn(ids).stream().collect(java.util.stream.Collectors.toMap(
+                com.feilv.domain.CustomTask::getOrderId, java.util.function.Function.identity()));
+    }
+
+    public static String taskMode(com.feilv.domain.CustomTask task) {
+        return task == null || task.getTaskMode() == null ? "DELIVERY" : task.getTaskMode();
+    }
+
+    public String serviceTaskMode(OrderMain order) {
+        if (!"CUSTOM".equals(order.getOrderType())) return "DELIVERY";
+        return taskMode(customTaskRepository.findByOrderId(order.getId()).orElse(null));
+    }
+
+    public boolean isServiceTask(OrderMain order) { return !"DELIVERY".equals(serviceTaskMode(order)); }
+
+    public static String statusLabel(OrderStatus status, String taskMode) {
+        if ("DELIVERY".equals(taskMode)) return status.label();
+        return switch (status) {
+            case PICKING -> "服务中";
+            case DELIVERING -> "提交完成中";
+            case DELIVERED -> "待确认完成";
+            default -> status.label();
+        };
+    }
+
+    /** long中间值保证百万元任务分账不溢出；所有预估使用同一配置。 */
+    public int estimatedRiderShare(int amountFen) { return Math.toIntExact((long) amountFen * riderPercent / 100); }
+
+    /** 支付后必须展示实付分账快照，不随后续配置变化而重算。 */
+    public java.util.Map<Long, Integer> riderShares(List<OrderMain> orders) {
+        if (orders.isEmpty()) return java.util.Map.of();
+        var result = new java.util.HashMap<Long, Integer>();
+        for (var order : orders) result.put(order.getId(), estimatedRiderShare(order.getEstimateFee()));
+        result.putAll(paidRiderShares(orders));
+        return result;
+    }
+
+    public java.util.Map<Long, Integer> paidRiderShares(List<OrderMain> orders) {
+        if (orders.isEmpty()) return java.util.Map.of();
+        var result = new java.util.HashMap<Long, Integer>();
+        for (var row : payRecordRepository.sumSuccessfulMockShareByOrderIds(orders.stream().map(OrderMain::getId).toList())) {
+            result.put(((Number) row[0]).longValue(), Math.toIntExact(((Number) row[1]).longValue()));
+        }
+        return result;
+    }
+
+    public OrderVO toVO(OrderMain o) { return toVO(o, serviceTaskMode(o)); }
+
+    public OrderVO toVO(OrderMain o, String taskMode) {
         return new OrderVO(o.getId(), o.getOrderNo(), o.getOrderType(),
-                o.getStatus().name(), o.getStatus().label(),
+                o.getStatus().name(), statusLabel(o.getStatus(), taskMode),
                 o.getFromAddress(), o.getToAddress(),
                 o.getGoodsDesc(), o.getEstimateFee(), o.getRealFee(), o.getRiderId(),
-                o.getPickupCode(),
+                "DELIVERY".equals(taskMode) ? o.getPickupCode() : "",
                 o.getCreatedTime() == null ? null : o.getCreatedTime().toString(),
                 o.getAcceptedTime() == null ? null : o.getAcceptedTime().toString(),
                 o.getDeliveredTime() == null ? null : o.getDeliveredTime().toString(),
                 o.getFinishTime() == null ? null : o.getFinishTime().toString(),
                 com.feilv.common.UserContext.get() != null && o.getUserId() != null
-                        && o.getUserId().equals(com.feilv.common.UserContext.get().id()));
+                        && o.getUserId().equals(com.feilv.common.UserContext.get().id()), taskMode);
     }
 }

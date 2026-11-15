@@ -2,7 +2,7 @@
   <view class="orders-heading">
     <view class="grow">
       <view class="title">我的订单</view>
-      <view class="orders-description">取送进度，一目了然</view>
+      <view class="orders-description">配送与服务进度，一目了然</view>
     </view>
     <button class="refresh-button" bindtap="refresh" disabled="{{loading || !loggedIn}}">{{loading ? '更新中…' : '刷新'}}</button>
   </view>
@@ -33,7 +33,7 @@
         <view class="order-status status-{{item.status}}"><view class="status-dot"></view><text>{{item.statusText}}</text></view>
       </view>
 
-      <view class="order-route">
+      <view class="order-route" wx:if="{{!item.isService}}">
         <view class="route-stop">
           <view class="route-marker"><view class="stop-dot">取</view><view class="route-connector"></view></view>
           <view class="route-address">{{item.fromAddress || '取件地址未提供'}}</view>
@@ -44,10 +44,11 @@
         </view>
       </view>
 
+      <view class="order-route" wx:else><view class="route-address">{{item.modeText}} · {{item.taskMode === 'ONLINE' ? '无需地址' : item.locationAddress || item.fromAddress || '服务地点待核实'}}</view><view class="order-time" wx:if="{{item.serviceTime}}">{{item.serviceTime}}</view></view>
       <view class="order-goods" wx:if="{{item.goodsDesc}}"><text class="goods-label">需求</text><text class="goods-value">{{item.goodsDesc}}</text></view>
       <view class="order-card-footer">
         <view class="order-amount"><text class="amount-label">订单金额</text><text class="amount-value">¥{{item.feeText}}</text></view>
-        <view class="order-detail-link {{item.canPay || item.canConfirm ? 'detail-link-primary' : ''}}">{{item.canPay ? '去模拟支付' : item.canConfirm ? '去确认收货' : '查看详情'}}<text class="detail-arrow">›</text></view>
+        <view class="order-detail-link {{item.canPay || item.canConfirm ? 'detail-link-primary' : ''}}">{{item.canPay ? '去模拟支付' : item.canConfirm && item.isService ? '去确认完成' : item.canConfirm ? '去确认收货' : '查看详情'}}<text class="detail-arrow">›</text></view>
       </view>
       <view class="order-number">订单号 {{item.orderNo}}</view>
     </button>

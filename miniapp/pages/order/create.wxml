@@ -1,10 +1,13 @@
 <view class="page create-page">
-  <view class="page-head create-heading"><view class="eyebrow">{{typeText}} · 发布任务</view><view class="title">选好地址，说说需求</view><view class="page-desc">填写任务 → 确认费用并发布</view></view>
+  <view class="page-head create-heading"><view class="eyebrow">{{custom ? '自定义任务' : '跑腿服务'}} · 发布任务</view><view class="title">{{custom ? '说说需求，自定总价' : '选好地址，说说需求'}}</view><view class="page-desc">填写任务 → 确认费用并发布</view></view>
+  <view class="service-tabs" wx:if="{{!custom}}"><button wx:for="{{deliveryOptions}}" wx:key="code" class="type-tab {{form.orderType === item.code ? 'selected' : ''}}" data-type="{{item.code}}" bindtap="typeChoice" disabled="{{busy || addressLoading}}">{{item.label}}</button></view>
   <view class="draft-restored" wx:if="{{restored}}">已恢复本账号上次填写的任务，请核对后继续。</view>
-  <view class="notice error address-error" wx:if="{{addressError}}">{{addressError}}<button class="secondary small" bindtap="loadAddresses" disabled="{{busy || addressLoading}}">重新读取地址</button></view>
+  <view class="notice" wx:if="{{legacyDraft}}">旧自定义配送草稿不能直接用于服务任务，请重新填写场景、总价和联系信息。已有订单或创建结果待核实的记录仍保留，请先从确认页或订单列表核实。</view>
+  <view class="card" wx:if="{{custom}}"><view class="section-title">任务场景</view><view class="scene-options"><button wx:for="{{sceneOptions}}" wx:key="code" class="scene-option {{form.taskMode === item.code ? 'selected' : ''}}" data-mode="{{item.code}}" bindtap="sceneChoice" disabled="{{busy || addressLoading || tagsLoading}}"><view>{{item.label}}</view><view class="measure-hint">{{item.example}}</view></button></view><view class="measure-hint">仅由平台现有骑手承接；请明确工作范围及安全要求。</view></view>
+  <view class="notice error address-error" wx:if="{{addressError && !custom || addressError && form.taskMode !== 'ONLINE'}}">{{addressError}}<button class="secondary small" bindtap="loadAddresses" disabled="{{busy || addressLoading}}">重新读取地址</button></view>
   <view class="loading-note" wx:if="{{addressLoading}}">正在读取可选地址…</view>
 
-  <view class="card location-card">
+  <view class="card location-card" wx:if="{{!custom}}">
     <view class="section-head"><view class="section-title">取送地址</view><text class="section-note">联系人自动带出</text></view>
     <view class="location-section">
       <view class="location-heading"><text class="form-step">取</text><text>从哪里取件</text></view>
@@ -28,11 +31,24 @@
     </view>
   </view>
 
+  <view class="card location-card" wx:if="{{custom}}">
+    <view class="section-title">{{form.taskMode === 'ONLINE' ? '线上联系信息' : form.taskMode === 'PART_TIME' ? '工作地点与联系信息' : '服务地点与联系信息'}}</view>
+    <view wx:if="{{form.taskMode !== 'ONLINE'}}">
+      <picker mode="selector" range="{{addressOptions}}" range-key="label" value="{{locationAddressIndex}}" data-side="location" bindchange="addressChange" disabled="{{busy || addressLoading || !addressOptions.length}}"><view class="picker order-address-picker {{form.locationAddress ? '' : 'address-placeholder'}}"><text class="grow">{{form.locationAddress ? form.locationAddress : addressOptions.length ? '选择一个服务地点' : '暂无地址，请先新增'}}</text><text class="picker-arrow">⌄</text></view></picker>
+      <button class="text-button address-add" data-side="location" bindtap="address" disabled="{{busy || addressLoading}}">新增地址 →</button>
+      <view class="measure-hint">从已保存地址选择一个地点，自动带出联系人，可按本次任务修改。</view>
+    </view>
+    <view class="measure-hint" wx:else>线上任务无需地址，不采集取送地点。</view>
+    <view class="contact-fields"><view class="field contact-name"><label class="label" for="service-contact">联系人</label><input id="service-contact" value="{{form.contact}}" data-field="contact" bindinput="input" maxlength="30" disabled="{{busy || addressLoading}}" placeholder="姓名"/></view><view class="field contact-phone"><label class="label" for="service-phone">联系电话</label><input id="service-phone" type="number" value="{{form.phone}}" data-field="phone" bindinput="input" maxlength="11" disabled="{{busy || addressLoading}}" placeholder="11位手机号"/></view></view>
+    <view class="field" wx:if="{{form.taskMode !== 'ONLINE'}}"><label class="label" for="service-time">{{form.taskMode === 'PART_TIME' ? '工作时间（必填）' : '服务时间（选填）'}}</label><input id="service-time" value="{{form.serviceTime}}" data-field="serviceTime" bindinput="input" maxlength="100" disabled="{{busy || addressLoading}}" placeholder="例如：周六上午9点至12点，最多100字"/></view>
+  </view>
+
   <view class="card requirements-card">
     <view class="section-head"><view class="section-title">任务需求</view><text class="section-note">简要说明即可</text></view>
     <block wx:if="{{custom}}">
       <view class="field"><label class="label" for="task-title">任务标题（1–64字）</label><input id="task-title" value="{{form.taskTitle}}" data-field="taskTitle" bindinput="input" maxlength="64" disabled="{{busy || addressLoading || tagsLoading}}" placeholder="用一句话说明需求"/></view>
       <view class="field"><label class="label" for="task-content">任务内容（1–1000字）</label><textarea id="task-content" value="{{form.taskContent}}" data-field="taskContent" bindinput="input" maxlength="1000" disabled="{{busy || addressLoading || tagsLoading}}" placeholder="详细说明任务要求，请勿填写无关敏感信息"/></view>
+      <view class="field"><label class="label" for="task-price">任务总价 <text class="optional">元，不是骑手实拿</text></label><input id="task-price" type="digit" value="{{taskPrice}}" data-field="taskPrice" bindinput="number" maxlength="10" disabled="{{busy || addressLoading || tagsLoading}}" placeholder="0.01至1000000，最多两位小数"/><view class="measure-hint">您填写的是发布总额。当前默认骑手70%、平台30%，实际分成以服务端报价为准，下一页明确展示；不会自行计算或保证骑手实拿金额。</view></view>
       <view class="label">任务标签 <text class="optional">选填，已选{{selectedTagCount}}/5</text></view>
       <view class="loading-note" wx:if="{{tagsLoading}}">正在读取任务标签…</view>
       <view class="error" wx:if="{{tagsError}}">{{tagsError}}<button class="secondary small" bindtap="loadTaskTags" disabled="{{busy || addressLoading || tagsLoading}}">重新读取标签</button></view>
@@ -43,10 +59,12 @@
     <view class="field"><label class="label" for="goods-desc">{{form.orderType === 'BUY' ? '需要买什么？' : form.orderType === 'ERRAND' ? '需要帮你办什么？' : '这次送什么？'}}</label><input id="goods-desc" value="{{form.goodsDesc}}" data-field="goodsDesc" bindinput="input" maxlength="128" disabled="{{busy || addressLoading}}" placeholder="{{goodsPlaceholder}}"/></view>
     <view class="goods-suggestions"><button class="suggestion {{form.goodsDesc === item ? 'suggestion-selected' : ''}}" wx:for="{{goodsSuggestions}}" wx:key="*this" data-value="{{item}}" bindtap="goodsChoice" disabled="{{busy || addressLoading}}">{{item}}</button></view>
     </block>
+    <block wx:if="{{!custom}}">
     <view class="field distance-field"><label class="label" for="distance-km">预估距离 <text class="optional">公里</text></label><input id="distance-km" type="digit" value="{{distanceKm}}" data-field="distanceKm" bindinput="number" disabled="{{busy || addressLoading}}" placeholder="请输入，例如 2.5"/><view class="measure-hint">距离为手工预估，非地图测距；大于0且不超过200公里。</view></view>
     <button class="more-toggle" bindtap="toggleMore" disabled="{{busy || addressLoading}}"><view class="grow"><view>更多要求 <text class="optional">选填</text></view><view class="more-summary">重量 {{weightKg}} 公斤{{form.remark ? ' · 已填写备注' : ' · 无备注'}}</view></view><text>{{moreVisible ? '收起 ↑' : '展开 ↓'}}</text></button>
     <view wx:if="{{moreVisible}}" class="more-fields"><view class="field"><label class="label" for="weight-kg">物品重量 <text class="optional">公斤</text></label><input id="weight-kg" type="number" value="{{weightKg}}" data-field="weightKg" bindinput="number" disabled="{{busy || addressLoading}}" maxlength="3"/><view class="measure-hint">默认按1公斤计费，实际超过请修改；支持1至100的整数。</view></view><view class="field"><label class="label" for="order-remark">备注</label><textarea id="order-remark" value="{{form.remark}}" data-field="remark" bindinput="input" maxlength="255" disabled="{{busy || addressLoading}}" placeholder="配送时间、轻拿轻放等特别要求"/></view></view>
+    </block>
   </view>
 
-  <view class="publish-actions"><view class="publish-note">按上方重量计费，费用将在下一页展示；确认前不会创建任务。</view><button class="primary" loading="{{busy}}" disabled="{{busy || addressLoading || tagsLoading || custom && !tagsLoaded}}" bindtap="next">{{busy ? '正在核验与计价…' : '确认费用，下一步'}}</button><view class="footer-note">当前支付为 MOCK 演示，不发生真实扣款。</view></view>
+  <view class="publish-actions"><view class="publish-note">{{custom ? '按您填写的总价发布，下一页核对骑手及平台分成；确认前不会创建任务。' : '按上方重量计费，费用将在下一页展示；确认前不会创建任务。'}}</view><button class="primary" loading="{{busy}}" disabled="{{busy || addressLoading || tagsLoading || custom && !tagsLoaded}}" bindtap="next">{{busy ? '正在核验与计价…' : '确认费用，下一步'}}</button><view class="footer-note">当前支付为 MOCK 演示，不发生真实扣款。</view></view>
 </view>

@@ -67,12 +67,12 @@ docker compose up -d --build --force-recreate backend
 
 ### 自定义任务及投诉联调
 
-- 后端须同时提供 `GET /api/v1/task-tags`、`POST /api/v1/custom-tasks/quote`、`POST /api/v1/custom-tasks`、`GET /api/v1/orders/{id}/custom-task`、`GET /api/v1/orders/{id}/complaints`，并保留现有投诉提交与订单支付接口。详细请求契约见本目录README。发布返回必须是含订单ID的 `OrderVO`，不能返回仅有任务ID的TaskVO。
+- 首页仅跑腿服务与自定义任务两入口，跑腿发布页SEND/BUY/ERRAND切换且旧深链可用。后端须同时提供 `GET /api/v1/task-tags`、`POST /api/v1/custom-tasks/quote {priceFen}`、平铺 `POST /api/v1/custom-tasks {title,content,tagIds,taskMode,priceFen,contact,phone,locationAddress,serviceTime}`、`GET /api/v1/orders/{id}/custom-task`、`GET /api/v1/orders/{id}/complaints`、`POST /orders/{id}/service-start`及`service-complete`，并保留现有投诉提交与订单支付接口。详细请求契约见本目录README。发布返回必须是含订单ID的 `OrderVO`，不能返回仅有任务ID的TaskVO。
 - 标签来自后台启用记录，最多5个、可不选；失败必须可重试，不能用固定标签或假空列表替代。自定义任务标题1–64字、内容1–1000字，订单列表使用标题与CUSTOM类型，详情读取完整资料。
 - `OrderVO.owner` 是当前登录人是否发布者的布尔值，不是角色或公开用户编号；骑手发布自己的任务也应返回true，承运他人订单应返回false。旧接口无owner时仅有限兼容，所有提交与查询最终由服务端判权。自定义任务的userId只用于页面私有内存兼容判断，不额外展示身份。
 - 投诉描述1–255字，从已接单起至已完成可申请。活动仅 `OPEN/PROCESSING`，有活动单不能重复提交；`APPROVED/REJECTED/DONE` 终结后可申请不同问题，但累计赔付受本单骑手分账上限约束。详情按服务端记录展示状态、问题、结果与赔付；查询失败不得冒充暂无记录，提交失败保留描述并先刷新核实。
 - 审核赔付目前 **MOCK，仅记账，未真实退款或转账**。前端不计算扣分账或自行修改审核状态，不展示经办人/骑手内部ID、扣减审计字段和内部操作明细。真实结算需要另行实现与验收。
-- 真机/联调覆盖 USER和RIDER各自发布、自定义与普通报价无串路、空标签/5标签/停用变更、标签/资料/投诉加载重试、草稿恢复与切号旧响应隔离、创建结果未知保护、owner权限、接单后投诉、重复工单、审核通过/驳回/结案后刷新、新问题累计限额及MOCK提示。小程序本地测试不请求外部接口，不证明后端已部署或资金已到账。
+- 真机/联调覆盖 USER和RIDER各自发布、0.01/0.29/1000000元精确总价及超限、多位小数/科学计数拒绝、服务端分成展示且缺失不推算、三场景与示例、ONLINE无地址和时间但要联系人电话、ONSITE一个下拉地址/自动联系人可改、PART_TIME一个工作地址+必填时间、切换清理、普通/自定义报价无串路、空标签/5标签/停用变更、标签/资料/投诉加载重试、草稿恢复与切号旧响应隔离、旧DELIVERY草稿提示/原pending保护、旧订单原取件配送、service开始/提交完成/用户确认无定位无取件码、承接骑手详情可看联系方式、owner:false不显示发布者动作、接单后投诉、重复工单、审核通过/驳回/结案后刷新、新问题累计限额及MOCK提示。小程序本地测试不请求外部接口，不证明后端已部署或资金已到账。
 
 ### 钱包与模拟提现联调
 

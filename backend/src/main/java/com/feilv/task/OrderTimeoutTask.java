@@ -17,7 +17,7 @@ import java.util.List;
  * 超时引擎（对应功能设计文档 8.1 / 详细设计表3-1）：
  * 1) 待支付 15 分钟未支付自动关单；
  * 2) 待接单超时提醒（生产：提醒→建议加价→关单，演示仅提醒）；
- * 3) 已送达 15 分钟未确认默认完成（触发分账）。
+ * 3) 已送达/服务已提交完成15分钟未确认默认完成（触发分账）。
  */
 @Slf4j
 @Component
@@ -54,12 +54,12 @@ public class OrderTimeoutTask {
             messageService.notifyPush("用户", "订单长时间无人接单，建议加价激励骑手");
         }
 
-        // 已送达15分钟未确认 → 默认完成（详细设计表3-1）
+        // 已送达/服务提交完成15分钟未确认 → 默认完成（沿用统一结算入口）
         List<com.feilv.domain.OrderMain> delivered =
                 orderRepository.findByStatusAndDeliveredTimeBefore(OrderStatus.DELIVERED, now.minusMinutes(15));
         for (var order : delivered) {
             orderService.changeStatus(order, OrderStatus.FINISHED, "SYSTEM", null, "15分钟未确认默认完成");
-            messageService.notifyPush("用户", "订单已默认确认完成，欢迎评价");
+            messageService.notifyPush("用户", "订单/任务已默认确认完成，请查看详情及钱包记录");
         }
 
         if (!unpaid.isEmpty() || !waiting.isEmpty() || !delivered.isEmpty()) {

@@ -102,11 +102,18 @@ CREATE TABLE IF NOT EXISTS t_custom_task (
   user_id BIGINT NOT NULL,
   title VARCHAR(64) NOT NULL,
   content VARCHAR(1000) NOT NULL,
+  task_mode VARCHAR(16) NOT NULL DEFAULT 'DELIVERY',
+  price_fen INT DEFAULT NULL,
+  contact VARCHAR(32) DEFAULT NULL,
+  phone VARCHAR(20) DEFAULT NULL,
+  location_address VARCHAR(255) DEFAULT NULL,
+  service_time VARCHAR(100) DEFAULT NULL,
   publish_source VARCHAR(16) NOT NULL,
   created_by BIGINT NOT NULL,
   created_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uk_custom_task_order (order_id),
-  KEY idx_custom_task_user (user_id)
+  KEY idx_custom_task_user (user_id),
+  CONSTRAINT chk_custom_task_price CHECK (price_fen IS NULL OR (price_fen>=1 AND price_fen<=100000000))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='自定义任务';
 
 CREATE TABLE IF NOT EXISTS t_custom_task_tag (

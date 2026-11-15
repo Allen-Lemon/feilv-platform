@@ -28,13 +28,13 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="orderType" label="类型" width="90"><template #default="{ row }">{{ typeLabel(row.orderType) }}</template></el-table-column>
+        <el-table-column prop="orderType" label="类型" width="120"><template #default="{ row }"><div>{{ typeLabel(row.orderType) }}</div><el-tag v-if="isServiceTask(row)" size="small">{{ taskModeLabel(row.taskMode) }}</el-tag></template></el-table-column>
         <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="tagType(row.status)">{{ row.statusLabel || statusLabel(row.status) }}</el-tag></template></el-table-column>
-        <el-table-column prop="fromAddress" label="寄件 / 取件地址" min-width="180" show-overflow-tooltip>
-          <template #default="{ row }"><div>{{ row.fromAddress || '—' }}</div><small v-if="row.fromContact" class="text-muted">寄件联系人：{{ row.fromContact }}</small></template>
+        <el-table-column label="取件地址 / 服务地点" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }"><div>{{ orderLocation(row) }}</div><small v-if="orderContact(row)" class="text-muted">{{ isServiceTask(row) ? '任务联系人' : '寄件联系人' }}：{{ orderContact(row) }}</small></template>
         </el-table-column>
-        <el-table-column prop="toAddress" label="收件 / 送达地址" min-width="180" show-overflow-tooltip>
-          <template #default="{ row }"><div>{{ row.toAddress || '—' }}</div><small v-if="row.toContact" class="text-muted">收件联系人：{{ row.toContact }}</small></template>
+        <el-table-column label="送达地址 / 服务时间" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }"><div>{{ orderDestination(row) }}</div><small v-if="!isServiceTask(row) && row.toContact" class="text-muted">收件联系人：{{ row.toContact }}</small></template>
         </el-table-column>
         <el-table-column label="实收(元)" width="100"><template #default="{ row }">{{ row.realFeeFen == null ? '—' : (row.realFeeFen / 100).toFixed(2) }}</template></el-table-column>
         <el-table-column prop="createdTime" label="下单时间" width="180" />
@@ -81,6 +81,12 @@ let listRequest = 0
 let disposed = false
 
 const typeLabel = type => ({ SEND: '跑腿送', BUY: '跑腿买', ERRAND: '跑腿办', CUSTOM: '自定义任务' }[type] || type)
+const taskModeLabel = mode => ({ ONLINE: '线上任务', ONSITE: '上门服务', PART_TIME: '兼职劳务' }[mode] || mode)
+const isServiceTask = row => row.orderType === 'CUSTOM' && ['ONLINE', 'ONSITE', 'PART_TIME'].includes(row.taskMode)
+// 旧后台订单视图可能只补充 taskMode；上门/兼职的兼容地址仍是单一服务地点，线上绝不读取占位地址。
+const orderLocation = row => !isServiceTask(row) ? row.fromAddress || '—' : row.taskMode === 'ONLINE' ? '线上任务（无需地址）' : `${row.taskMode === 'PART_TIME' ? '工作地点' : '服务地点'}：${row.locationAddress || row.fromAddress || '—'}`
+const orderDestination = row => !isServiceTask(row) ? row.toAddress || '—' : row.taskMode === 'ONLINE' ? '—' : `${row.taskMode === 'PART_TIME' ? '工作时间' : '服务时间'}：${row.serviceTime || '—'}`
+const orderContact = row => isServiceTask(row) ? row.contact : row.fromContact
 const statusLabel = status => statuses.find(item => item.code === status)?.label || status
 const tagType = status => ({ FINISHED: 'success', CANCELED: 'info', DELIVERING: 'primary', WAIT_GRAB: 'warning' }[status] || '')
 

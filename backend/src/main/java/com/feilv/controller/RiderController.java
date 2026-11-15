@@ -43,8 +43,7 @@ public class RiderController {
     @GetMapping("/rider/me")
     public Result<Map<String, Object>> me() {
         UserContext.requireRole("RIDER");
-        var rider = riderRepository.findByUserId(UserContext.userId())
-                .orElseThrow(() -> BizException.of(403, "当前账户未注册为骑手"));
+        var rider = dispatchService.requireActiveRider(UserContext.userId());
         return Result.ok(Map.of(
                 "riderId", rider.getId(),
                 "name", rider.getName(),
@@ -53,11 +52,11 @@ public class RiderController {
                 "stars", reviewRiskService.riderStars(rider.getId())));
     }
 
-    /** 抢单大厅：待接单订单（酬劳=配送费×70%） */
+    /** 抢单大厅：已支付待接订单/任务，酬劳使用支付分账快照。 */
     @GetMapping("/grab/list")
     public Result<List<GrabVO>> grabList() {
         UserContext.requireRole("RIDER");
-        return Result.ok(dispatchService.waitGrabList());
+        return Result.ok(dispatchService.waitGrabList(UserContext.userId()));
     }
 
     /** 抢单（公平锁：同一订单仅一人抢成，反馈≤2秒） */
@@ -72,18 +71,7 @@ public class RiderController {
     @GetMapping("/rider/orders")
     public Result<?> myOrders(@RequestParam(defaultValue = "0") int page) {
         UserContext.requireRole("RIDER");
-        var rider = riderRepository.findByUserId(UserContext.userId())
-                .orElseThrow(() -> BizException.of(403, "当前账户未注册为骑手"));
-        return Result.ok(orderRepository
-                .findByRiderId(rider.getId(), PageRequest.of(page, 10))
-                .map(o -> Map.of(
-                        "id", o.getId(),
-                        "orderNo", o.getOrderNo(),
-                        "status", o.getStatus().label(),
-                        "statusCode", o.getStatus().name(),
-                        "fromAddress", o.getFromAddress(),
-                        "toAddress", o.getToAddress(),
-                        "rewardFen", o.getEstimateFee() * 70 / 100)));
+        return Result.ok(dispatchService.myOrders(UserContext.userId(), page));
     }
 
     /** 取件核销（ACCEPTED→PICKING，校验取件码防冒领） */
@@ -108,6 +96,20 @@ public class RiderController {
     public Result<Void> deliver(@PathVariable long id) {
         UserContext.requireRole("RIDER");
         dispatchService.deliver(UserContext.userId(), id);
+        return Result.ok();
+    }
+
+    @PostMapping("/orders/{id}/service-start")
+    public Result<Void> serviceStart(@PathVariable long id) {
+        UserContext.requireRole("RIDER");
+        dispatchService.serviceStart(UserContext.userId(), id);
+        return Result.ok();
+    }
+
+    @PostMapping("/orders/{id}/service-complete")
+    public Result<Void> serviceComplete(@PathVariable long id) {
+        UserContext.requireRole("RIDER");
+        dispatchService.serviceComplete(UserContext.userId(), id);
         return Result.ok();
     }
 
