@@ -58,6 +58,10 @@ public class OrderMain {
     @Column(name = "goods_desc")
     private String goodsDesc;
 
+    /** 代购商品预算（分），独立于配送费；历史订单可为空。 */
+    @Column(name = "goods_budget_fen")
+    private Integer goodsBudgetFen;
+
     private String remark;
 
     @Column(name = "estimate_fee", nullable = false)

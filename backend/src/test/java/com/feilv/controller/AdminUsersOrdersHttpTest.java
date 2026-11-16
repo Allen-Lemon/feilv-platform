@@ -188,6 +188,9 @@ class AdminUsersOrdersHttpTest {
         User customer = user("下单用户", "USER", "13800138001", 1);
         customer.setAvatarUrl("/api/v1/avatars/order.png"); users.saveAndFlush(customer);
         OrderMain first = order(customer.getId(), "FIRST"), second = order(customer.getId(), "SECOND");
+        first.setOrderType("BUY"); // 历史代购没有预算，仍应原样返回null。
+        second.setOrderType("BUY"); second.setGoodsBudgetFen(12345);
+        orders.saveAllAndFlush(List.of(first, second));
         OrderMain orphan = order(99999999L, "ORPHAN");
         jdbc.update("update t_order set created_time = ?", LocalDateTime.of(2026, 11, 14, 10, 0)); em.clear();
         clearInvocations(users);
@@ -207,7 +210,10 @@ class AdminUsersOrdersHttpTest {
             if (!"owner".equals(component.getName())) assertTrue(row.has(component.getName()), component.getName());
         }
         assertFalse(row.has("owner"), "C端所有者布尔值无需增加到后台订单DTO");
-        assertEquals("WAIT_PAY", row.path("status").asText()); assertFalse(row.has("statusCode")); assertEquals(22, row.size()); assertEquals("DELIVERY", row.path("taskMode").asText());
+        assertEquals("WAIT_PAY", row.path("status").asText()); assertFalse(row.has("statusCode")); assertEquals(23, row.size()); assertEquals("DELIVERY", row.path("taskMode").asText());
+        assertEquals(12345, row.path("goodsBudgetFen").asInt());
+        assertTrue(rows.get(0).has("goodsBudgetFen")); assertTrue(rows.get(0).path("goodsBudgetFen").isNull());
+        assertTrue(rows.get(2).has("goodsBudgetFen")); assertTrue(rows.get(2).path("goodsBudgetFen").isNull());
         assertFalse(result.toString().contains("13800138001")); assertFalse(row.has("user"));
         JsonNode filtered = data(mvc.perform(get("/api/v1/admin/orders").header("Authorization", token)
                 .param("userId", customer.getId().toString()).param("status", "WAIT_PAY")).andReturn());
@@ -237,7 +243,9 @@ class AdminUsersOrdersHttpTest {
         }
         mvc.perform(get("/api/v1/admin/users/" + legacy.getId()).header("Authorization", token))
                 .andExpect(jsonPath("$.data.mobile").value("****")).andExpect(jsonPath("$.data.mobileBound").value(true));
-        assertEquals(18, com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents().length);
+        assertEquals(19, com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents().length);
+        assertEquals("goodsBudgetFen", com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()[18].getName());
+        assertEquals(Integer.class, com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()[18].getType());
         assertEquals("taskMode", com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()[17].getName());
         assertEquals(boolean.class, com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()[16].getType());
         assertEquals("owner", com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents()[16].getName());

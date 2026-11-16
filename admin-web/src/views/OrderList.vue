@@ -36,7 +36,8 @@
         <el-table-column label="送达地址 / 服务时间" min-width="180" show-overflow-tooltip>
           <template #default="{ row }"><div>{{ orderDestination(row) }}</div><small v-if="!isServiceTask(row) && row.toContact" class="text-muted">收件联系人：{{ row.toContact }}</small></template>
         </el-table-column>
-        <el-table-column label="实收(元)" width="100"><template #default="{ row }">{{ row.realFeeFen == null ? '—' : (row.realFeeFen / 100).toFixed(2) }}</template></el-table-column>
+        <el-table-column label="服务费(元)" width="110"><template #default="{ row }">{{ row.realFeeFen == null ? '—' : (row.realFeeFen / 100).toFixed(2) }}</template></el-table-column>
+        <el-table-column label="商品采购预算(元)" min-width="190"><template #default="{ row }"><template v-if="row.orderType === 'BUY'"><div>{{ goodsBudgetText(row) }}</div><small class="text-muted">商品款另行结算，不计服务费</small></template><span v-else>—</span></template></el-table-column>
         <el-table-column prop="createdTime" label="下单时间" width="180" />
         <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }">
@@ -120,6 +121,7 @@ async function loadTransfers(p = transferPage.value) {
 }
 function closeTransfers() { ++transferRequest; transfersOpen.value = false; transfersLoading.value = false; transferRows.value = []; transfersError.value = '' }
 
+const goodsBudgetText = row => row.goodsBudgetFen == null ? '未记录' : Number.isSafeInteger(row.goodsBudgetFen) && row.goodsBudgetFen >= 1 && row.goodsBudgetFen <= 100000000 ? Math.floor(row.goodsBudgetFen / 100) + '.' + String(row.goodsBudgetFen % 100).padStart(2, '0') : '数据异常'
 const typeLabel = type => ({ SEND: '跑腿送', BUY: '跑腿买', ERRAND: '跑腿办', CUSTOM: '自定义任务' }[type] || type)
 const taskModeLabel = mode => ({ ONLINE: '线上任务', ONSITE: '上门服务', PART_TIME: '兼职劳务' }[mode] || mode)
 const isServiceTask = row => row.orderType === 'CUSTOM' && ['ONLINE', 'ONSITE', 'PART_TIME'].includes(row.taskMode)

@@ -172,7 +172,7 @@ public class UserService {
         List<Long> menuIds = roleIds.stream().flatMap(roleId -> adminRoleMenuRepository.findByRoleId(roleId).stream())
                 .map(com.feilv.domain.AdminRoleMenu::getMenuId).distinct().toList();
         List<AdminMenuVO> menus = adminMenuRepository.findAllById(menuIds).stream()
-                .filter(m -> m.getEnabled() == 1)
+                .filter(AdminMenuAccess::isAvailableMenu)
                 .sorted(java.util.Comparator.comparingInt(com.feilv.domain.AdminMenu::getSort))
                 .map(m -> new AdminMenuVO(m.getId(), m.getCode(), m.getName(), m.getPath(), m.getParentId(), m.getSort()))
                 .toList();

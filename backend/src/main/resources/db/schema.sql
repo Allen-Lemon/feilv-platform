@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS t_order (
   distance_m    INT DEFAULT 0,
   weight_kg     INT DEFAULT 1,
   goods_desc    VARCHAR(128) DEFAULT '',
+  goods_budget_fen INT DEFAULT NULL,                     -- 商品采购预算（分），双方另行结算，不进入平台支付
   remark        VARCHAR(255) DEFAULT '',
   estimate_fee  INT NOT NULL DEFAULT 0,                -- 预估费用（分）
   real_fee      INT NOT NULL DEFAULT 0,                -- 实收（分）
@@ -85,7 +86,8 @@ CREATE TABLE IF NOT EXISTS t_order (
   finish_time   DATETIME,
   created_time  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_time  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  KEY idx_user (user_id), KEY idx_rider (rider_id), KEY idx_status (status)
+  KEY idx_user (user_id), KEY idx_rider (rider_id), KEY idx_status (status),
+  CONSTRAINT chk_order_goods_budget CHECK (goods_budget_fen IS NULL OR (goods_budget_fen>=1 AND goods_budget_fen<=100000000))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单主表（保留≥3年）';
 
 CREATE TABLE IF NOT EXISTS t_order_transfer (
@@ -110,6 +112,7 @@ CREATE TABLE IF NOT EXISTS t_task_tag (
   name VARCHAR(32) NOT NULL,
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   sort_order INT NOT NULL DEFAULT 0,
+  task_modes VARCHAR(64) DEFAULT NULL,                 -- 适用场景；历史空值待后台分类
   version BIGINT NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='任务标签';
 
@@ -415,15 +418,6 @@ INSERT INTO t_admin_menu (code, name, path, parent_id, sort, enabled)
 SELECT 'settlements', '结算中心', '/settlements', 0, 40, 1
 WHERE NOT EXISTS (SELECT 1 FROM t_admin_menu WHERE code = 'settlements');
 INSERT INTO t_admin_menu (code, name, path, parent_id, sort, enabled)
-SELECT 'marketing', '营销管理', '/marketing', 0, 50, 1
-WHERE NOT EXISTS (SELECT 1 FROM t_admin_menu WHERE code = 'marketing');
-INSERT INTO t_admin_menu (code, name, path, parent_id, sort, enabled)
-SELECT 'content', '内容与客服', '/content', 0, 60, 1
-WHERE NOT EXISTS (SELECT 1 FROM t_admin_menu WHERE code = 'content');
-INSERT INTO t_admin_menu (code, name, path, parent_id, sort, enabled)
-SELECT 'risk', '风控与合规', '/risk', 0, 70, 1
-WHERE NOT EXISTS (SELECT 1 FROM t_admin_menu WHERE code = 'risk');
-INSERT INTO t_admin_menu (code, name, path, parent_id, sort, enabled)
 SELECT 'system', '系统管理', '/system', 0, 80, 1
 WHERE NOT EXISTS (SELECT 1 FROM t_admin_menu WHERE code = 'system');
 
@@ -434,5 +428,5 @@ WHERE u.mobile = 'admin' AND r.code = 'SUPER_ADMIN'
 
 INSERT INTO t_admin_role_menu (role_id, menu_id)
 SELECT r.id, m.id FROM t_admin_role r CROSS JOIN t_admin_menu m
-WHERE r.code = 'SUPER_ADMIN'
+WHERE r.code = 'SUPER_ADMIN' AND m.enabled = 1
   AND NOT EXISTS (SELECT 1 FROM t_admin_role_menu rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);

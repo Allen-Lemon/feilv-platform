@@ -56,6 +56,7 @@ public class CustomTaskService {
         // 固定顺序锁定标签，与停用/改名互斥；发布保存当时的名称快照。
         for (Long id : ids.stream().sorted().toList()) {
             TaskTag tag = tags.findByIdForUpdate(id).filter(TaskTag::isEnabled).orElseThrow(() -> BizException.of(409, "标签已停用或不存在，请刷新标签"));
+            if (!TaskTagService.taskModes(tag).contains(req.taskMode())) throw BizException.of(409, "标签不适用于当前任务场景，请重新选择标签");
             chosen.add(tag);
         }
         // 兼容订单表非空字段：服务任务只有一个地点，ONLINE不要求地点、不伪造坐标。

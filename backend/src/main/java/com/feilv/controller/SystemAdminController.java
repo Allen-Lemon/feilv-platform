@@ -8,6 +8,7 @@ import com.feilv.domain.AdminRoleMenu;
 import com.feilv.domain.AdminUserRole;
 import com.feilv.domain.User;
 import com.feilv.repository.*;
+import com.feilv.service.AdminMenuAccess;
 import com.feilv.service.AuditService;
 import com.feilv.util.PasswordUtil;
 import lombok.RequiredArgsConstructor;
@@ -34,11 +35,14 @@ public class SystemAdminController {
 
     @GetMapping("/menus")
     public Result<List<AdminMenu>> menus() {
-        return Result.ok(menuRepository.findByEnabledOrderBySortAscIdAsc(1));
+        return Result.ok(menuRepository.findByEnabledOrderBySortAscIdAsc(1).stream()
+                .filter(AdminMenuAccess::isAvailableMenu).toList());
     }
 
     @PostMapping("/menus")
     public Result<AdminMenu> saveMenu(@RequestBody Map<String, Object> body) {
+        if (AdminMenuAccess.isRetiredMenu(String.valueOf(body.getOrDefault("code", "")),
+                String.valueOf(body.getOrDefault("path", "")))) return Result.fail(400, "此菜单已下线");
         AdminMenu menu = body.get("id") == null ? new AdminMenu() : menuRepository.findById(Long.parseLong(body.get("id").toString())).orElseThrow();
         menu.setCode(String.valueOf(body.getOrDefault("code", "")));
         menu.setName(String.valueOf(body.getOrDefault("name", "")));

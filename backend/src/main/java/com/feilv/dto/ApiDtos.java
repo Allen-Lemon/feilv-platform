@@ -1,5 +1,6 @@
 package com.feilv.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -51,13 +52,28 @@ public final class ApiDtos {
                                  @NotNull Integer distanceM,
                                  @NotNull Integer weightKg,
                                  String goodsDesc,
-                                 String remark) {}
+                                 String remark,
+                                 @Min(1) @Max(100000000)
+                                 @JsonDeserialize(using = ComplaintDtos.StrictFenDeserializer.class) Integer goodsBudgetFen) {
+        public OrderCreateReq(String orderType, String fromContact, String fromPhone, String fromAddress,
+                              BigDecimal fromLng, BigDecimal fromLat, String toContact, String toPhone, String toAddress,
+                              BigDecimal toLng, BigDecimal toLat, Integer distanceM, Integer weightKg, String goodsDesc, String remark) {
+            this(orderType, fromContact, fromPhone, fromAddress, fromLng, fromLat, toContact, toPhone, toAddress,
+                    toLng, toLat, distanceM, weightKg, goodsDesc, remark, null);
+        }
+    }
 
     public record OrderVO(long id, String orderNo, String orderType, String status, String statusLabel,
                           String fromAddress, String toAddress, String goodsDesc,
                           int estimateFeeFen, int realFeeFen, Long riderId,
                           String pickupCode, String createdTime, String acceptedTime,
-                          String deliveredTime, String finishTime, boolean owner, String taskMode) {
+                          String deliveredTime, String finishTime, boolean owner, String taskMode, Integer goodsBudgetFen) {
+        public OrderVO(long id, String orderNo, String orderType, String status, String statusLabel,
+                       String fromAddress, String toAddress, String goodsDesc, int estimateFeeFen, int realFeeFen,
+                       Long riderId, String pickupCode, String createdTime, String acceptedTime, String deliveredTime, String finishTime, boolean owner, String taskMode) {
+            this(id, orderNo, orderType, status, statusLabel, fromAddress, toAddress, goodsDesc, estimateFeeFen, realFeeFen,
+                    riderId, pickupCode, createdTime, acceptedTime, deliveredTime, finishTime, owner, taskMode, null);
+        }
         public OrderVO(long id, String orderNo, String orderType, String status, String statusLabel,
                        String fromAddress, String toAddress, String goodsDesc, int estimateFeeFen, int realFeeFen,
                        Long riderId, String pickupCode, String createdTime, String acceptedTime, String deliveredTime, String finishTime, boolean owner) {
@@ -82,7 +98,13 @@ public final class ApiDtos {
 
     public record GrabVO(long orderId, String orderNo, String orderType, String fromAddress,
                         String toAddress, int distanceM, int rewardFen, String createdTime,
-                        String title, String taskMode, String locationAddress, String serviceTime) {
+                        String title, String taskMode, String locationAddress, String serviceTime, Integer goodsBudgetFen) {
+        public GrabVO(long orderId, String orderNo, String orderType, String fromAddress,
+                      String toAddress, int distanceM, int rewardFen, String createdTime,
+                      String title, String taskMode, String locationAddress, String serviceTime) {
+            this(orderId, orderNo, orderType, fromAddress, toAddress, distanceM, rewardFen, createdTime,
+                    title, taskMode, locationAddress, serviceTime, null);
+        }
         public GrabVO(long orderId, String orderNo, String orderType, String fromAddress,
                       String toAddress, int distanceM, int rewardFen, String createdTime) {
             this(orderId, orderNo, orderType, fromAddress, toAddress, distanceM, rewardFen, createdTime, "", "DELIVERY", "", "");

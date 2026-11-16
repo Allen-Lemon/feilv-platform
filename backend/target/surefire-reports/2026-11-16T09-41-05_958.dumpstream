@@ -1,0 +1,5 @@
+# Created at 2026-11-16T09:41:06.187
+Boot Manifest-JAR contains absolute paths in classpath 'D:\project\feilv-platform\backend\target\test-classes'
+Hint: <argLine>-Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
+'other' has different root
+

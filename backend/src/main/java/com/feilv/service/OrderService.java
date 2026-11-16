@@ -87,6 +87,7 @@ public class OrderService {
     private OrderVO createOrder(long userId, OrderCreateReq req, QuoteVO manualQuote, boolean serviceTask) {
         userProfileService.requireBoundMobile(userId);
         OrderType type = OrderType.of(req.orderType());
+        validateGoodsBudget(type, req.goodsBudgetFen());
         banWordService.checkGoods(req.goodsDesc());   // 合规底线：禁发品类拦截
 
         QuoteVO q = manualQuote != null ? manualQuote : pricingService.quote(req.distanceM(), req.weightKg());
@@ -107,6 +108,7 @@ public class OrderService {
         order.setDistanceM(req.distanceM());
         order.setWeightKg(req.weightKg());
         order.setGoodsDesc(req.goodsDesc() == null ? "" : req.goodsDesc());
+        order.setGoodsBudgetFen(req.goodsBudgetFen());
         order.setRemark(req.remark() == null ? "" : req.remark());
         order.setEstimateFee(q.totalFen());
         order.setRealFee(q.totalFen());
@@ -123,6 +125,17 @@ public class OrderService {
         }
         saveLog(order.getId(), null, OrderStatus.WAIT_PAY, "USER", userId, "用户下单");
         return toVO(order);
+    }
+
+    /** 仅新建时校验预算；历史BUY空预算不影响查询、支付和履约。 */
+    private static void validateGoodsBudget(OrderType type, Integer goodsBudgetFen) {
+        if (type != OrderType.BUY) {
+            if (goodsBudgetFen != null) throw BizException.of(400, "仅代购订单可填写商品预算");
+            return;
+        }
+        if (goodsBudgetFen == null || goodsBudgetFen < 1 || goodsBudgetFen > 100000000) {
+            throw BizException.of(400, "代购商品预算必须为1至100000000整数分");
+        }
     }
 
     // ---------- 状态机统一流转入口（功能设计文档8.1：单一事实源） ----------
@@ -307,6 +320,6 @@ public class OrderService {
                 o.getDeliveredTime() == null ? null : o.getDeliveredTime().toString(),
                 o.getFinishTime() == null ? null : o.getFinishTime().toString(),
                 com.feilv.common.UserContext.get() != null && o.getUserId() != null
-                        && o.getUserId().equals(com.feilv.common.UserContext.get().id()), taskMode);
+                        && o.getUserId().equals(com.feilv.common.UserContext.get().id()), taskMode, o.getGoodsBudgetFen());
     }
 }

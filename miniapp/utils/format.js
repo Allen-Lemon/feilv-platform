@@ -1,3 +1,4 @@
+const goodsBudget = require('./goods-budget')
 const types = { SEND: '跑腿送', BUY: '跑腿买', ERRAND: '跑腿办', CUSTOM: '自定义任务' }
 const complaintStatuses = { OPEN: '待受理', PROCESSING: '处理中', APPROVED: '审核通过', REJECTED: '审核驳回', DONE: '已结案' }
 const activeComplaintStatuses = ['OPEN', 'PROCESSING']
@@ -9,6 +10,7 @@ function service(value) { return value.orderType === 'CUSTOM' && ['ONLINE', 'ONS
 function order(value) {
   const isService = service(value)
   return Object.assign({}, value, {
+    goodsBudgetText: value.orderType === 'BUY' ? goodsBudget.text(value.goodsBudgetFen) : '',
     isService, modeText: taskModes[value.taskMode] || taskModes.DELIVERY,
     typeText: types[value.orderType] || value.orderType,
     statusText: isService ? ({ PICKING: '服务中', DELIVERED: '待确认完成' }[value.status] || value.statusLabel || statuses[value.status] || value.status) : value.statusLabel || statuses[value.status] || value.status,

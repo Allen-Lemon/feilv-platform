@@ -3,7 +3,7 @@ const session = require('../../utils/session')
 definePage({
   data: { types: [
     { code: 'SEND', label: '跑腿服务', desc: '送件、代买、代办，一个入口按需切换' },
-    { code: 'CUSTOM', label: '自定义任务', desc: '上门、兼职或线上服务，自己填写任务总价' }
+    { code: 'CUSTOM', label: '自定义任务', desc: '上门清洁、兼职搬运、线上资料整理等；自填需求与服务总价' }
   ] },
   onShow() {
     if (this._pendingType && session.token()) {

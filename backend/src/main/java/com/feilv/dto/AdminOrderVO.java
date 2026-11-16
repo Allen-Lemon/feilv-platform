@@ -11,12 +11,24 @@ public record AdminOrderVO(long id, String orderNo, String orderType, String sta
                            String pickupCode, String createdTime, String acceptedTime,
                            String deliveredTime, String finishTime,
                            Long userId, String userNickname, String userAvatarUrl,
-                           String userMobile, boolean userMobileBound, String taskMode) {
+                           String userMobile, boolean userMobileBound, String taskMode, Integer goodsBudgetFen) {
+    public AdminOrderVO(long id, String orderNo, String orderType, String status, String statusLabel,
+                        String fromAddress, String toAddress, String goodsDesc,
+                        int estimateFeeFen, int realFeeFen, Long riderId,
+                        String pickupCode, String createdTime, String acceptedTime,
+                        String deliveredTime, String finishTime,
+                        Long userId, String userNickname, String userAvatarUrl,
+                        String userMobile, boolean userMobileBound, String taskMode) {
+        this(id, orderNo, orderType, status, statusLabel, fromAddress, toAddress, goodsDesc, estimateFeeFen, realFeeFen,
+                riderId, pickupCode, createdTime, acceptedTime, deliveredTime, finishTime,
+                userId, userNickname, userAvatarUrl, userMobile, userMobileBound, taskMode, null);
+    }
+
     public static AdminOrderVO from(OrderVO order, Long userId, User user) {
         return new AdminOrderVO(order.id(), order.orderNo(), order.orderType(), order.status(), order.statusLabel(),
                 order.fromAddress(), order.toAddress(), order.goodsDesc(), order.estimateFeeFen(), order.realFeeFen(),
                 order.riderId(), order.pickupCode(), order.createdTime(), order.acceptedTime(), order.deliveredTime(),
                 order.finishTime(), userId, user == null ? "" : UserViews.text(user.getNickname()),
-                user == null ? "" : UserViews.text(user.getAvatarUrl()), UserViews.maskedMobile(user), UserViews.mobileBound(user), order.taskMode());
+                user == null ? "" : UserViews.text(user.getAvatarUrl()), UserViews.maskedMobile(user), UserViews.mobileBound(user), order.taskMode(), order.goodsBudgetFen());
     }
 }

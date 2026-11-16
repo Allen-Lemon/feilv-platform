@@ -23,10 +23,11 @@
           <el-pagination layout="prev, pager, next, total" :total="total" :page-size="15" :current-page="page" @current-change="load" />
         </el-tab-pane>
         <el-tab-pane label="标签管理" name="tags">
-          <div class="panel-heading"><p>停用后不再可选，已引用标签保留，不提供真实删除。</p><div><el-button :loading="tagsLoading" @click="loadTags">刷新</el-button><el-button type="primary" :disabled="tagBusy" @click="editTag()">新增标签</el-button></div></div>
+          <div class="panel-heading"><p>为标签选择一个或多个适用场景；待分类或停用标签不在发布页展示，历史引用保留。</p><div><el-button :loading="tagsLoading" @click="loadTags">刷新</el-button><el-button type="primary" :disabled="tagBusy" @click="editTag()">新增标签</el-button></div></div>
           <el-alert v-if="tagsError" :title="tagsError" type="error" :closable="false" class="notice" />
           <el-table :data="tags" row-key="id" stripe v-loading="tagsLoading">
             <el-table-column prop="id" label="ID" width="90" /><el-table-column prop="name" label="名称" min-width="160" /><el-table-column prop="sort" label="排序" width="100" /><el-table-column prop="version" label="版本" width="100" />
+            <el-table-column label="适用场景" min-width="210"><template #default="{ row }"><el-tag v-for="mode in tagModes(row)" :key="mode" class="task-tag">{{ taskModeLabel(mode) }}</el-tag><el-tag v-if="!tagModes(row).length" type="warning">待分类</el-tag></template></el-table-column>
             <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
             <el-table-column label="操作" width="160"><template #default="{ row }"><el-button link type="primary" :disabled="tagBusy" @click="editTag(row)">编辑</el-button><el-button link :disabled="tagBusy" @click="toggleTag(row)">{{ row.enabled ? '停用' : '启用' }}</el-button></template></el-table-column>
           </el-table>
@@ -67,8 +68,8 @@
         <p v-else class="field-hint">当前无用户管理权限，不查询用户列表；可手填用户 ID，由后端校验。</p>
         <el-form-item label="标题（1–64 字）" required><el-input v-model="form.title" maxlength="128" /><span class="field-hint">{{ Array.from(form.title).length }} / 64 字（按 Unicode 码点）</span></el-form-item>
         <el-form-item label="任务内容（1–1000 字）" required><el-input v-model="form.content" type="textarea" :rows="4" maxlength="2000" /><span class="field-hint">{{ Array.from(form.content).length }} / 1000 字（按 Unicode 码点）</span></el-form-item>
-        <el-form-item label="标签（可选，最多 5 个）"><el-select v-model="form.tagIds" multiple :multiple-limit="5" style="width:100%" :loading="tagsLoading"><el-option v-for="tag in enabledTags" :key="tag.id" :label="tag.name" :value="tag.id" /></el-select><span v-if="tagsError" class="field-hint">标签加载失败，可不选标签或关闭弹窗后刷新。</span></el-form-item>
         <el-form-item label="任务场景" required><el-select v-model="form.taskMode" style="width:100%"><el-option v-for="mode in taskModes" :key="mode.code" :value="mode.code" :label="mode.label" /></el-select></el-form-item>
+        <el-form-item label="场景标签（可选，最多 5 个）"><el-select v-model="form.tagIds" multiple :multiple-limit="5" style="width:100%" :loading="tagsLoading"><el-option v-for="tag in enabledTags" :key="tag.id" :label="tag.name" :value="tag.id" /></el-select><span class="field-hint">仅展示当前场景可用标签，切换场景会移除不适用的已选标签。</span><span v-if="tagsError" class="field-hint">标签加载失败，可不选标签或关闭弹窗后刷新。</span></el-form-item>
         <p class="field-hint">{{ form.taskMode === 'ONLINE' ? '线上完成，无需填写地址。' : form.taskMode === 'ONSITE' ? '例如通马桶：只需一个服务地点，可选填写服务时间。' : '例如搬水泥：必须填写工作地点及工作时间。' }}所有场景均由现有骑手承接。</p>
         <el-form-item label="自定义总价（元，0.01–1000000.00）" required><el-input v-model="form.priceYuan" inputmode="decimal" placeholder="如 100.00，最多两位小数" /></el-form-item>
         <div class="form-grid"><el-form-item label="联系人" required><el-input v-model="form.contact" /></el-form-item><el-form-item label="联系电话" required><el-input v-model="form.phone" maxlength="11" /></el-form-item></div>
@@ -84,7 +85,7 @@
 
     <el-dialog v-model="tagOpen" :title="tagForm.id == null ? '新增标签' : '编辑标签'" width="480px" :close-on-click-modal="false" :show-close="!tagBusy" :close-on-press-escape="!tagBusy">
       <el-alert v-if="tagError" :title="tagError" type="error" :closable="false" class="notice"><el-button v-if="tagConflict" link :disabled="tagBusy" @click="reloadTagDraft">刷新此标签（丢弃草稿）</el-button></el-alert>
-      <el-form label-position="top" :disabled="tagBusy || tagConflict"><el-form-item label="名称（1–32 字）" required><el-input v-model="tagForm.name" maxlength="64" /><span class="field-hint">{{ Array.from(tagForm.name).length }} / 32 字（按 Unicode 码点）</span></el-form-item><el-form-item label="排序（0–100000 整数）"><el-input-number v-model="tagForm.sort" :step="1" step-strictly :min="0" :max="100000" /></el-form-item><el-form-item label="启用"><el-switch v-model="tagForm.enabled" /></el-form-item><p v-if="tagForm.id != null">当前版本：{{ tagForm.version }}</p></el-form>
+      <el-form label-position="top" :disabled="tagBusy || tagConflict"><el-form-item label="名称（1–32 字）" required><el-input v-model="tagForm.name" maxlength="64" /><span class="field-hint">{{ Array.from(tagForm.name).length }} / 32 字（按 Unicode 码点）</span></el-form-item><el-form-item label="排序（0–100000 整数）"><el-input-number v-model="tagForm.sort" :step="1" step-strictly :min="0" :max="100000" /></el-form-item><el-form-item label="适用场景（可多选）" required><el-checkbox-group v-model="tagForm.taskModes"><el-checkbox v-for="mode in taskModes" :key="mode.code" :value="mode.code" :label="mode.code">{{ mode.label }}</el-checkbox></el-checkbox-group></el-form-item><el-form-item label="启用"><el-switch v-model="tagForm.enabled" /></el-form-item><p v-if="tagForm.id != null">当前版本：{{ tagForm.version }}</p></el-form>
       <template #footer><el-button :disabled="tagBusy" @click="tagOpen = false">取消</el-button><el-button type="primary" :loading="tagBusy" :disabled="tagConflict" @click="saveTag">保存</el-button></template>
     </el-dialog>
   </div>
@@ -110,7 +111,12 @@ const validId = id => /^[1-9]\d*$/.test(String(id ?? ''))
 const query = reactive({ status: '', userId: '' })
 const rows = ref([]), page = ref(1), total = ref(0), loading = ref(false), listError = ref('')
 const tags = ref([]), tagsLoading = ref(false), tagsError = ref('')
-const enabledTags = computed(() => tags.value.filter(tag => tag.enabled === true))
+const tagModes = tag => Array.isArray(tag.taskModes) && tag.taskModes.length > 0 && tag.taskModes.length <= 3 && new Set(tag.taskModes).size === tag.taskModes.length && tag.taskModes.every(code => taskModes.some(mode => mode.code === code)) ? tag.taskModes : []
+const enabledTags = computed(() => tags.value.filter(tag => tag.enabled === true && tagModes(tag).includes(form.taskMode)))
+function pruneSelectedTags() {
+  const valid = form.tagIds.filter(id => enabledTags.value.some(tag => tag.id === id))
+  if (valid.length !== form.tagIds.length) form.tagIds = valid
+}
 const detail = ref(null), detailOpen = ref(false), detailLoading = ref(false), detailError = ref(''), detailOrderId = ref('')
 let disposed = false, listRequest = 0, tagsRequest = 0, detailRequest = 0, usersRequest = 0, createSession = 0
 
@@ -140,7 +146,7 @@ async function loadTags() {
     const data = await adminApi.taskTags()
     if (requestId !== tagsRequest) return false
     if (!Array.isArray(data)) throw new Error('Invalid tags')
-    tags.value = data; return true
+    tags.value = data; pruneSelectedTags(); return true
   } catch {
     if (requestId === tagsRequest) { tags.value = []; tagsError.value = '标签加载失败，请刷新重试。' }
     return false
@@ -187,7 +193,7 @@ function buildPayload() {
   if (!validId(userId)) throw new Error('请填写有效的发布用户 ID（正整数），用户有效性由后端校验。')
   if (!title || Array.from(title).length > 64) throw new Error('标题需为 1–64 字。')
   if (!content || Array.from(content).length > 1000) throw new Error('任务内容需为 1–1000 字。')
-  if (!Array.isArray(form.tagIds) || form.tagIds.length > 5 || new Set(form.tagIds).size !== form.tagIds.length || form.tagIds.some(id => !enabledTags.value.some(tag => tag.id === id))) throw new Error('最多选择 5 个当前启用的标签。')
+  if (!Array.isArray(form.tagIds) || form.tagIds.length > 5 || new Set(form.tagIds).size !== form.tagIds.length || form.tagIds.some(id => !enabledTags.value.some(tag => tag.id === id))) throw new Error('最多选择 5 个适用当前场景的启用标签。')
   if (!taskModes.some(mode => mode.code === form.taskMode)) throw new Error('请选择线上任务、上门服务或兼职劳务。')
   const priceFen = yuanToFen(form.priceYuan)
   if (!isFen(priceFen) || priceFen < 1 || priceFen > 100000000) throw new Error('总价需为 0.01–1000000.00 元，最多两位小数。')
@@ -245,15 +251,15 @@ async function publish() {
   } finally { creating.value = false }
 }
 watch(form, () => { ++formRevision; quote.value = null; quotedPayload = null }, { flush: 'sync' })
-watch(() => form.taskMode, mode => { if (mode === 'ONLINE') { form.locationAddress = ''; form.serviceTime = '' } }, { flush: 'sync' })
+watch(() => form.taskMode, mode => { pruneSelectedTags(); if (mode === 'ONLINE') { form.locationAddress = ''; form.serviceTime = '' } }, { flush: 'sync' })
 watch(createOpen, open => { if (!open) { ++createSession; ++usersRequest; usersLoading.value = false; quote.value = null; quotedPayload = null } }, { flush: 'sync' })
 watch(canSearchUsers, allowed => { if (!allowed) { ++usersRequest; customerOptions.value = []; usersLoading.value = false } })
 
 const tagOpen = ref(false), tagBusy = ref(false), tagError = ref(''), tagConflict = ref(false)
-const tagForm = reactive({ id: null, name: '', sort: 0, enabled: true, version: null })
+const tagForm = reactive({ id: null, name: '', sort: 0, enabled: true, version: null, taskModes: [] })
 function editTag(row = {}) {
   if (!canManage.value || tagBusy.value || disposed) return
-  Object.assign(tagForm, { id: row.id ?? null, name: row.name || '', sort: row.sort ?? 0, enabled: row.enabled ?? true, version: row.version ?? null })
+  Object.assign(tagForm, { id: row.id ?? null, name: row.name || '', sort: row.sort ?? 0, enabled: row.enabled ?? true, version: row.version ?? null, taskModes: [...tagModes(row)] })
   tagError.value = ''; tagConflict.value = false; tagOpen.value = true
 }
 function tagPayload(draft) {
@@ -261,7 +267,9 @@ function tagPayload(draft) {
   if (!name || Array.from(name).length > 32) throw new Error('标签名称需为 1–32 字。')
   if (!Number.isInteger(draft.sort) || draft.sort < 0 || draft.sort > 100000 || typeof draft.enabled !== 'boolean') throw new Error('标签排序必须为 0–100000 的整数，启用状态必须为布尔值。')
   if (draft.id != null && (!Number.isSafeInteger(draft.version) || draft.version < 0)) throw new Error('版本无效，请刷新此标签。')
-  return { name, enabled: draft.enabled, sort: draft.sort, ...(draft.id == null ? {} : { version: draft.version }) }
+  const modes = tagModes(draft)
+  if (!modes.length) throw new Error('请选择 1–3 个适用场景；待分类标签请先编辑分类。')
+  return { name, enabled: draft.enabled, sort: draft.sort, taskModes: [...modes], ...(draft.id == null ? {} : { version: draft.version }) }
 }
 async function persistTag(draft, toggling = false) {
   if (!canManage.value || tagBusy.value || disposed || (tagOpen.value && tagConflict.value)) return

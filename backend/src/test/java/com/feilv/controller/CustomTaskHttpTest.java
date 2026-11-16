@@ -64,7 +64,7 @@ class CustomTaskHttpTest {
     private JsonNode postBody(String path, User user, Object body) throws Exception {
         return json.readTree(mvc.perform(post(path).header("Authorization", token(user)).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body))).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
     }
-    private TaskTag tag(String name) { TaskTag tag = new TaskTag(); tag.setName(name); return tags.saveAndFlush(tag); }
+    private TaskTag tag(String name) { TaskTag tag = new TaskTag(); tag.setName(name); tag.setTaskModes("ONLINE"); return tags.saveAndFlush(tag); }
 
     @Test void miniappPublicationCreatesLinkedOrderAndTagSnapshotWithoutPaymentAndKeepsOwnerAuthorization() throws Exception {
         User user = user("USER", "13800138001"); TaskTag tag = tag("加急");
@@ -112,7 +112,7 @@ class CustomTaskHttpTest {
 
     @Test void adminCanPublishForBoundCustomerButCannotImpersonateAnAdminCustomerAndUsesVersionedTagUpdates() throws Exception {
         User admin = admin(), user = user("USER", "13800138005");
-        var created = postBody("/api/v1/admin/task-tags", admin, Map.of("name", "后台标签", "sort", 1, "enabled", true));
+        var created = postBody("/api/v1/admin/task-tags", admin, Map.of("name", "后台标签", "sort", 1, "enabled", true, "taskModes", List.of("ONLINE")));
         assertEquals(0, created.path("code").asInt()); long tagId = created.path("data").path("id").asLong(); long version = created.path("data").path("version").asLong();
         var body = request(List.of(tagId)); body.put("userId", user.getId());
         var result = postBody("/api/v1/admin/custom-tasks", admin, body);
@@ -120,14 +120,87 @@ class CustomTaskHttpTest {
         assertEquals(user.getId().longValue(), result.path("data").path("userId").asLong());
         assertEquals(admin.getId().longValue(), result.path("data").path("createdBy").asLong());
         mvc.perform(put("/api/v1/admin/task-tags/" + tagId).header("Authorization", token(admin)).contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("name", "已停用", "sort", 1, "enabled", false, "version", version))))
+                        .content(json.writeValueAsString(Map.of("name", "已停用", "sort", 1, "enabled", false, "version", version, "taskModes", List.of("ONLINE")))))
                 .andExpect(jsonPath("$.code").value(0));
         mvc.perform(put("/api/v1/admin/task-tags/" + tagId).header("Authorization", token(admin)).contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(Map.of("name", "覆盖旧版本", "sort", 1, "enabled", true, "version", version))))
+                        .content(json.writeValueAsString(Map.of("name", "覆盖旧版本", "sort", 1, "enabled", true, "version", version, "taskModes", List.of("ONLINE")))))
                 .andExpect(jsonPath("$.code").value(409));
         mvc.perform(get("/api/v1/task-tags").header("Authorization", token(user))).andExpect(jsonPath("$.data").isEmpty());
         body = request(List.of()); body.put("userId", admin.getId());
         assertEquals(403, postBody("/api/v1/admin/custom-tasks", admin, body).path("code").asInt());
+    }
+
+    @Test void tagCreateAndUpdateRequireExplicitValidModesEvenForLegacyHttpBodies() throws Exception {
+        User admin = admin();
+        var created = postBody("/api/v1/admin/task-tags", admin, Map.of("name", "多场景标签", "sort", 1, "enabled", true,
+                "taskModes", List.of("ONLINE", "ONSITE", "PART_TIME")));
+        assertEquals(0, created.path("code").asInt());
+        JsonNode label = created.path("data"); long id = label.path("id").asLong(); long version = label.path("version").asLong();
+        assertEquals(json.valueToTree(List.of("ONSITE", "PART_TIME", "ONLINE")), label.path("taskModes"));
+        assertEquals("ONSITE,PART_TIME,ONLINE", tags.findById(id).orElseThrow().getTaskModes());
+        long count = tags.count();
+        for (String modes : List.of("", "null", "[]", "[null]", "[\"ONLINE\",null]", "[\"ONLINE\",\"ONLINE\"]",
+                "[\"ONSITE\",\"PART_TIME\",\"ONLINE\",\"ONSITE\"]", "[\"DELIVERY\"]", "[\"online\"]", "[\" ONLINE\"]",
+                "\"ONLINE\"", "{}", "1", "[true]")) {
+            String body = "{\"name\":\"禁止未分类覆盖\",\"enabled\":false,\"sort\":2,\"version\":" + version
+                    + (modes.isEmpty() ? "" : ",\"taskModes\":" + modes) + "}";
+            mvc.perform(post("/api/v1/admin/task-tags").header("Authorization", token(admin)).contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(jsonPath("$.code").value(400));
+            mvc.perform(put("/api/v1/admin/task-tags/" + id).header("Authorization", token(admin)).contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(jsonPath("$.code").value(400));
+        }
+        assertEquals(count, tags.count());
+        TaskTag unchanged = tags.findById(id).orElseThrow();
+        assertEquals("多场景标签", unchanged.getName()); assertTrue(unchanged.isEnabled()); assertEquals(version, unchanged.getVersion());
+        assertEquals("ONSITE,PART_TIME,ONLINE", unchanged.getTaskModes());
+        mvc.perform(put("/api/v1/admin/task-tags/" + id).header("Authorization", token(admin)).contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("name", "已重分类", "sort", 1, "enabled", true, "version", version, "taskModes", List.of("PART_TIME")))))
+                .andExpect(jsonPath("$.code").value(0)).andExpect(jsonPath("$.data.taskModes[0]").value("PART_TIME"));
+        assertEquals("PART_TIME", tags.findById(id).orElseThrow().getTaskModes());
+    }
+
+    @Test void publicTagsExcludeLegacyUnclassifiedWhileAdminRetainsTheirEmptyModeArrays() throws Exception {
+        User admin = admin(), user = user("USER", "13800138112");
+        TaskTag legacyNull = tag("历史NULL"), legacyEmpty = tag("历史空串"), disabled = tag("已停用"), classified = tag("已分类");
+        legacyNull.setTaskModes(null); legacyEmpty.setTaskModes(""); disabled.setEnabled(false);
+        classified.setTaskModes("ONSITE,ONLINE"); tags.saveAllAndFlush(List.of(legacyNull, legacyEmpty, disabled, classified));
+        JsonNode publicTags = getBody("/api/v1/task-tags", user).path("data");
+        assertEquals(1, publicTags.size()); assertEquals(classified.getId().longValue(), publicTags.get(0).path("id").asLong());
+        assertEquals(json.valueToTree(List.of("ONSITE", "ONLINE")), publicTags.get(0).path("taskModes"));
+        JsonNode adminTags = getBody("/api/v1/admin/task-tags", admin).path("data");
+        assertEquals(4, adminTags.size());
+        for (TaskTag legacy : List.of(legacyNull, legacyEmpty)) {
+            JsonNode row = java.util.stream.StreamSupport.stream(adminTags.spliterator(), false)
+                    .filter(t -> t.path("id").asLong() == legacy.getId()).findFirst().orElseThrow();
+            assertTrue(row.path("taskModes").isArray()); assertEquals(0, row.path("taskModes").size());
+        }
+    }
+
+    @Test void bothPublicationRoutesEnforceTagModesForEverySceneAndMultiselectWithoutOrphanWrites() throws Exception {
+        User admin = admin(), user = user("USER", "13800138113");
+        for (String stored : Arrays.asList(null, "", "ONSITE", "PART_TIME", "ONLINE", "ONSITE,PART_TIME,ONLINE")) {
+            TaskTag tag = tag("场景标签"); tag.setTaskModes(stored); tags.saveAndFlush(tag);
+            for (String mode : List.of("ONSITE", "PART_TIME", "ONLINE")) {
+                boolean matches = stored != null && Arrays.asList(stored.split(",")).contains(mode);
+                for (String path : List.of("/api/v1/custom-tasks", "/api/v1/admin/custom-tasks")) {
+                    var body = request(List.of(tag.getId())); body.put("taskMode", mode);
+                    if (!"ONLINE".equals(mode)) body.put("locationAddress", "服务地点");
+                    if ("PART_TIME".equals(mode)) body.put("serviceTime", "本周六9至18点");
+                    if (path.contains("/admin/")) body.put("userId", user.getId());
+                    long before = orders.count(), tasksBefore = tasks.count(), snapshotsBefore = snapshots.count(), feesBefore = fees.count();
+                    var result = postBody(path, path.contains("/admin/") ? admin : user, body);
+                    assertEquals(matches ? 0 : 409, result.path("code").asInt(), stored + " / " + mode + " / " + path);
+                    if (!matches) {
+                        assertEquals(before, orders.count()); assertEquals(tasksBefore, tasks.count());
+                        assertEquals(snapshotsBefore, snapshots.count()); assertEquals(feesBefore, fees.count());
+                    } else {
+                        assertEquals(before + 1, orders.count()); assertEquals(tasksBefore + 1, tasks.count());
+                        assertEquals(snapshotsBefore + 1, snapshots.count());
+                    }
+                }
+            }
+        }
+        org.mockito.Mockito.verifyNoInteractions(pricing);
     }
 
     @Test void strictJsonPriceContractAppliesToBothPublicationAndQuoteIncludingAdmin() throws Exception {

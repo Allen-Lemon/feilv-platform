@@ -337,7 +337,7 @@ test('quote: changes invalidate old quote and validate contacts/distance/weight'
   page.onLoad({ type: 'BUY' })
   assert.throws(() => page.buildPayload(), /联系人/)
   Object.assign(page.data.form, { fromContact: '甲', fromPhone: '13800000000', fromAddress: 'A', toContact: '乙', toPhone: '13900000000', toAddress: 'B', goodsDesc: '文件' })
-  page.data.distanceKm = '2.5'; page.data.weightKg = '5'
+  page.data.distanceKm = '2.5'; page.data.weightKg = '5'; page.data.goodsBudget = '12.34'
   assert.equal(page.buildPayload().distanceM, 2500)
   page.data.quote = { totalText: '1.00' }; page._quotedPayload = {}
   page.number(event('distanceKm', '3')); assert.equal(page.data.quote, null); assert.equal(page._quotedPayload, null)
@@ -699,6 +699,7 @@ function selectAvatar(page, path = 'wxfile://tmp/avatar') { page.prepareAvatar()
 function fillCreate(page) {
   Object.assign(page.data.form, { fromContact: '甲', fromPhone: '13800000000', fromAddress: 'A', toContact: '乙', toPhone: '13900000000', toAddress: 'B', goodsDesc: '文件' })
   page.data.distanceKm = '2'; page.data.weightKg = '5'
+  if (page.data.form.orderType === 'BUY' && !page.data.goodsBudget) page.data.goodsBudget = '12.34'
   page._quotedPayload = page.buildPayload(); page.data.quote = { totalText: '5.00' }
 }
 test('avatar: multipart bearer upload parses string Result; API /api suffix and avatar origin resolve correctly', async () => {
@@ -1530,7 +1531,7 @@ test('development options: failed or missing backend endpoint gives actionable e
   const template = fs.readFileSync(path.join(native, 'templates/manual-phone.wxml'), 'utf8')
   assert.ok(template.includes('刷新绑定模式')); assert.ok(template.includes('当前服务：')); assert.ok(template.includes('phoneOptionsError || phoneModeMessage'))
 })
-const taskTagRows = () => Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: '后台标签' + (i + 1), enabled: true, sort: i, version: 1 }))
+const taskTagRows = () => Array.from({ length: 7 }, (_, i) => ({ id: i + 1, name: '后台标签' + (i + 1), enabled: true, taskModes: ['ONSITE', 'PART_TIME', 'ONLINE'], sort: i, version: 1 }))
 async function customCreate(env, api = {}) {
   env.authenticated()
   const page = env.page('pages/order/create', Object.assign({ async addressList() { return [] }, async taskTags() { return taskTagRows() }, async me() { return profileValue({ mobileBound: true }) }, async quote(data) { return { totalFen: data.taskPriceFen, riderShareFen: 455, platformShareFen: 195, items: [] } } }, api))
@@ -1558,7 +1559,7 @@ test('custom task API: exact service body and price-only quote never include nes
   assert.deepEqual(JSON.parse(JSON.stringify(req.data)), { title: '标题', content: '内容', tagIds: [2, 5], taskMode: 'ONSITE', priceFen: 650, contact: '甲', phone: '13800000000', locationAddress: '服务地点', serviceTime: '周六上午' })
   assert.equal(payload.taskTagIds, '5,2'); okRequest(req, { id: 77 }); assert.equal((await creating).id, 77)
   const ordinary = { orderType: 'SEND', goodsDesc: '文件' }; const sending = api.createOrder(ordinary)
-  assert.ok(env.calls.requests.at(-1).url.endsWith('/api/v1/orders')); assert.equal(env.calls.requests.at(-1).data, ordinary); okRequest(env.calls.requests.at(-1), { id: 78 }); await sending
+  assert.ok(env.calls.requests.at(-1).url.endsWith('/api/v1/orders')); assert.deepEqual(JSON.parse(JSON.stringify(env.calls.requests.at(-1).data)), ordinary); okRequest(env.calls.requests.at(-1), { id: 78 }); await sending
   const empty = api.createOrder(Object.assign({}, payload, { taskTagIds: '', taskMode: 'ONLINE' })); assert.equal(env.calls.requests.at(-1).data.tagIds.length, 0); assert.equal(env.calls.requests.at(-1).data.locationAddress, ''); assert.equal(env.calls.requests.at(-1).data.serviceTime, ''); okRequest(env.calls.requests.at(-1), { id: 79 }); await empty
   for (const taskTagIds of ['1,1', '0', 'not-an-id', '1,2,3,4,5,6']) await assert.rejects(api.createOrder(Object.assign({}, payload, { taskTagIds })))
   for (const taskPriceFen of [0, -1, 100000001, 0.5, '650', NaN]) {
@@ -2243,7 +2244,7 @@ test('service detail: owner confirms service completion and missing shares are n
 test('service disclosure: scene examples, single address selector, precise total/shares, rider-only actions and privacy stay explicit', () => {
   const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8'); const createJS = fs.readFileSync(path.join(native, 'pages/order/create.js'), 'utf8')
   for (const text of ['data-side="location"', 'form.taskMode !== \'ONLINE\'', 'taskPrice', 'serviceTime', 'maxlength="100"', '不是骑手实拿', '70%', '30%']) assert.ok(create.includes(text), text)
-  for (const text of ['通马桶', '家电清洁', '搬水泥', '搬运', '资料整理', '设计']) assert.ok(createJS.includes(text), text)
+  for (const text of ['日常清洁', '物品整理', '搬运协助', '临时帮手', '资料整理', '信息录入']) assert.ok(createJS.includes(text), text)
   const confirm = fs.readFileSync(path.join(native, 'pages/order/confirm.wxml'), 'utf8'); for (const text of ['发布任务总价', '骑手预计所得', '平台分成', 'quote.riderShareText', 'quote.platformShareText']) assert.ok(confirm.includes(text))
   const detail = fs.readFileSync(path.join(native, 'pages/order/detail.wxml'), 'utf8'); assert.ok(detail.includes('wx:if="{{!order.isService}}"')); assert.ok(detail.includes('task.serviceTime')); assert.ok(detail.includes('task.phone'))
   const rider = fs.readFileSync(path.join(native, 'pages/rider/workbench.wxml'), 'utf8'); for (const text of ['canServiceStart', 'canServiceComplete', 'bindtap="detail"', '查看任务详情', '骑手预计所得']) assert.ok(rider.includes(text))
@@ -2484,6 +2485,158 @@ test('new UI disclosures: bound change button, cancel, phoneOnly, transfer role/
   const my = fs.readFileSync(path.join(native, 'pages/my/my.wxml'), 'utf8'); assert.ok(my.includes('更换手机号'))
   const transfers = fs.readFileSync(path.join(native, 'pages/rider/transfers.wxml'), 'utf8'); for (const text of ['不是用户ID', '每页15条', '私有详情权限', '上线', '只读转派历史', '不读取订单联系人']) assert.ok(transfers.includes(text), text)
   const app = JSON.parse(fs.readFileSync(path.join(native, 'app.json'))); assert.ok(app.pages.includes('pages/rider/transfers'))
+})
+test('BUY budget: separate exact decimal input requires integer fen boundaries and clears on other types', async () => {
+  const env = environment(); env.authenticated()
+  const page = env.page('pages/order/create', { async addressList() { return [] } }); page.onLoad({ type: 'BUY' }); fillCreate(page)
+  for (const [text, fen] of [['0.01', 1], ['0.29', 29], ['1', 100], ['12.34', 1234], ['999999.99', 99999999], ['1000000.00', 100000000]]) {
+    page.data.quote = {}; page.number(event('goodsBudget', text)); assert.equal(page.buildPayload().goodsBudgetFen, fen); assert.equal(page.data.quote, null)
+  }
+  for (const text of ['', ' ', '0', '0.00', '-1', '+1', '.29', '1.', '0.009', '1.001', '1e2', 'NaN', 'Infinity', '1000000.01', '1000001', '1,000', ' 1', '1 ', null, 1]) {
+    page.number(event('goodsBudget', text)); assert.throws(() => page.buildPayload(), /预计商品总价/)
+  }
+  for (const type of ['SEND', 'ERRAND']) {
+    page.data.goodsBudget = '99.99'; await page.typeChoice({ currentTarget: { dataset: { type } } }); fillCreate(page)
+    page.data.form.goodsBudgetFen = 9999; assert.equal(page.data.goodsBudget, ''); assert.equal('goodsBudgetFen' in page.buildPayload(), false)
+  }
+  const custom = await customCreate(environment()); custom.data.goodsBudget = '99.99'; custom.data.form.goodsBudgetFen = 9999
+  assert.equal('goodsBudgetFen' in custom.buildPayload(), false)
+})
+test('BUY budget API: only valid BUY creation receives budget; quote, other types, pay and shares stay independent', async () => {
+  const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
+  for (const goodsBudgetFen of [undefined, null, 0, -1, 1.5, '100', NaN, Infinity, 100000001]) {
+    await assert.rejects(api.createOrder({ orderType: 'BUY', goodsBudgetFen }), /商品总价/)
+  }
+  assert.equal(env.calls.requests.length, 0)
+  for (const goodsBudgetFen of [1, 29, 100000000]) {
+    const data = { orderType: 'BUY', distanceM: 2000, weightKg: 1, goodsBudgetFen }
+    const quoting = api.quote(data); const quoteReq = env.calls.requests.at(-1)
+    assert.deepEqual(JSON.parse(JSON.stringify(quoteReq.data)), { orderType: 'BUY', distanceM: 2000, weightKg: 1 })
+    okRequest(quoteReq, { totalFen: 500, riderShareFen: 350, platformShareFen: 150, items: [] }); const quote = await quoting
+    assert.equal(quote.totalFen, 500); assert.equal(quote.riderShareFen, 350)
+    const creating = api.createOrder(data); const createReq = env.calls.requests.at(-1)
+    assert.equal(createReq.data.goodsBudgetFen, goodsBudgetFen); okRequest(createReq, { id: 88 }); await creating
+  }
+  for (const orderType of ['SEND', 'ERRAND']) {
+    const data = { orderType, goodsBudgetFen: 9999 }; const creating = api.createOrder(data)
+    assert.equal('goodsBudgetFen' in env.calls.requests.at(-1).data, false); assert.equal(data.goodsBudgetFen, 9999)
+    okRequest(env.calls.requests.at(-1), { id: 89 }); await creating
+  }
+  const custom = { orderType: 'CUSTOM', taskMode: 'ONLINE', taskTitle: '标题', taskContent: '内容', taskPriceFen: 650, contact: '甲', phone: '13800000000', goodsBudgetFen: 9999 }
+  const creating = api.createOrder(custom); assert.equal('goodsBudgetFen' in env.calls.requests.at(-1).data, false); okRequest(env.calls.requests.at(-1), { id: 90 }); await creating
+  const paying = api.payOrder(88); const req = env.calls.requests.at(-1); assert.ok(req.url.endsWith('/orders/88/pay')); assert.equal(Object.keys(req.data).length, 0); okRequest(req, {}); await paying
+})
+test('BUY budget flow: draft restore, unchanged reuse and confirmation preserve budget without increasing running fee', async () => {
+  const env = environment(); env.authenticated(); let creates = 0; let pays = 0
+  const api = { async me() { return profileValue({ mobileBound: true }) }, async quote(value) { assert.equal('goodsBudgetFen' in value, false); return { totalFen: 500, items: [] } },
+    async addressList() { return [] }, async createOrder(value) { creates++; assert.equal(value.goodsBudgetFen, 29); return { id: 88 } }, async payOrder(id) { pays++; assert.equal(id, 88) } }
+  const page = env.page('pages/order/create', api); page.onLoad({ type: 'BUY' }); page._visible = true; fillCreate(page); page.number(event('goodsBudget', '0.29')); await page.next()
+  const saved = env.storage.get('native_draft'); assert.equal(saved.payload.goodsBudgetFen, 29); assert.equal(saved.quote.totalFen, 500)
+  const restored = env.page('pages/order/create', api); restored.onLoad({ type: 'BUY' }); restored._visible = true
+  assert.equal(restored.data.goodsBudget, '0.29'); assert.equal(restored.data.budgetRequired, false); await restored.next()
+  assert.equal(env.storage.get('native_draft').savedAt, saved.savedAt)
+  const confirm = env.page('pages/order/confirm', api); confirm.onLoad({}); confirm.onShow()
+  assert.equal(confirm.data.draft.goodsBudgetFen, 29); assert.equal(confirm.data.goodsBudgetText, '¥0.29'); assert.equal(confirm.data.quote.totalText, '5.00')
+  await confirm.submit(); assert.equal(creates, 1); assert.equal(pays, 1)
+})
+test('BUY old drafts: missing or invalid budget requires refill only before creation; pending identity always wins', async () => {
+  for (const goodsBudgetFen of [undefined, null, 0, '29', 1.5, 100000001]) for (const pendingFields of [null, { id: 77 }, { uncertain: true }]) {
+    const env = environment(); env.authenticated(); let pays = 0
+    const saved = { owner: 1, savedAt: 876, payload: { orderType: 'BUY', goodsBudgetFen, fromAddress: 'A', toAddress: 'B', goodsDesc: '旧商品', distanceM: 2000, weightKg: 1 }, quote: pendingFields ? null : { totalText: '5.00' } }
+    env.storage.set('native_draft', saved)
+    const pending = pendingFields && Object.assign({ owner: 1, savedAt: 876 }, pendingFields)
+    if (pending) env.storage.set('native_pending_order', pending)
+    const form = env.page('pages/order/create', { async addressList() { return [] } }); form.onLoad({ type: 'BUY' }); form._visible = true
+    assert.equal(form.data.goodsBudget, ''); assert.equal(form.data.budgetRequired, true)
+    if (pending) { form.number(event('goodsBudget', '3')); await form.next(); assert.equal(env.storage.get('native_draft'), saved); assert.equal(env.storage.get('native_pending_order'), pending) }
+    const confirm = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async orderDetail(id) { assert.equal(id, 77); return { id, status: 'WAIT_PAY' } }, async createOrder() { assert.fail('must not create legacy BUY') }, async payOrder(id) { pays++; assert.equal(id, 77) } })
+    confirm.onLoad({}); confirm.onShow()
+    assert.equal(confirm.data.invalid, !pendingFields)
+    if (!pendingFields) { assert.equal(confirm.data.budgetRequired, true); confirm.back(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=BUY') }
+    else { assert.equal(confirm.data.goodsBudgetText, '未记录'); assert.equal(confirm.data.orderId, pendingFields.id || null); assert.equal(confirm.data.uncertain, !!pendingFields.uncertain) }
+    await confirm.submit(); assert.equal(pays, pendingFields && pendingFields.id ? 1 : 0)
+    if (!pendingFields || pendingFields.uncertain) { assert.equal(env.storage.get('native_draft'), saved); if (pending) assert.equal(env.storage.get('native_pending_order'), pending) }
+  }
+})
+test('BUY old pending order: already paid finishes without creating or paying; unrelated markers do not bypass budget', async () => {
+  const env = environment(); env.authenticated()
+  const saved = { owner: 1, savedAt: 123, payload: { orderType: 'BUY' }, quote: null }; env.storage.set('native_draft', saved)
+  env.storage.set('native_pending_order', { owner: 1, savedAt: 122, id: 77 })
+  const api = { async me() { return profileValue({ mobileBound: true }) }, async createOrder() { assert.fail('no create') }, async payOrder() { assert.fail('no pay') }, async orderDetail() { return { id: 77, status: 'ACCEPTED' } } }
+  const invalid = env.page('pages/order/confirm', api); invalid.onLoad({}); assert.equal(invalid.data.invalid, true)
+  env.storage.set('native_pending_order', { owner: 1, savedAt: 123, id: 77 })
+  const retry = env.page('pages/order/confirm', api); retry.onLoad({}); retry.onShow(); await retry.submit()
+  assert.equal(env.storage.has('native_pending_order'), false); assert.equal(env.storage.has('native_draft'), false); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/detail?id=77')
+})
+test('BUY confirm: another instance pending marker appearing during profile check prevents duplicate creation', async () => {
+  for (const fields of [{ uncertain: true }, { id: 88 }]) {
+    const env = environment(); env.authenticated(); let respond; let pays = 0
+    env.storage.set('native_draft', { owner: 1, savedAt: 123, payload: { orderType: 'BUY', goodsBudgetFen: 29 }, quote: {} })
+    const page = env.page('pages/order/confirm', { me() { return new Promise(r => { respond = r }) }, async createOrder() { assert.fail('duplicate creation') }, async orderDetail() { return { id: 88, status: 'WAIT_PAY' } }, async payOrder() { pays++ } })
+    page.onLoad({}); page.onShow(); const submitting = page.submit(); await flush()
+    env.storage.set('native_pending_order', Object.assign({ owner: 1, savedAt: 123 }, fields)); respond(profileValue({ mobileBound: true })); await submitting
+    assert.equal(pays, fields.id ? 1 : 0); if (fields.uncertain) assert.equal(page.data.uncertain, true)
+  }
+})
+test('BUY displays: details, rider hall and accepted pagination retain budget and historical null never becomes zero', async () => {
+  for (const [goodsBudgetFen, expected] of [[null, '未记录'], [undefined, '未记录'], [0, '未记录'], ['29', '未记录'], [29, '¥0.29'], [100000000, '¥1000000.00']]) {
+    const page = await detailPage(environment(), {}, { orderType: 'BUY', goodsBudgetFen, realFeeFen: 500 }); assert.equal(page.data.order.goodsBudgetText, expected); assert.equal(page.data.order.feeText, '5.00')
+    const row = { id: 81, orderId: 81, orderType: 'BUY', goodsBudgetFen, statusCode: 'ACCEPTED', rewardFen: 350 }
+    const rider = await riderPage(environment(), { async grabList() { return [row] }, async riderOrders(page) { return { content: [Object.assign({}, row, { id: 81 + page })], last: page > 0 } } })
+    assert.equal(rider.data.halls[0].goodsBudgetText, expected); assert.equal(rider.data.orders[0].goodsBudgetText, expected); assert.equal(rider.data.halls[0].rewardText, '3.50')
+    await rider.more(); assert.equal(rider.data.orders[1].goodsBudgetText, expected)
+  }
+  const fmt = environment().load(path.join(native, 'utils/format.js')); assert.equal(fmt.order({ orderType: 'SEND', goodsBudgetFen: 29 }).goodsBudgetText, '')
+})
+const classifiedTags = () => [
+  { id: 1, name: '清洁', enabled: true, taskModes: ['ONSITE'] }, { id: 2, name: '线上整理', enabled: 1, taskModes: ['ONLINE'] },
+  { id: 3, name: '跨场景协助', enabled: true, taskModes: ['ONSITE', 'ONLINE', 'PART_TIME'] }, { id: 4, name: '搬运', enabled: true, taskModes: ['PART_TIME'] },
+  { id: 5, name: '旧清洁未分类', enabled: true }, { id: 6, name: '旧线上空分类', enabled: true, taskModes: [] },
+  { id: 7, name: '停用', enabled: false, taskModes: ['ONSITE'] }, { id: 8, name: '未知', enabled: true, taskModes: ['DELIVERY'] },
+  { id: 9, name: '混入未知', enabled: true, taskModes: ['ONSITE', 'UNKNOWN'] }, { id: 10, name: '字符串分类', enabled: true, taskModes: 'ONSITE' },
+  { id: 11, name: '重复分类', enabled: true, taskModes: ['ONSITE', 'ONSITE'] }, { id: 12, name: '超过三项', enabled: true, taskModes: ['ONSITE', 'ONLINE', 'PART_TIME', 'ONSITE'] }
+]
+test('taskModes tags: explicit enabled scene classification only, multiselect and switch preserve only shared tags', async () => {
+  const env = environment(); const page = await customCreate(env, { async taskTags() { return classifiedTags() } })
+  assert.deepEqual(Array.from(page.data.taskTags, t => t.id), [1, 3]); page.tagChoice(tagEvent(1)); page.tagChoice(tagEvent(3)); assert.equal(page.buildPayload().taskTagIds, '1,3')
+  page.tagChoice(tagEvent(5)); assert.equal(page.data.form.taskTagIds, '1,3')
+  await page.sceneChoice({ currentTarget: { dataset: { mode: 'ONLINE' } } }); assert.deepEqual(Array.from(page.data.taskTags, t => t.id), [2, 3]); assert.equal(page.data.form.taskTagIds, '3'); assert.equal(page.data.selectedTagCount, 1)
+  page.tagChoice(tagEvent(2)); assert.equal(page.buildPayload().taskTagIds, '2,3')
+  await page.sceneChoice({ currentTarget: { dataset: { mode: 'PART_TIME' } } }); assert.deepEqual(Array.from(page.data.taskTags, t => t.id), [3, 4]); assert.equal(page.data.form.taskTagIds, '3')
+  assert.equal(env.storage.get('native_draft').payload.taskTagIds, '3'); assert.equal(env.storage.get('native_draft').quote, null)
+  page.data.form.taskTagIds = '2'; assert.throws(() => page.buildPayload(), /任务标签已变化/)
+})
+test('taskModes tags: restore and refresh remove reclassified, disabled and missing choices without replacing pending identity', async () => {
+  for (const pendingFields of [null, { id: 77 }, { uncertain: true }]) {
+    const env = environment(); let list = classifiedTags(); const page = await customCreate(env, { async taskTags() { return list } }); page.tagChoice(tagEvent(1)); page.tagChoice(tagEvent(3)); await page.next()
+    const saved = env.storage.get('native_draft'); if (pendingFields) env.storage.set('native_pending_order', Object.assign({ owner: 1, savedAt: saved.savedAt }, pendingFields))
+    const restored = env.page('pages/order/create', { async addressList() { return [] }, async taskTags() { return list } }); restored.onLoad({ type: 'CUSTOM' })
+    list = classifiedTags().map(t => t.id === 1 ? Object.assign({}, t, { taskModes: ['ONLINE'] }) : t); await restored.onShow()
+    assert.equal(restored.data.form.taskTagIds, '3'); assert.equal(restored.data.selectedTagCount, 1)
+    if (pendingFields) { assert.equal(env.storage.get('native_draft'), saved); assert.equal(env.storage.get('native_pending_order').savedAt, saved.savedAt) }
+    else assert.equal(env.storage.get('native_draft').payload.taskTagIds, '3')
+    list = list.map(t => t.id === 3 ? Object.assign({}, t, { enabled: false }) : t); await restored.loadTaskTags()
+    assert.equal(restored.data.form.taskTagIds, ''); assert.equal(restored.data.selectedTagCount, 0)
+    if (pendingFields) { await restored.next(); assert.equal(env.storage.get('native_draft'), saved); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm') }
+  }
+})
+test('taskModes tags: unclassified old API never guesses names or offers labels; switching during load does not paint another scene', async () => {
+  const env = environment(); let respond
+  const page = await customCreate(env, { async taskTags() { return [{ id: 1, name: '上门清洁', enabled: true }, { id: 2, name: '线上资料', enabled: true, taskModes: [] }] } })
+  assert.equal(page.data.tagsLoaded, true); assert.equal(page.data.taskTags.length, 0); assert.doesNotThrow(() => page.buildPayload())
+  const loading = page.run('tagsLoading', api => page.fetchTaskTags({ taskTags() { return new Promise(r => { respond = r }) } })); await flush()
+  page.sceneChoice({ currentTarget: { dataset: { mode: 'ONLINE' } } }); assert.equal(page.data.form.taskMode, 'ONSITE', 'busy scene changes are ignored')
+  respond(classifiedTags()); await loading; assert.deepEqual(Array.from(page.data.taskTags, t => t.id), [1, 3])
+  await page.sceneChoice({ currentTarget: { dataset: { mode: 'ONLINE' } } }); assert.deepEqual(Array.from(page.data.taskTags, t => t.id), [2, 3])
+})
+test('new service and BUY UI: clear examples, independent settlement and budget missing state are disclosed on all required surfaces', () => {
+  const home = fs.readFileSync(path.join(native, 'pages/index/index.js'), 'utf8') + fs.readFileSync(path.join(native, 'pages/index/index.wxml'), 'utf8')
+  for (const text of ['上门清洁', '兼职搬运', '线上资料整理', '自填需求与服务总价', '不承诺专业资质']) assert.ok(home.includes(text), text)
+  for (const name of ['pages/order/create.wxml', 'pages/order/confirm.wxml', 'pages/order/detail.wxml', 'pages/rider/workbench.wxml']) {
+    const text = fs.readFileSync(path.join(native, name), 'utf8'); for (const required of ['预计商品总价', '双方另行结算', '不计入跑腿费', '分账']) assert.ok(text.includes(required), name + ': ' + required)
+  }
+  const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8'); assert.ok(create.includes('id="goods-budget"')); assert.ok(create.includes('data-field="goodsBudget"')); assert.ok(create.includes('当前场景标签'))
+  const confirm = fs.readFileSync(path.join(native, 'pages/order/confirm.wxml'), 'utf8'); assert.ok(confirm.includes('budgetRequired')); assert.ok(confirm.includes('尚未创建订单'))
 })
 ;(async () => {
   let failures = 0

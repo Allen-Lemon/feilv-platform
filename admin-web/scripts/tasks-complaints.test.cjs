@@ -12,7 +12,7 @@ const snapshot = value => JSON.parse(JSON.stringify(value))
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 const pageOf = (content, number = 0, totalElements = 31) => ({ content, number, totalElements })
-const tag = (overrides = {}) => ({ id: 3, name: '代办', enabled: true, sort: 2, version: 0, ...overrides })
+const tag = (overrides = {}) => ({ id: 3, name: '代办', enabled: true, sort: 2, version: 0, taskModes: ['ONLINE', 'ONSITE', 'PART_TIME'], ...overrides })
 const task = (overrides = {}) => ({ id: 11, orderId: 21, orderNo: 'T20261115', status: 'WAIT_PAY', userId: 42, title: '线上协助', content: '整理资料', tags: [tag()], amountFen: 1234, taskMode: 'ONLINE', priceFen: 1234, contact: '张三', phone: '13800000000', riderShareFen: 800, platformShareFen: 434, ...overrides })
 // Deliberately not a 70/30 split: the UI must preserve the server's allocation.
 const serverQuote = (totalFen = 1234, overrides = {}) => ({ totalFen, items: [{ feeType: 'CUSTOM_PRICE', label: '任务总价', amountFen: totalFen }], riderShareFen: totalFen, platformShareFen: 0, ...overrides })
@@ -364,18 +364,60 @@ test('task detail uses order ID rather than task ID, ignores closed and stale re
 
 test('tags create/edit/status updates retain bool, int and version=0 without any delete', async t => {
   const h = harness(t, 'Tasks'); await tick(); h.state.editTag()
-  Object.assign(h.state.tagForm, { name: ' 新标签 ', enabled: false, sort: 100000 }); await h.state.saveTag()
-  assert.deepEqual(called(h, 'createTaskTag')[0].args, [{ name: '新标签', enabled: false, sort: 100000 }])
+  Object.assign(h.state.tagForm, { name: ' 新标签 ', enabled: false, sort: 100000, taskModes: ['ONSITE', 'PART_TIME'] }); await h.state.saveTag()
+  assert.deepEqual(called(h, 'createTaskTag')[0].args, [{ name: '新标签', enabled: false, sort: 100000, taskModes: ['ONSITE', 'PART_TIME'] }])
   h.state.editTag(tag()); h.state.tagForm.name = '已改'; await h.state.saveTag()
-  assert.deepEqual(called(h, 'updateTaskTag')[0].args, [3, { name: '已改', enabled: true, sort: 2, version: 0 }])
-  await h.state.toggleTag(tag()); assert.deepEqual(called(h, 'updateTaskTag')[1].args, [3, { name: '代办', enabled: false, sort: 2, version: 0 }])
+  assert.deepEqual(called(h, 'updateTaskTag')[0].args, [3, { name: '已改', enabled: true, sort: 2, taskModes: ['ONLINE', 'ONSITE', 'PART_TIME'], version: 0 }])
+  await h.state.toggleTag(tag()); assert.deepEqual(called(h, 'updateTaskTag')[1].args, [3, { name: '代办', enabled: false, sort: 2, taskModes: ['ONLINE', 'ONSITE', 'PART_TIME'], version: 0 }])
   assert.match(h.confirmations[0][0], /不会删除已引用标签/)
   for (const draft of [{ name: '' }, { name: '字'.repeat(33) }, { name: '\u{1F600}'.repeat(33) }, { sort: 1.2 }, { sort: -1 }, { sort: 100001 }, { enabled: 1 }, { version: null }]) {
     h.state.editTag(tag(draft)); await h.state.saveTag(); assert.ok(h.state.tagError.value)
   }
   assert.equal(called(h, 'updateTaskTag').length, 2)
-  h.state.editTag(); h.state.tagForm.name = '\u{1F600}'.repeat(32); await h.state.saveTag()
+  h.state.editTag(); h.state.tagForm.name = '\u{1F600}'.repeat(32); h.state.tagForm.taskModes = ['ONLINE']; await h.state.saveTag()
   assert.equal(called(h, 'createTaskTag').length, 2)
+})
+
+test('scene tags filter explicit assignments, prune switches and refreshes, and reject forged selections', async t => {
+  const h = harness(t, 'Tasks', { overrides: { taskTags: async () => [
+    tag({ taskModes: ['ONLINE', 'ONSITE'] }), tag({ id: 5, taskModes: ['PART_TIME'] }),
+    tag({ id: 6, taskModes: [] }), tag({ id: 7, taskModes: undefined }),
+    tag({ id: 8, taskModes: ['ONLINE', 'UNKNOWN'] }), tag({ id: 9, enabled: false })
+  ] } }); await tick(); fillTask(h)
+  assert.deepEqual(snapshot(h.state.enabledTags.value.map(row => row.id)), [3])
+  h.state.form.taskMode = 'ONSITE'; assert.deepEqual(snapshot(h.state.form.tagIds), [3])
+  h.state.form.taskMode = 'PART_TIME'; assert.deepEqual(snapshot(h.state.form.tagIds), [])
+  assert.deepEqual(snapshot(h.state.enabledTags.value.map(row => row.id)), [5])
+  Object.assign(h.state.form, { locationAddress: '工地', serviceTime: '明天上午', tagIds: [3] })
+  await h.state.getQuote(); assert.match(h.state.createError.value, /当前场景/)
+  assert.equal(called(h, 'quoteCustomTask').length, 0)
+  h.state.form.tagIds = [5]; await h.state.getQuote(); assert.ok(h.state.quote.value)
+  h.implementations.taskTags = async () => [tag({ id: 5, taskModes: ['ONLINE'] })]
+  await h.state.loadTags(); assert.deepEqual(snapshot(h.state.form.tagIds), []); assert.equal(h.state.quote.value, null)
+  assert.match(components.Tasks.template, /待分类/); assert.match(components.Tasks.template, /v-model="tagForm.taskModes"/)
+})
+
+test('tag assignments are mandatory, bounded, explicit and copied rather than mutating loaded rows', async t => {
+  const h = harness(t, 'Tasks'); await tick()
+  for (const taskModes of [undefined, null, [], ['DELIVERY'], ['ONLINE', 'ONLINE'], ['ONLINE', null], ['ONLINE', 'ONSITE', 'PART_TIME', 'UNKNOWN']]) {
+    h.state.editTag(tag({ taskModes })); await h.state.saveTag(); assert.match(h.state.tagError.value, /场景/)
+  }
+  assert.equal(called(h, 'updateTaskTag').length, 0)
+  const row = tag({ taskModes: ['ONSITE'] }); h.state.editTag(row); h.state.tagForm.taskModes.push('PART_TIME')
+  assert.deepEqual(row.taskModes, ['ONSITE']); await h.state.saveTag()
+  assert.deepEqual(called(h, 'updateTaskTag')[0].args[1].taskModes, ['ONSITE', 'PART_TIME'])
+  await h.state.toggleTag(tag({ taskModes: [] })); assert.match(h.state.tagsError.value, /先编辑分类/)
+  assert.equal(called(h, 'updateTaskTag').length, 1)
+})
+
+test('order procurement budgets remain separate from service fees and historical null is not zero', async t => {
+  const h = harness(t, 'OrderList'); await tick()
+  for (const [goodsBudgetFen, expected] of [[29, '0.29'], [1, '0.01'], [100000000, '1000000.00'], [null, '未记录'], [undefined, '未记录'], [0, '数据异常'], [1.1, '数据异常'], ['29', '数据异常']]) {
+    assert.equal(h.state.goodsBudgetText({ orderType: 'BUY', goodsBudgetFen }), expected)
+  }
+  assert.match(components.OrderList.template, /row.orderType === 'BUY'/)
+  assert.match(components.OrderList.template, /商品款另行结算，不计服务费/)
+  assert.match(components.OrderList.template, /row.realFeeFen/)
 })
 
 test('tag concurrency conflicts refresh list but block stale draft overwrite until explicit refresh', async t => {

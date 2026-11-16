@@ -9,8 +9,14 @@ import java.util.List;
 public final class CustomTaskDtos {
     private CustomTaskDtos() {}
     public record TagReq(@NotBlank @Size(max = 64) String name, @NotNull Boolean enabled,
-                         @NotNull @Min(0) @Max(100000) Integer sort, @Min(0) Long version) {}
-    public record TagVO(long id, String name, boolean enabled, int sort, long version) {}
+                         @NotNull @Min(0) @Max(100000) Integer sort, @Min(0) Long version,
+                         @NotNull @Size(min = 1, max = 3) List<@NotNull @Pattern(regexp = "ONSITE|PART_TIME|ONLINE") String> taskModes) {
+        /** 仅保留Java源兼容；未明确分类的请求仍会被保存校验拒绝。 */
+        public TagReq(String name, Boolean enabled, Integer sort, Long version) { this(name, enabled, sort, version, null); }
+    }
+    public record TagVO(long id, String name, boolean enabled, int sort, long version, List<String> taskModes) {
+        public TagVO(long id, String name, boolean enabled, int sort, long version) { this(id, name, enabled, sort, version, List.of()); }
+    }
     public record TagSnapshot(long id, String name) {}
     public record QuoteReq(@NotNull @Min(1) @Max(100000000)
                            @JsonDeserialize(using = ComplaintDtos.StrictFenDeserializer.class) Integer priceFen) {

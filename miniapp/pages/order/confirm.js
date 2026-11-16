@@ -1,10 +1,11 @@
 const session = require('../../utils/session')
 const draftState = require('../../utils/draft')
+const goodsBudget = require('../../utils/goods-budget')
 const { definePage, toast } = require('../../utils/page')
 const { types, taskModes, service, validShares } = require('../../utils/format')
 const paidStates = ['WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED']
 definePage({
-  data: { draft: null, quote: null, typeText: '', modeText: '', isService: false, legacyDraft: false, tagNames: [], busy: false, orderId: null, invalid: false, uncertain: false },
+  data: { draft: null, quote: null, typeText: '', modeText: '', isService: false, legacyDraft: false, budgetRequired: false, goodsBudgetText: '', tagNames: [], busy: false, orderId: null, invalid: false, uncertain: false },
   onLoad() { this.restore() },
   onShow() { session.requireLogin() },
   restore() {
@@ -16,10 +17,12 @@ definePage({
     const isService = service(draft.payload)
     const legacyDraft = draft.payload.orderType === 'CUSTOM' && !isService
     const pendingWork = matching && (pending.id || pending.uncertain)
-    if (!pendingWork && (legacyDraft || !draft.quote || isService && (draft.quote.totalFen !== draft.payload.taskPriceFen || !validShares(draft.quote, draft.payload.taskPriceFen)))) {
-      this.setData({ invalid: true, legacyDraft }); return
+    const budgetRequired = draft.payload.orderType === 'BUY' && !goodsBudget.valid(draft.payload.goodsBudgetFen)
+    if (!pendingWork && (legacyDraft || budgetRequired || !draft.quote || isService && (draft.quote.totalFen !== draft.payload.taskPriceFen || !validShares(draft.quote, draft.payload.taskPriceFen)))) {
+      this.setData({ invalid: true, legacyDraft, budgetRequired }); return
     }
-    this.setData({ draft: draft.payload, quote: draft.quote, tagNames: draft.tagNames || [], isService, legacyDraft, modeText: taskModes[draft.payload.taskMode],
+    this.setData({ invalid: false, budgetRequired: false, goodsBudgetText: draft.payload.orderType === 'BUY' ? goodsBudget.text(draft.payload.goodsBudgetFen) : '',
+      draft: goodsBudget.payload(draft.payload), quote: draft.quote, tagNames: draft.tagNames || [], isService, legacyDraft, modeText: taskModes[draft.payload.taskMode],
       typeText: types[draft.payload.orderType], orderId: matching ? pending.id || null : null, uncertain: !!(matching && pending.uncertain) })
     this._savedAt = draft.savedAt
     this._owner = owner
@@ -43,13 +46,19 @@ definePage({
       if (!await session.requireOrderProfile(api, () => !this._dead && this._visible && this.activeDraft())) return
       // 此页已展示路线、报价及MOCK说明；明确点击发布即确认，无需再弹重复确认框。
       if (this._dead || !this._visible || !this.activeDraft()) return
-      let id = this.data.orderId
+      const pending = wx.getStorageSync('native_pending_order')
+      const matching = draftState.matches(pending, this._owner, this._savedAt)
+      if (matching && pending.uncertain) { this.safeSet({ uncertain: true }); return }
+      let id = matching && pending.id || this.data.orderId
       const retrying = !!id
       if (!id) {
+        if (this.data.draft.orderType === 'BUY' && !goodsBudget.valid(this.data.draft.goodsBudgetFen)) {
+          this.safeSet({ invalid: true, budgetRequired: true }); return
+        }
         wx.setStorageSync('native_pending_order', { owner: this._owner, savedAt: this._savedAt, uncertain: true })
         this.safeSet({ uncertain: true })
         let order
-        try { order = await api.createOrder(this.data.draft) }
+        try { order = await api.createOrder(goodsBudget.payload(this.data.draft)) }
         catch (e) {
           // 业务明确拒绝才可清除匹配标记，旧任务不能删除另一草稿的待核实状态。
           if (this.activeDraft() && typeof e.code === 'number' && !(e.code >= 500 && e.code < 600) && !(e.status >= 500 && e.status < 600)) {
@@ -79,5 +88,8 @@ definePage({
   },
   detail() { if (this.data.orderId) wx.redirectTo({ url: '/pages/order/detail?id=' + this.data.orderId }) },
   orders() { wx.switchTab({ url: '/pages/order/list' }) },
-  back() { wx.navigateBack() }
+  back() {
+    if (this.data.budgetRequired) wx.redirectTo({ url: '/pages/order/create?type=BUY' })
+    else wx.navigateBack()
+  }
 })

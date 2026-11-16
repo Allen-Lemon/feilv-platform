@@ -1,4 +1,5 @@
 const transport = require('./request')
+const goodsBudget = require('./goods-budget')
 const root = '/api/v1'
 function validPrice(value) { return Number.isSafeInteger(value) && value >= 1 && value <= 100000000 }
 function customBody(data) {
@@ -46,12 +47,15 @@ function createApi(r) {
     deleteAddress: id => r.delete(root + '/user/address/' + id),
     taskTags: () => r.get(root + '/task-tags'),
     quote: data => {
-      if (data.orderType !== 'CUSTOM') return r.post(root + '/orders/quote', data)
+      if (data.orderType !== 'CUSTOM') return r.post(root + '/orders/quote', { orderType: data.orderType, distanceM: data.distanceM, weightKg: data.weightKg })
       if (!validPrice(data.taskPriceFen)) return Promise.reject(new Error('任务总价无效，请重新填写'))
       return r.post(root + '/custom-tasks/quote', { priceFen: data.taskPriceFen })
     },
     createOrder: data => {
-      if (data.orderType !== 'CUSTOM') return r.post(root + '/orders', data)
+      if (data.orderType !== 'CUSTOM') {
+        if (data.orderType === 'BUY' && !goodsBudget.valid(data.goodsBudgetFen)) return Promise.reject(new Error('请返回填写预计商品总价'))
+        return r.post(root + '/orders', goodsBudget.payload(data))
+      }
       try { return r.post(root + '/custom-tasks', customBody(data)) } catch (e) { return Promise.reject(e) }
     },
     customTask: id => r.get(root + '/orders/' + id + '/custom-task'),

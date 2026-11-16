@@ -49,7 +49,7 @@ public class DispatchService {
             return new GrabVO(o.getId(), o.getOrderNo(), o.getOrderType(), o.getFromAddress(), o.getToAddress(), o.getDistanceM(),
                     paidShares.get(o.getId()), o.getCreatedTime() == null ? "" : o.getCreatedTime().toString(),
                     task == null ? o.getGoodsDesc() : task.getTitle(), OrderService.taskMode(task),
-                    task == null ? "" : text(task.getLocationAddress()), task == null ? "" : text(task.getServiceTime()));
+                    task == null ? "" : text(task.getLocationAddress()), task == null ? "" : text(task.getServiceTime()), o.getGoodsBudgetFen());
         }).toList();
     }
 
@@ -84,7 +84,8 @@ public class DispatchService {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("id", o.getId()); row.put("orderNo", o.getOrderNo()); row.put("status", OrderService.statusLabel(o.getStatus(), OrderService.taskMode(task))); row.put("statusCode", o.getStatus().name());
             row.put("fromAddress", o.getFromAddress()); row.put("toAddress", o.getToAddress()); row.put("rewardFen", shares.get(o.getId()));
-            row.put("orderType", o.getOrderType()); row.put("taskMode", OrderService.taskMode(task)); row.put("title", task == null ? text(o.getGoodsDesc()) : task.getTitle());
+            row.put("orderType", o.getOrderType()); row.put("goodsBudgetFen", o.getGoodsBudgetFen());
+            row.put("taskMode", OrderService.taskMode(task)); row.put("title", task == null ? text(o.getGoodsDesc()) : task.getTitle());
             row.put("serviceTime", task == null ? "" : text(task.getServiceTime())); row.put("locationAddress", task == null ? "" : text(task.getLocationAddress()));
             return row;
         });

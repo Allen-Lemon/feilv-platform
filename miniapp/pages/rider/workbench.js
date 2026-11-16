@@ -2,10 +2,11 @@ const api = require('../../utils/api')
 const session = require('../../utils/session')
 const { definePage, toast, modal } = require('../../utils/page')
 const fmt = require('../../utils/format')
+const goodsBudget = require('../../utils/goods-budget')
 function mine(value) {
   // 此骑手专用端点返回 status(中文) + statusCode；与用户 OrderVO 不同。
   const isService = fmt.service(value)
-  return Object.assign({}, value, { isService, canTransfer: value.statusCode === 'ACCEPTED', modeText: fmt.taskModes[value.taskMode] || fmt.taskModes.DELIVERY,
+  return Object.assign({}, value, { isService, goodsBudgetText: value.orderType === 'BUY' ? goodsBudget.text(value.goodsBudgetFen) : '', canTransfer: value.statusCode === 'ACCEPTED', modeText: fmt.taskModes[value.taskMode] || fmt.taskModes.DELIVERY,
     statusText: isService ? ({ PICKING: '服务中', DELIVERED: '待用户确认完成' }[value.statusCode] || value.status) : value.status,
     rewardText: fmt.money(value.rewardFen), canPickup: !isService && value.statusCode === 'ACCEPTED', canDepart: !isService && value.statusCode === 'PICKING',
     canDeliver: !isService && value.statusCode === 'DELIVERING', canServiceStart: isService && value.statusCode === 'ACCEPTED', canServiceComplete: isService && value.statusCode === 'PICKING' })
@@ -36,7 +37,7 @@ definePage({
         if (!this.workbenchCurrent(revision, generation)) return
         const rows = data.content || []
         this._nextPage = 1
-        this.safeSet({ info, online: info.onlineStatus > 0, modeText: ({ 0: '已下线', 1: '抢单中', 2: '听单中' })[info.onlineStatus] || '未知状态', halls: halls.map(g => Object.assign({}, g, { isService: fmt.service(g), modeText: fmt.taskModes[g.taskMode] || fmt.taskModes.DELIVERY, typeText: fmt.types[g.orderType] || g.orderType, distanceText: (Number(g.distanceM) / 1000).toFixed(1), rewardText: fmt.money(g.rewardFen) })), orders: rows.map(mine), hasMore: !data.last && rows.length > 0, error: '' })
+        this.safeSet({ info, online: info.onlineStatus > 0, modeText: ({ 0: '已下线', 1: '抢单中', 2: '听单中' })[info.onlineStatus] || '未知状态', halls: halls.map(g => Object.assign({}, g, { goodsBudgetText: g.orderType === 'BUY' ? goodsBudget.text(g.goodsBudgetFen) : '', isService: fmt.service(g), modeText: fmt.taskModes[g.taskMode] || fmt.taskModes.DELIVERY, typeText: fmt.types[g.orderType] || g.orderType, distanceText: (Number(g.distanceM) / 1000).toFixed(1), rewardText: fmt.money(g.rewardFen) })), orders: rows.map(mine), hasMore: !data.last && rows.length > 0, error: '' })
       } catch (e) { if (this.workbenchCurrent(revision, generation)) { this.safeSet({ error: e.message }); throw e } }
     })
   },

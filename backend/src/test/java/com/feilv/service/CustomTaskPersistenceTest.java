@@ -15,6 +15,7 @@ import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import java.util.Arrays;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -55,29 +56,92 @@ class CustomTaskPersistenceTest {
     }
 
     @Test void snapshotFailureRollsBackOrderTaskFeesAndLeavesHistoricalDataUntouched() {
-        User user = user("13800138201", "USER"); TaskTag tag = new TaskTag(); tag.setName("任务标签"); tag = tags.saveAndFlush(tag);
+        User user = user("13800138201", "USER"); TaskTag tag = new TaskTag(); tag.setName("任务标签"); tag.setTaskModes("ONSITE"); tag = tags.saveAndFlush(tag);
+        long tagId = tag.getId();
         long orderBefore = orders.count(), taskBefore = tasks.count(), tagsBefore = snapshots.count(), feesBefore = fees.count();
         doThrow(new IllegalStateException("snapshot-write-failed")).when(snapshots).save(any(CustomTaskTag.class));
         try {
-            assertThrows(IllegalStateException.class, () -> service.publish(user.getId(), user.getId(), "MINIAPP", request(List.of(tags.findAll().get(0).getId()))));
+            assertThrows(IllegalStateException.class, () -> service.publish(user.getId(), user.getId(), "MINIAPP", request(List.of(tagId))));
             assertEquals(orderBefore, orders.count()); assertEquals(taskBefore, tasks.count()); assertEquals(tagsBefore, snapshots.count()); assertEquals(feesBefore, fees.count());
             verifyNoInteractions(pricing);
         } finally { reset(snapshots); }
     }
 
+    @Test void tagModesPersistCanonicallyForEveryNonEmptySelection() {
+        List<String> modes = List.of("ONSITE", "PART_TIME", "ONLINE");
+        for (int mask = 1; mask < 8; mask++) {
+            var selected = new java.util.ArrayList<String>();
+            var expected = new java.util.ArrayList<String>();
+            for (int i = 0; i < 3; i++) if ((mask & (1 << i)) != 0) expected.add(modes.get(i));
+            for (int i = 2; i >= 0; i--) if ((mask & (1 << i)) != 0) selected.add(modes.get(i));
+            var created = labels.save(null, new TagReq("多选标签" + mask, true, mask, null, selected));
+            assertEquals(expected, created.taskModes());
+            assertEquals(String.join(",", expected), tags.findById(created.id()).orElseThrow().getTaskModes());
+            assertEquals(expected, labels.list(true).stream().filter(t -> t.id() == created.id()).findFirst().orElseThrow().taskModes());
+        }
+    }
+
+    @Test void invalidAndLegacyJavaRequestsCannotCreateOrUpdateClassification() {
+        var label = labels.save(null, new TagReq("保留分类", true, 0, null, List.of("ONSITE")));
+        long count = tags.count();
+        List<List<String>> invalid = Arrays.asList(null, List.of(), List.of("DELIVERY"), List.of("online"), List.of(" ONLINE"),
+                List.of("ONLINE", "ONLINE"), Arrays.asList("ONLINE", null), Arrays.asList((String) null),
+                List.of("ONSITE", "PART_TIME", "ONLINE", "ONSITE"));
+        for (List<String> modes : invalid) {
+            assertEquals(400, assertThrows(BizException.class, () -> labels.save(null, new TagReq("非法新建", true, 0, null, modes))).getCode());
+            assertEquals(400, assertThrows(BizException.class, () -> labels.save(label.id(), new TagReq("非法修改", false, 1, label.version(), modes))).getCode());
+        }
+        assertEquals(400, assertThrows(BizException.class, () -> labels.save(null, new TagReq("旧构造器", true, 0, null))).getCode());
+        assertEquals(400, assertThrows(BizException.class, () -> labels.save(label.id(), new TagReq("旧构造器", false, 1, label.version()))).getCode());
+        assertEquals(count, tags.count());
+        var unchanged = tags.findById(label.id()).orElseThrow();
+        assertEquals("保留分类", unchanged.getName()); assertTrue(unchanged.isEnabled()); assertEquals(label.version(), unchanged.getVersion());
+        assertEquals("ONSITE", unchanged.getTaskModes());
+        var updated = labels.save(label.id(), new TagReq("重新分类", true, 0, label.version(), List.of("ONLINE", "PART_TIME")));
+        assertEquals(List.of("PART_TIME", "ONLINE"), updated.taskModes());
+        assertEquals("PART_TIME,ONLINE", tags.findById(label.id()).orElseThrow().getTaskModes());
+        assertEquals(409, assertThrows(BizException.class, () -> labels.save(label.id(), new TagReq("过期修改", true, 0, label.version(), List.of("ONSITE")))).getCode());
+    }
+
+    @Test void publicListHidesUnclassifiedLegacyTagsUntilExplicitlyClassified() {
+        var legacy = new java.util.ArrayList<TaskTag>();
+        for (String value : Arrays.asList(null, "", "  ")) {
+            TaskTag tag = new TaskTag(); tag.setName("历史待分类"); tag.setTaskModes(value); legacy.add(tags.saveAndFlush(tag));
+        }
+        for (TaskTag tag : legacy) {
+            assertTrue(labels.list(true).stream().noneMatch(t -> t.id() == tag.getId()));
+            assertEquals(List.of(), labels.list(false).stream().filter(t -> t.id() == tag.getId()).findFirst().orElseThrow().taskModes());
+        }
+        TaskTag first = legacy.get(0);
+        labels.save(first.getId(), new TagReq(first.getName(), true, first.getSort(), first.getVersion(), List.of("ONLINE")));
+        assertEquals(List.of("ONLINE"), labels.list(true).stream().filter(t -> t.id() == first.getId()).findFirst().orElseThrow().taskModes());
+    }
+
+    @Test void publishRejectsMismatchedUnclassifiedOrInvalidTagModesBeforeAnyOrderWrite() {
+        User user = user("13800138203", "USER");
+        long orderBefore = orders.count(), taskBefore = tasks.count(), snapshotsBefore = snapshots.count(), feesBefore = fees.count();
+        for (String value : Arrays.asList(null, "", "ONLINE", "PART_TIME", "NOT_ONSITE", "ONSITE,ONSITE", "ONSITE,")) {
+            TaskTag tag = new TaskTag(); tag.setName("不可用于上门"); tag.setTaskModes(value); tag = tags.saveAndFlush(tag);
+            long id = tag.getId();
+            assertEquals(409, assertThrows(BizException.class, () -> service.publish(user.getId(), user.getId(), "MINIAPP", request(List.of(id)))).getCode());
+        }
+        assertEquals(orderBefore, orders.count()); assertEquals(taskBefore, tasks.count()); assertEquals(snapshotsBefore, snapshots.count()); assertEquals(feesBefore, fees.count());
+        verifyNoInteractions(pricing);
+    }
+
     @Test void riderPublisherGetsOwnerFlagAndTagNameSnapshotSurvivesDisable() {
         snapshots.deleteAll(); tasks.deleteAll(); orders.deleteAll(); tags.deleteAll();
         User user = user("13800138202", "RIDER");
-        var label = labels.save(null, new TagReq("标签".repeat(16), true, 0, null));
+        var label = labels.save(null, new TagReq("标签".repeat(16), true, 0, null, List.of("ONSITE")));
         try {
             UserContext.set(new UserContext.CurrentUser(user.getId(), "RIDER"));
             var order = service.publish(user.getId(), user.getId(), "MINIAPP", request(List.of(label.id())));
             assertTrue(order.owner()); assertEquals("自定义测试", order.goodsDesc()); assertEquals("ONSITE", order.taskMode());
             assertEquals(12345, order.estimateFeeFen()); verifyNoInteractions(pricing);
-            labels.save(label.id(), new TagReq("已停用", false, 0, label.version()));
+            labels.save(label.id(), new TagReq("已停用", false, 0, label.version(), List.of("ONLINE")));
             assertEquals("标签".repeat(16), service.detail(order.id(), user.getId()).tags().get(0).name());
             assertEquals(0, labels.list(true).size());
-            assertEquals(400, assertThrows(BizException.class, () -> labels.save(null, new TagReq("😀".repeat(33), true, 0, null))).getCode());
+            assertEquals(400, assertThrows(BizException.class, () -> labels.save(null, new TagReq("😀".repeat(33), true, 0, null, List.of("ONSITE")))).getCode());
         } finally { UserContext.clear(); }
     }
 }

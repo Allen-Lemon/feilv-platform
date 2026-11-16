@@ -29,16 +29,22 @@ import AppIcon from '../components/AppIcon.vue'
 const router = useRouter()
 const mobileOpen = ref(false)
 const nickname = ref(localStorage.getItem('feilv_admin_nickname') || '管理员')
-function storedMenus() { try { return JSON.parse(localStorage.getItem('feilv_admin_menus_data') || '[]') } catch { return [] } }
+// 先过滤旧缓存，避免 profile 返回前闪现已下线菜单；也兼容尚未升级的服务端。
+function activeMenus(menus) {
+  return Array.isArray(menus) ? menus.filter(m => m && typeof m.path === 'string' && m.path
+    && !['marketing', 'content', 'risk'].includes(m.code)
+    && !/^\/(?:marketing|content|risk)(?:[/?#]|$)/i.test(m.path)) : []
+}
+function storedMenus() { try { return activeMenus(JSON.parse(localStorage.getItem('feilv_admin_menus_data') || '[]')) } catch { return [] } }
 const visibleMenus = ref(storedMenus())
 // 跨页面入口只使用最新 profile 的授权，加载中或失败时不开放跳转。
 const authorizedMenuCodes = ref([])
 provide('adminMenuCodes', authorizedMenuCodes)
-const icons = { dashboard: 'grid', orders: 'orders', tasks: 'orders', complaints: 'shield', users: 'riders', riders: 'riders', settlements: 'wallet', wallets: 'wallet', withdrawals: 'withdrawal', marketing: 'marketing', content: 'content', risk: 'shield', system: 'settings', 'wechat-settings': 'shield' }
+const icons = { dashboard: 'grid', orders: 'orders', tasks: 'orders', complaints: 'shield', users: 'riders', riders: 'riders', settlements: 'wallet', wallets: 'wallet', withdrawals: 'withdrawal', system: 'settings', 'wechat-settings': 'shield' }
 const iconFor = (code) => icons[code] || 'grid'
 adminApi.profile().then((data) => {
   nickname.value = data.nickname || '管理员'
-  visibleMenus.value = (data.menus || []).filter(m => m.path)
+  visibleMenus.value = activeMenus(data.menus)
   if ((data.roles || []).includes('SUPER_ADMIN')) {
     // 超级管理员兼容尚未下发新菜单数据的环境；普通角色仍只使用 profile 授权。
     for (const menu of [

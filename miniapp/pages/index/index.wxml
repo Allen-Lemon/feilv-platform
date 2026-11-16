@@ -22,12 +22,13 @@
       <view class="service-copy">
         <view class="service-name">{{item.label}}</view>
         <view class="service-desc">{{item.desc}}</view>
+        <view class="service-desc" wx:if="{{item.code === 'CUSTOM'}}">由现有骑手承接，不承诺专业资质；请明确范围与安全要求。</view>
         <view class="service-cta">{{item.code === 'CUSTOM' ? '发布自定义任务' : '发布跑腿任务'}} <text>↗</text></view>
       </view>
     </button>
   </view>
 
   <view class="mock-note home-demo"><text class="mock-badge">MOCK</text><text class="grow">当前为演示模式，支付不扣款，请勿用于真实交易。</text></view>
-  <view class="home-service-note">发布前需保存昵称并绑定手机号；请勿寄送处方药、烟草等禁限寄物品。代买商品金额须另行确认。</view>
+  <view class="home-service-note">发布前需保存昵称并绑定手机号；请勿寄送处方药、烟草等禁限寄物品。代买须填写预计商品总价，商品款由双方另行结算，不计入跑腿费。</view>
   <view class="home-footer">飞毛腿 · 认真对待每一份托付</view>
 </view>

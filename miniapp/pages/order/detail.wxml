@@ -113,6 +113,7 @@
         <text class="info-label">物品 / 事项</text>
         <text class="info-value">{{order.goodsDesc || '无'}}</text>
       </view>
+      <block wx:if="{{order.orderType === 'BUY'}}"><view class="info-row"><text class="info-label">预计商品总价</text><text class="info-value">{{order.goodsBudgetText}}</text></view><view class="form-note">商品款由双方另行结算，不计入跑腿费，不参与平台支付或分账；历史未记录预算不代表商品为零元。</view></block>
       <view class="pickup-panel" wx:if="{{order.pickupCode}}">
         <view class="pickup-topline">
           <text class="pickup-label">取件码</text>
@@ -125,7 +126,7 @@
     <view class="card order-panel">
       <view class="panel-title">费用与订单</view>
       <view class="amount-row">
-        <text class="amount-label">{{order.isService ? '发布任务总价' : '订单金额'}}</text>
+        <text class="amount-label">{{order.isService ? '发布任务总价' : order.orderType === 'BUY' ? '跑腿费（不含商品款）' : '订单金额'}}</text>
         <text class="order-amount"><text class="amount-currency">¥</text>{{order.feeText}}</text>
       </view>
       <block wx:if="{{order.isService && task}}"><view class="info-row" wx:if="{{task.priceText}}"><text class="info-label">发任务总价</text><text class="info-value">¥{{task.priceText}}</text></view><block wx:if="{{task.hasShares}}"><view class="info-row"><text class="info-label">骑手预计所得</text><text class="info-value">¥{{task.riderShareText}}</text></view><view class="info-row"><text class="info-label">平台分成</text><text class="info-value">¥{{task.platformShareText}}</text></view><view class="form-note">总价不是骑手实拿；分成来自服务端，最终结算受本单售后等规则影响，以钱包明细为准。</view></block><view class="form-note" wx:else>分成信息待核实，请刷新任务资料；不会按固定比例推算。</view></block>

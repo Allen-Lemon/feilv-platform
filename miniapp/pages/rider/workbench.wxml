@@ -5,10 +5,12 @@
 <view class="card"><view class="title">骑手抢单大厅</view><view class="empty" wx:if="{{!halls.length}}">{{online ? '暂无可抢订单，点击刷新再试' : '您已下线，上线后查看订单'}}</view><view class="item" wx:for="{{halls}}" wx:key="orderId"><view>{{item.typeText}} · {{item.orderNo}}</view><view class="task-title" wx:if="{{item.title}}">{{item.title}}</view>
 <block wx:if="{{item.isService}}"><view class="line">{{item.modeText}}</view><view class="line">{{item.taskMode === 'ONLINE' ? '线上任务 · 无需地址' : item.locationAddress}}</view><view class="hint" wx:if="{{item.serviceTime}}">服务时间：{{item.serviceTime}}</view></block>
 <block wx:else><view class="line">取：{{item.fromAddress}}</view><view class="line">送：{{item.toAddress}}</view><view class="hint">{{item.distanceText}} 公里</view></block>
+<block wx:if="{{item.orderType === 'BUY'}}"><view class="line">预计商品总价：{{item.goodsBudgetText}}</view><view class="hint">商品款由双方另行结算，不计入跑腿费，不参与平台支付或分账。</view></block>
 <view class="hint">骑手预计所得 ¥{{item.rewardText}}（非发布总价，最终结算以售后及钱包记录为准）</view><button class="primary" data-id="{{item.orderId}}" bindtap="grab" disabled="{{busy || loading}}">接此任务</button></view></view>
 <view class="card"><view class="title">我的承接订单</view><view class="empty" wx:if="{{!orders.length}}">暂无承接订单</view><view class="item" wx:for="{{orders}}" wx:key="id"><view class="row"><text class="muted">{{item.orderNo}}</text><text class="tag">{{item.statusText}}</text></view><view class="task-title" wx:if="{{item.title}}">{{item.title}}</view>
 <block wx:if="{{item.isService}}"><view class="line">{{item.modeText}}</view><view class="line">{{item.taskMode === 'ONLINE' ? '线上任务 · 无需地址' : item.locationAddress}}</view><view class="hint" wx:if="{{item.serviceTime}}">服务时间：{{item.serviceTime}}</view></block>
 <block wx:else><view class="line">取：{{item.fromAddress}}</view><view class="line">送：{{item.toAddress}}</view></block>
+<block wx:if="{{item.orderType === 'BUY'}}"><view class="line">预计商品总价：{{item.goodsBudgetText}}</view><view class="hint">商品款由双方另行结算，不计入跑腿费，不参与平台支付或分账。</view></block>
 <view class="hint">骑手预计所得 ¥{{item.rewardText}}（非发布总价）</view>
 <button class="secondary" data-id="{{item.id}}" bindtap="detail" disabled="{{busy || loading}}">查看任务详情</button>
 <button wx:if="{{item.canTransfer}}" class="secondary" data-id="{{item.id}}" bindtap="transfers" disabled="{{busy || loading}}">申请转派</button>
