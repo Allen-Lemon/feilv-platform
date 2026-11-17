@@ -37,7 +37,7 @@
         {{order.isService ? '骑手已开始服务，请关注约定工作内容。' : '骑手取件中，请留意取件信息。'}}
       </view>
       <view class="status-description" wx:elif="{{order.status === 'DELIVERING'}}">
-        配送进行中，可查看骑手已上报的轨迹。
+        {{order.isService ? '服务进度以服务端最新状态为准，请联系骑手核实。' : '配送进行中，可查看骑手已上报的轨迹。'}}
       </view>
       <view class="status-description" wx:elif="{{order.status === 'DELIVERED'}}">
         {{order.isService ? '骑手已提交完成，请核实服务后确认完成。' : '请核对物品，收到后再确认收货。'}}
@@ -98,13 +98,19 @@
       </view>
     </view>
 
-    <view class="card order-panel" wx:if="{{order.isService}}"><view class="panel-title">{{order.modeText}}</view><view class="address-text">{{order.taskMode === 'ONLINE' ? '线上任务 · 无需地址' : task.locationAddress || order.locationAddress || order.fromAddress || '服务地点待核实'}}</view><view class="info-row" wx:if="{{task.contact}}"><text class="info-label">联系人</text><text class="info-value">{{task.contact}} · {{task.phone}}</text></view><view class="info-row" wx:if="{{task.serviceTime || order.serviceTime}}"><text class="info-label">服务时间</text><text class="info-value">{{task.serviceTime || order.serviceTime}}</text></view></view>
+    <view class="card order-panel" wx:if="{{order.isService}}">
+      <view class="panel-title">{{order.modeText}}</view>
+      <view class="info-row" wx:if="{{order.taskMode !== 'ONLINE'}}"><text class="info-label">{{order.isTransport ? '起始地址' : '服务地点'}}</text></view>
+      <view class="address-text">{{order.taskMode === 'ONLINE' ? '线上任务 · 无需地址' : task.locationAddress || order.locationAddress || order.fromAddress || '服务地点待核实'}}</view>
+      <view class="info-row" wx:if="{{task.contact}}"><text class="info-label">联系人</text><text class="info-value">{{task.contact}} · {{task.phone}}</text></view>
+      <view class="info-row" wx:if="{{order.isTransport || task.serviceTime || order.serviceTime}}"><text class="info-label">服务时间</text><text class="info-value">{{task.serviceTime || order.serviceTime || '待核实'}}</text></view>
+    </view>
 
     <view class="card order-panel" wx:if="{{order.orderType === 'CUSTOM'}}">
-      <view class="panel-title">自定义任务</view>
+      <view class="panel-title">{{order.isTransport ? order.modeText + '服务说明' : '自定义任务'}}</view>
       <view class="error" wx:if="{{taskError}}">{{taskError}}<button class="outline-button" bindtap="loadTask" disabled="{{busy || loading || taskLoading}}">重试读取任务</button></view>
-      <view wx:if="{{task}}"><view class="panel-title">{{task.title}}</view><view class="task-content">{{task.content}}</view><view class="task-tags"><text class="service-type" wx:for="{{task.tags}}" wx:key="id">{{item.name}} </text><text class="form-note" wx:if="{{!task.tags.length}}">未选择标签</text></view></view>
-      <view class="form-note" wx:if="{{!task && !taskError}}">该订单暂无自定义任务资料。</view>
+      <view wx:if="{{task}}"><view class="panel-title" wx:if="{{!order.isTransport}}">{{task.title}}</view><view class="task-content">{{task.content}}</view><view class="task-tags" wx:if="{{!order.isTransport}}"><text class="service-type" wx:for="{{task.tags}}" wx:key="id">{{item.name}} </text><text class="form-note" wx:if="{{!task.tags.length}}">未选择标签</text></view></view>
+      <view class="form-note" wx:if="{{!task && !taskError}}">{{order.isTransport ? '该订单暂无服务说明。' : '该订单暂无自定义任务资料。'}}</view>
     </view>
 
     <view class="card order-panel" wx:if="{{!order.isService}}">

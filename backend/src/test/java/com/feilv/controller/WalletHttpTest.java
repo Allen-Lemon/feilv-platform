@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties = {
+@SpringBootTest(properties = {TestAuth.TEST_SECRET_PROPERTY,
         "spring.datasource.url=jdbc:h2:mem:wallet-http;DB_CLOSE_DELAY=-1", "spring.datasource.username=sa", "spring.datasource.password=",
         "spring.datasource.driver-class-name=org.h2.Driver", "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect",
         "spring.jpa.hibernate.ddl-auto=create-drop", "spring.sql.init.mode=never", "feilv.wechat.app-id=", "feilv.wechat.app-secret="})
@@ -54,7 +54,7 @@ class WalletHttpTest {
         AdminRole role = new AdminRole(); role.setCode("WALLET_TEST"); role.setName("钱包测试"); role = roles.saveAndFlush(role);
         AdminUserRole ur = new AdminUserRole(); ur.setUserId(admin.getId()); ur.setRoleId(role.getId()); userRoles.saveAndFlush(ur);
         walletMenu = grant("wallets", role.getId()); withdrawalMenu = grant("withdrawals", role.getId());
-        riderToken = token(riderUser); publisherToken = token(publisher); outsiderToken = token(outsider); adminToken = token(admin);
+        riderToken = TestAuth.riderBearer(riderUser); publisherToken = token(publisher); outsiderToken = token(outsider); adminToken = token(admin);
     }
 
     @Test void walletReadsAreMockNoStoreAndDoNotCreateOrBackfillAnAccount() throws Exception {
@@ -119,7 +119,8 @@ class WalletHttpTest {
         mvc.perform(post("/api/v1/wallet/withdrawals").header("Authorization", riderToken).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"amountFen\":1,\"requestId\":\"frozen-token-key\"}")).andExpect(status().isForbidden());
         riderUser.setStatus(1); riderUser.setRole("USER"); users.saveAndFlush(riderUser);
-        mvc.perform(get("/api/v1/wallet").header("Authorization", riderToken)).andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/wallet").header("Authorization", riderToken)).andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(40101));
         mvc.perform(get("/api/v1/wallet").header("Authorization", token(riderUser))).andExpect(jsonPath("$.code").value(0));
     }
 
@@ -191,7 +192,14 @@ class WalletHttpTest {
 
     @Test void arbitraryRechargeOrBalanceMutationEndpointsDoNotExist() throws Exception {
         fund(800);
-        for (String path : List.of("/api/v1/wallet/recharge", "/api/v1/admin/wallets/" + riderUser.getId() + "/balance", "/api/v1/admin/wallets/" + riderUser.getId() + "/recharge"))
+        mvc.perform(post("/api/v1/wallet/recharge").header("Authorization", publisherToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amountFen\":999999}"))
+                .andExpect(status().isNotFound());
+        // ADMIN is not a C-end session, even when the requested wallet mutation does not exist.
+        mvc.perform(post("/api/v1/wallet/recharge").header("Authorization", adminToken)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amountFen\":999999}"))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value(403));
+        for (String path : List.of("/api/v1/admin/wallets/" + riderUser.getId() + "/balance", "/api/v1/admin/wallets/" + riderUser.getId() + "/recharge"))
             mvc.perform(post(path).header("Authorization", adminToken).contentType(MediaType.APPLICATION_JSON).content("{\"amountFen\":999999}"))
                     .andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/wallet").header("Authorization", riderToken)).andExpect(jsonPath("$.data.availableFen").value(800));
@@ -212,7 +220,7 @@ class WalletHttpTest {
     private JsonNode adminData(String path) throws Exception { return data(mvc.perform(get(path).header("Authorization", adminToken)).andExpect(jsonPath("$.code").value(0)).andExpect(header().string("Cache-Control", "no-store")).andReturn()); }
     private JsonNode data(MvcResult result) throws Exception { return json.readTree(result.getResponse().getContentAsByteArray()).path("data"); }
     private User user(String name, String role, String mobile) { User u = new User(); u.setNickname(name); u.setRole(role); u.setMobile(mobile); return users.saveAndFlush(u); }
-    private String token(User user) { return "Bearer " + JwtUtil.create(user.getId(), user.getRole()); }
+    private String token(User user) { return TestAuth.bearer(user); }
     private AdminMenu grant(String code, long roleId) { AdminMenu m = new AdminMenu(); m.setCode(code); m.setName(code); m = menus.saveAndFlush(m); AdminRoleMenu rm = new AdminRoleMenu(); rm.setRoleId(roleId); rm.setMenuId(m.getId()); roleMenus.saveAndFlush(rm); return m; }
     private OrderMain finishedOrder(int share) {
         OrderMain o = new OrderMain(); o.setOrderNo("W-HTTP-" + UUID.randomUUID()); o.setOrderType("SEND"); o.setUserId(publisher.getId()); o.setRiderId(rider.getId()); o.setStatus(OrderStatus.FINISHED);

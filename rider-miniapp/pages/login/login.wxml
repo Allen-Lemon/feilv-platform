@@ -1,0 +1,86 @@
+<import src="../../templates/manual-phone.wxml"/>
+<view class="login-page {{profileStage ? 'login-page-profile' : ''}}">
+  <view class="login-header">
+    <view class="brand-lockup"><view class="brand-logo">飞</view><view><view class="brand-name">飞毛腿</view><view class="brand-caption">德江同城 · 每份托付都认真</view></view></view>
+    <button class="browse-button" bindtap="browse" disabled="{{busy || saving || binding || phoneSending || phoneOptionsLoading || loading || uploading || checkingPrivacy || openingPrivacy}}">先逛逛 →</button>
+  </view>
+
+  <view wx:if="{{!profileStage}}" class="login-intro">
+    <view class="intro-kicker">{{riderClient ? '认真履约，安心接单' : '让同城小事，轻松一点'}}</view>
+    <view class="intro-title">{{riderClient ? '你好，\n每份托付都认真。' : '你好，\n很高兴为你跑一趟。'}}</view>
+    <view class="intro-description">{{riderClient ? '独立骑手端，承接订单、履约与转派。已有用户端账号请明确关联。' : '取件、代买、办事，把奔波交给我们，把时间留给生活。'}}</view>
+  </view>
+  <view wx:else class="profile-welcome">
+    <view class="profile-login-state"><view class="login-state-mark">✓</view><text>已安全登录</text></view>
+    <view class="profile-welcome-title">完善资料，马上出发</view>
+    <view class="profile-welcome-description">确认你的称呼与联系方式，方便每一次同城服务。</view>
+  </view>
+
+  <block wx:if="{{!profileStage}}">
+    <view class="login-card">
+      <view class="card-heading">登录，开启同城服务</view>
+      <view class="card-description">未绑定微信身份时，由你明确选择关联已有账号或创建新账号</view>
+      <button class="wechat-button" loading="{{busy}}" disabled="{{busy || sending}}" bindtap="wechat"><view class="wechat-symbol" wx:if="{{!busy}}"><view class="wechat-bubble"></view><view class="wechat-bubble bubble-small"></view></view><text>{{busy ? '正在安全登录…' : '微信快捷登录'}}</text></button>
+      <checkbox-group bindchange="consent"><label class="consent-label"><checkbox value="yes" checked="{{agreed}}" color="#C94320" disabled="{{busy || sending}}"/><text>我已阅读并同意</text></label></checkbox-group>
+      <view class="legal-links"><text class="legal-link" data-kind="service" bindtap="legal">《服务说明》</text><text class="legal-link" data-kind="privacy" bindtap="legal">《隐私说明》</text></view>
+      <view class="identity-choices" wx:if="{{identityRequired}}">
+        <view class="inline-notice">此微信身份尚未绑定平台账号。请明确选择；临时凭证失效后需重新微信登录。</view>
+        <button class="secondary" data-choice="LINK" bindtap="chooseIdentity" disabled="{{busy}}">关联已有平台账号</button>
+        <button class="text-button" data-choice="NEW" bindtap="chooseIdentity" disabled="{{busy}}">没有账号，创建新账号</button>
+        <view wx:if="{{identityChoice === 'LINK'}}"><view class="field-help">在另一小程序登录原账号，进入“我的”并确认生成一次性关联码。不要使用他人发送的码。</view><input class="profile-input" value="{{linkCode}}" maxlength="43" bindinput="linkCodeInput" placeholder="输入另一端临时关联码" disabled="{{busy}}"/><button class="primary" bindtap="linkAccount" loading="{{busy}}" disabled="{{busy}}">确认关联本人已有账号</button></view>
+        <view wx:if="{{identityChoice === 'NEW'}}"><view class="inline-notice">创建独立新账号，不继承原账号资产或骑手档案。需要本次真实微信手机号授权。</view><view wx:if="{{!phoneSupported}}">请升级微信并确认手机号能力已开通。</view><block wx:elif="{{privacyNeeded}}"><button class="text-button" bindtap="openIdentityPrivacy">查看{{privacyTitle}}</button><button wx:if="{{privacyGateSupported}}" open-type="agreePrivacyAuthorization" bindagreeprivacyauthorization="identityPrivacy" disabled="{{busy}}">同意隐私指引</button></block><button wx:elif="{{privacyReady}}" class="primary" open-type="getPhoneNumber" bindtap="prepareAccountPhone" bindgetphonenumber="createAccount" loading="{{busy}}" disabled="{{busy}}">授权手机号并确认创建新账号</button><button wx:else class="text-button" bindtap="identityPrivacy">重新检查隐私授权</button></view>
+        <button class="text-button" bindtap="restartIdentity" disabled="{{busy}}">取消选择 / 重新微信登录</button>
+      </view>
+      <button wx:if="{{smsLoginEnabled && !identityRequired}}" class="text-button sms-toggle" disabled="{{busy || sending}}" bindtap="toggleSms">{{sms ? '收起其他登录方式 ↑' : '其他登录方式 →'}}</button>
+    </view>
+    <view class="login-card sms-card" wx:if="{{smsLoginEnabled && sms && !identityRequired}}">
+      <view class="card-heading">手机号登录</view><view class="card-description">短信账号不会自动与微信账号合并</view>
+      <view class="profile-field"><label class="profile-label" for="login-mobile">手机号</label><input id="login-mobile" class="profile-input" type="number" maxlength="11" value="{{mobile}}" data-field="mobile" bindinput="input" placeholder="请输入11位手机号" disabled="{{busy || sending}}"/></view>
+      <view class="profile-field"><label class="profile-label" for="login-code">验证码</label><view class="row sms-row"><input id="login-code" class="grow profile-input" type="number" maxlength="8" value="{{code}}" data-field="code" bindinput="input" placeholder="请输入验证码" disabled="{{busy}}"/><button class="secondary small" loading="{{sending}}" disabled="{{cooling > 0 || sending || busy}}" bindtap="sendCode">{{smsLabel}}</button></view></view>
+      <view class="inline-notice" wx:if="{{demoCode}}">后端演示验证码：{{demoCode}}，请手动填写</view>
+      <button class="primary profile-submit" loading="{{busy}}" disabled="{{busy || sending}}" bindtap="smsLogin">登录 / 注册</button>
+      <view class="profile-footnote">短信当前为演示能力，生产前须接入真实短信并关闭演示码回传，或停用短信入口。</view>
+    </view>
+    <view class="login-footnote">微信登录不会自动读取头像、昵称或手机号。登录后在本页主动确认，资料完整的账号无需重复填写。</view>
+  </block>
+
+  <view wx:else class="login-card inline-profile">
+    <view class="profile-section-heading"><view class="profile-heading">你的同城名片</view><text class="profile-optional-note">头像选填</text></view>
+    <view class="profile-caption">让骑手知道如何称呼你</view>
+    <view class="loading-note" wx:if="{{loading}}">正在读取账号资料…</view>
+    <view wx:if="{{error}}" class="error-note">{{error}}<button class="text-button" bindtap="load" disabled="{{busy || loading || saving || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}">重新读取资料</button></view>
+    <block wx:if="{{loaded}}">
+      <view class="identity-preview">
+        <button wx:if="{{avatarSupported}}" class="profile-avatar-button" open-type="chooseAvatar" bindtap="prepareAvatar" bindchooseavatar="chooseAvatar" disabled="{{busy || loading || saving || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}" aria-label="选择头像">
+          <image wx:if="{{avatarDraft || avatarUrl}}" class="profile-avatar-image" src="{{avatarDraft || avatarUrl}}" mode="aspectFill"/>
+          <view wx:else class="avatar-placeholder">飞</view>
+          <view class="avatar-edit-label">选择头像</view>
+        </button>
+        <view wx:else class="profile-avatar-button"><image wx:if="{{avatarUrl}}" class="profile-avatar-image" src="{{avatarUrl}}" mode="aspectFill"/><view wx:else class="avatar-placeholder">飞</view></view>
+        <view class="preview-caption"><view class="avatar-choice-title">{{avatarDraft ? '新头像已选择' : avatarSupported ? '选一张喜欢的头像' : '正在使用默认头像'}}</view><view class="field-help">{{avatarSupported ? '点击左侧头像即可选择' : '升级微信后可选择头像'}}</view><view class="field-help">JPEG / PNG · 5MB以内 · 公开展示</view><button wx:if="{{avatarDraft}}" class="text-button avatar-revert" bindtap="discardAvatar" disabled="{{busy || loading || saving || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}">撤销选择</button></view>
+      </view>
+      <view class="profile-field nickname-field"><view class="field-label-row"><label class="profile-label" for="login-nickname">你的昵称</label><text class="field-required">下单必填</text></view><input id="login-nickname" class="profile-input" type="nickname" maxlength="64" value="{{nickname}}" bindinput="nicknameInput" bindblur="nicknameInput" placeholder="填写或选择微信昵称" disabled="{{busy || loading || saving || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}"/><view class="field-help">1—32个字符，选择头像和昵称后统一保存</view></view>
+      <view class="profile-field phone-field"><view class="field-label-row"><view class="profile-label">联系手机号</view><text class="field-required {{mobileBound ? 'field-verified' : ''}}">{{mobileBound ? '已绑定' : '下单必填'}}</text></view>
+        <view wx:if="{{mobileBound}}" class="bound-state"><view class="phone-bound-mark">✓</view><view class="bound-copy"><view class="bound-number">{{mobile || '号码已脱敏保护'}}</view><view class="field-help">绑定成功，手机号已脱敏保护</view></view></view>
+        <block wx:else>
+        <block wx:if="{{!manualPhone}}">
+        <block wx:if="{{!phoneSupported}}"><view class="inline-notice">请升级微信后授权绑定手机号，也可以先返回浏览。</view></block>
+        <block wx:elif="{{privacyNeeded}}">
+          <button class="text-button privacy-link" bindtap="openPrivacy" disabled="{{busy || loading || saving || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}">查看{{privacyTitle}}</button>
+          <button wx:if="{{privacyGateSupported}}" id="agree-login-privacy" class="secondary" open-type="agreePrivacyAuthorization" bindagreeprivacyauthorization="agreePrivacy" loading="{{checkingPrivacy}}" disabled="{{busy || loading || saving || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}">同意隐私指引，继续手机号授权</button>
+          <view wx:else class="inline-notice">请升级微信后完成隐私授权。</view>
+        </block>
+        <button wx:elif="{{privacyReady}}" class="secondary" open-type="getPhoneNumber" bindtap="preparePhone" bindgetphonenumber="bindPhone" loading="{{binding}}" disabled="{{busy || loading || saving || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}">{{binding ? '正在验证并绑定…' : '授权并绑定微信手机号'}}</button>
+        <view wx:else class="field-help">正在确认微信隐私授权状态，请重试读取资料。</view>
+        </block>
+        <template wx:if="{{manualPhone}}" is="manualPhoneForm" data="{{manualMobile, manualCode, phoneSending, phoneCooling, phoneSmsLabel, phoneSmsMock, phoneDemoCode, phoneDevelopment, phoneOptionsLoading, phoneOptionsError, phoneModeMessage, phoneBackend, binding, manualDisabled: busy || loading || saving || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}"/>
+        <button class="phone-method-toggle" bindtap="togglePhoneMethod" disabled="{{busy || loading || saving || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}">{{manualPhone ? '改用微信授权绑定' : '手动填写手机号并短信验证 →'}}</button>
+        </block>
+        <view class="inline-notice error" wx:if="{{phoneError && !mobileBound}}">{{phoneError}}</view>
+        <view class="field-help" wx:if="{{!mobileBound}}">仅用于联系与服务，授权或短信验证成功后立即绑定</view>
+      </view>
+      <view class="profile-save-actions"><view class="save-caption">头像与昵称将在保存后更新</view><button class="primary profile-submit" bindtap="complete" loading="{{saving}}" disabled="{{busy || loading || saving || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}">{{saving ? '正在保存…' : '保存并继续'}}</button><button class="text-button profile-skip" bindtap="browse" disabled="{{busy || loading || saving || binding || phoneSending || phoneOptionsLoading || checkingPrivacy || openingPrivacy}}">稍后完善，先逛逛</button></view>
+      <view class="profile-privacy-note">头像昵称由你主动选择，手机号可通过微信授权或短信验证绑定。未绑定可浏览，暂不能下单；绑定成功不会因离开本页撤销。</view>
+    </block>
+  </view>
+</view>

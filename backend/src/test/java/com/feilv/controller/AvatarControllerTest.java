@@ -32,7 +32,7 @@ class AvatarControllerTest {
         mvc.perform(multipart("/api/v1/user/avatar").file(file)).andExpect(status().isUnauthorized());
         verifyNoInteractions(profiles, storage);
         mvc.perform(multipart("/api/v1/user/avatar").file(file).param("userId", "99")
-                        .header("Authorization", "Bearer " + JwtUtil.create(42L, "USER")))
+                        .header("Authorization", "Bearer " + TestAuth.userToken(42L, "USER")))
                 .andExpect(jsonPath("$.code").value(0)).andExpect(jsonPath("$.data.avatarUrl").value(url));
         verify(profiles).me(42L); verify(profiles).updateAvatar(42L, url);
     }
@@ -44,7 +44,7 @@ class AvatarControllerTest {
         var mvc = MockMvcBuilders.standaloneSetup(new AvatarController(profiles, storage))
                 .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(TestAuth.interceptor()).build();
         mvc.perform(multipart("/api/v1/user/avatar").file(new MockMultipartFile("file", new byte[]{1}))
-                        .header("Authorization", "Bearer " + JwtUtil.create(42L, "USER")))
+                        .header("Authorization", "Bearer " + TestAuth.userToken(42L, "USER")))
                 .andExpect(jsonPath("$.code").value(403));
         verify(storage).discard(url);
     }

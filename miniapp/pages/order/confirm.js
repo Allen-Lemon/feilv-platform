@@ -5,14 +5,22 @@ const { definePage, toast } = require('../../utils/page')
 const { types, taskModes, service, validShares } = require('../../utils/format')
 const paidStates = ['WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED']
 definePage({
-  data: { draft: null, quote: null, typeText: '', modeText: '', isService: false, legacyDraft: false, budgetRequired: false, goodsBudgetText: '', tagNames: [], busy: false, orderId: null, invalid: false, uncertain: false },
+  data: { draft: null, quote: null, typeText: '', modeText: '', isService: false, transport: false, legacyDraft: false, budgetRequired: false, goodsBudgetText: '', tagNames: [], busy: false, orderId: null, invalid: false, uncertain: false },
   onLoad() { this.restore() },
-  onShow() { session.requireLogin() },
+  onShow() {
+    if (!session.requireLogin()) { this.setData({ draft: null, quote: null, orderId: null, uncertain: false }); return }
+    // 登录页返回时 definePage 已重置旧私有UI；以同账号恢复后的活动草稿重新绑定revision。
+    // 不能沿用失效 _revision 或只在onLoad恢复，导致重登后原订单无法续办。
+    this.restore()
+  },
   restore() {
     const draft = wx.getStorageSync('native_draft')
     const owner = wx.getStorageSync('feilv_user_id')
     const pending = wx.getStorageSync('native_pending_order')
-    if (!draft || draft.owner !== owner || !draft.payload) { this.setData({ invalid: true }); return }
+    if (!session.token() || !draft || draft.owner !== owner || !draft.payload) {
+      this._savedAt = undefined; this._owner = undefined; this._revision = undefined
+      this.setData({ invalid: true, draft: null, quote: null, orderId: null, uncertain: false }); return
+    }
     const matching = draftState.matches(pending, owner, draft.savedAt)
     const isService = service(draft.payload)
     const legacyDraft = draft.payload.orderType === 'CUSTOM' && !isService
@@ -23,7 +31,8 @@ definePage({
     }
     this.setData({ invalid: false, budgetRequired: false, goodsBudgetText: draft.payload.orderType === 'BUY' ? goodsBudget.text(draft.payload.goodsBudgetFen) : '',
       draft: goodsBudget.payload(draft.payload), quote: draft.quote, tagNames: draft.tagNames || [], isService, legacyDraft, modeText: taskModes[draft.payload.taskMode],
-      typeText: types[draft.payload.orderType], orderId: matching ? pending.id || null : null, uncertain: !!(matching && pending.uncertain) })
+      transport: isService && ['RIDE', 'DRIVING'].includes(draft.payload.taskMode),
+      typeText: isService ? taskModes[draft.payload.taskMode] : types[draft.payload.orderType], orderId: matching ? pending.id || null : null, uncertain: !!(matching && pending.uncertain) })
     this._savedAt = draft.savedAt
     this._owner = owner
     this._revision = session.revision()

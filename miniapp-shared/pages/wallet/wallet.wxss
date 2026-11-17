@@ -1,0 +1,11 @@
+.wallet-amount { margin-left: 16rpx; font-weight: 600; font-variant-numeric: tabular-nums; word-break: break-all; }
+.wallet-tabs { display: flex; margin: 16rpx -6rpx 24rpx; }
+.wallet-tabs button { flex: 1; margin: 0 6rpx; padding: 20rpx 12rpx; }
+.wallet-record { padding: 24rpx 0; border-top: 1rpx solid #EAECF0; }
+.wallet-record .hint { margin: 10rpx 0; }
+.wallet-record .wallet-amount { margin-left: 0; margin-right: 12rpx; }
+.record-title { margin-right: 12rpx; font-weight: 600; }
+.record-remark { word-break: break-all; }
+.withdrawal-PENDING { background: #EEF4FF; color: #344E86; }
+.withdrawal-APPROVED { background: #EDF7F2; color: #176B52; }
+.withdrawal-REJECTED { background: #F2F4F7; color: #667085; }

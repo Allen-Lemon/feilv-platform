@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties = {"spring.datasource.url=jdbc:h2:mem:order-transfer-http;DB_CLOSE_DELAY=-1", "spring.datasource.username=sa", "spring.datasource.password=",
+@SpringBootTest(properties = {TestAuth.TEST_SECRET_PROPERTY,"spring.datasource.url=jdbc:h2:mem:order-transfer-http;DB_CLOSE_DELAY=-1", "spring.datasource.username=sa", "spring.datasource.password=",
         "spring.datasource.driver-class-name=org.h2.Driver", "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect", "spring.jpa.hibernate.ddl-auto=create-drop", "spring.sql.init.mode=never"})
 @AutoConfigureMockMvc
 class OrderTransferHttpTest {
@@ -67,9 +67,13 @@ class OrderTransferHttpTest {
         pay.setStatus("SUCCESS"); pay.setChannel("MOCK"); pay.setAmount(1000); pay.setShareRider(700); pay.setSharePlatform(300); payments.saveAndFlush(pay);
         return new Fixture(publisher, fromUser, from, toUser, to, order);
     }
-    private String token(User user) { return "Bearer " + JwtUtil.create(user.getId(), user.getRole()); }
+    private String token(User user) { return TestAuth.bearer(user); }
     private JsonNode call(MockHttpServletRequestBuilder request, User user) throws Exception {
-        return json.readTree(mvc.perform(request.header("Authorization", token(user))).andReturn().getResponse().getContentAsByteArray());
+        String path = request.buildRequest(new org.springframework.mock.web.MockServletContext()).getRequestURI();
+        boolean riderEndpoint = path.startsWith("/api/v1/rider/")
+                || path.matches("^/api/v1/orders/[^/]+/(service-start|service-complete)$");
+        String authorization = riderEndpoint ? TestAuth.riderBearer(user) : token(user);
+        return json.readTree(mvc.perform(request.header("Authorization", authorization)).andReturn().getResponse().getContentAsByteArray());
     }
     private JsonNode postJson(String path, User user, String body) throws Exception {
         return call(post(path).contentType(MediaType.APPLICATION_JSON).content(body), user);
@@ -122,7 +126,7 @@ class OrderTransferHttpTest {
         assertEquals(403, postJson(responsePath(id), f.fromUser, "{\"decision\":\"ACCEPTED\"}").path("code").asInt());
         assertEquals(403, postJson(responsePath(id), stranger, "{\"decision\":\"REJECTED\"}").path("code").asInt());
         assertEquals(403, postJson("/api/v1/rider/transfers/" + id + "/cancel", f.toUser, "{}").path("code").asInt());
-        String stale = token(f.toUser); f.toUser.setStatus(0); users.saveAndFlush(f.toUser);
+        String stale = TestAuth.riderBearer(f.toUser); f.toUser.setStatus(0); users.saveAndFlush(f.toUser);
         mvc.perform(post(responsePath(id)).header("Authorization", stale).contentType(MediaType.APPLICATION_JSON).content("{\"decision\":\"ACCEPTED\"}")).andExpect(status().isForbidden());
         f.toUser.setStatus(1); users.saveAndFlush(f.toUser); f.to.setStatus("FROZEN"); riders.saveAndFlush(f.to);
         assertEquals(403, postJson(responsePath(id), f.toUser, "{\"decision\":\"ACCEPTED\"}").path("code").asInt());
@@ -132,7 +136,7 @@ class OrderTransferHttpTest {
     @Test void acceptedHistoryHasOnlySafeFieldsAndHistoricalRiderCannotReadOrderTaskTrackComplaintsOrPerformService() throws Exception {
         Fixture f = fixture(); long id = request(f);
         // 目标接受前不能通过转派列表获得订单私有详情。
-        assertEquals(403, call(get("/api/v1/orders/" + f.order.getId()), f.toUser).path("code").asInt());
+        assertEquals(403, call(get("/api/v1/rider/orders/" + f.order.getId()), f.toUser).path("code").asInt());
         assertEquals(0, postJson(responsePath(id), f.toUser, "{\"decision\":\"ACCEPTED\",\"reason\":\"确认接手\"}").path("code").asInt());
         for (User user : List.of(f.fromUser, f.toUser, f.publisher)) {
             var result = call(get("/api/v1/orders/" + f.order.getId() + "/transfers"), user);
@@ -145,7 +149,9 @@ class OrderTransferHttpTest {
         for (String path : List.of("/api/v1/orders/" + f.order.getId(), "/api/v1/orders/" + f.order.getId() + "/custom-task", "/api/v1/orders/" + f.order.getId() + "/track", "/api/v1/orders/" + f.order.getId() + "/complaints")) {
             assertEquals(403, call(get(path), f.fromUser).path("code").asInt(), path);
         }
-        assertEquals(0, call(get("/api/v1/orders/" + f.order.getId() + "/custom-task"), f.toUser).path("code").asInt());
+        assertEquals(0, call(get("/api/v1/rider/orders/" + f.order.getId() + "/custom-task"), f.toUser).path("code").asInt());
+        assertEquals(403, call(get("/api/v1/rider/orders/" + f.order.getId()), f.fromUser).path("code").asInt());
+        assertEquals(403, call(get("/api/v1/rider/orders/" + f.order.getId() + "/custom-task"), f.fromUser).path("code").asInt());
         assertEquals(403, postJson("/api/v1/orders/" + f.order.getId() + "/service-start", f.fromUser, "{}").path("code").asInt());
         assertEquals(403, postJson("/api/v1/orders/" + f.order.getId() + "/service-complete", f.fromUser, "{}").path("code").asInt());
         assertEquals(0, call(get("/api/v1/rider/orders"), f.fromUser).path("data").path("totalElements").asLong());

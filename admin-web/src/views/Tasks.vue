@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-head"><div><span class="eyebrow">CUSTOM TASKS</span><h1>自定义任务</h1><p>代用户发布线上任务、上门服务或兼职劳务，自定总价，由现有骑手承接。创建后由用户在小程序支付，后台不代付。</p></div><el-button v-if="canManage" type="primary" :disabled="createNeedsCheck" @click="openCreate">代用户发布</el-button></div>
+    <div class="page-head"><div><span class="eyebrow">CUSTOM TASKS</span><h1>自定义任务</h1><p>代用户发布线上任务、上门服务、兼职劳务、接送或代驾，自定总价。接送、代驾仅限分别获平台授权的骑手承接。创建后由用户在小程序支付，后台不代付。</p></div><el-button v-if="canManage" type="primary" :disabled="createNeedsCheck" @click="openCreate">代用户发布</el-button></div>
     <el-alert v-if="!canManage" title="正在确认权限，或当前账户未获自定义任务权限。" type="warning" :closable="false" show-icon />
     <div v-else class="panel">
       <el-alert v-if="createNeedsCheck" title="上次创建结果未确认，请先关闭发布弹窗并刷新、核对任务列表，避免重复发布。" type="warning" :closable="false" class="notice"><el-button link @click="load(1)">刷新列表以核对</el-button></el-alert>
@@ -40,7 +40,7 @@
         <el-alert v-if="detailError" :title="detailError" type="error" :closable="false"><el-button link @click="openDetail(detailOrderId)">重试</el-button></el-alert>
         <el-descriptions v-else-if="detail" :column="1" border>
           <el-descriptions-item label="任务 / 订单 ID">{{ detail.id }} / {{ detail.orderId }}</el-descriptions-item><el-descriptions-item label="订单号">{{ detail.orderNo }}</el-descriptions-item>
-          <el-descriptions-item label="发布用户 ID">{{ detail.userId }}</el-descriptions-item><el-descriptions-item label="标题">{{ detail.title }}</el-descriptions-item><el-descriptions-item label="内容"><div class="multiline">{{ detail.content }}</div></el-descriptions-item>
+          <el-descriptions-item label="发布用户 ID">{{ detail.userId }}</el-descriptions-item><el-descriptions-item label="标题">{{ detail.title }}</el-descriptions-item><el-descriptions-item :label="isTransportMode(detail.taskMode) ? '备注 / 服务说明' : '内容'"><div class="multiline">{{ detail.content }}</div></el-descriptions-item>
           <el-descriptions-item label="标签"><el-tag v-for="tag in detail.tags || []" :key="tag.id" class="task-tag">{{ tag.name }}</el-tag></el-descriptions-item>
           <el-descriptions-item label="状态">{{ detail.statusLabel || statusLabel(detail.status) }}</el-descriptions-item><el-descriptions-item label="场景">{{ taskModeLabel(detail.taskMode) }}</el-descriptions-item><el-descriptions-item label="总价">¥{{ formatFen(taskPriceFen(detail)) }}</el-descriptions-item>
           <el-descriptions-item label="骑手预估收入（服务端）">{{ formatFen(detail.riderShareFen) }} 元</el-descriptions-item><el-descriptions-item label="平台分成（服务端）">{{ formatFen(detail.platformShareFen) }} 元</el-descriptions-item>
@@ -49,7 +49,7 @@
           </template>
           <template v-else>
             <el-descriptions-item label="联系人">{{ detail.contact || '—' }}</el-descriptions-item><el-descriptions-item label="联系电话">{{ detail.phone || '—' }}</el-descriptions-item>
-            <el-descriptions-item v-if="detail.taskMode !== 'ONLINE'" :label="detail.taskMode === 'PART_TIME' ? '工作地点' : '服务地点'">{{ detail.locationAddress || '—' }}</el-descriptions-item>
+            <el-descriptions-item v-if="detail.taskMode !== 'ONLINE'" :label="locationLabel(detail.taskMode)">{{ detail.locationAddress || '—' }}</el-descriptions-item>
             <el-descriptions-item v-if="detail.taskMode !== 'ONLINE'" :label="detail.taskMode === 'PART_TIME' ? '工作时间' : '服务时间'">{{ detail.serviceTime || '—' }}</el-descriptions-item>
           </template>
           <el-descriptions-item label="发布来源 / 管理员">{{ detail.publishSource || '—' }} / {{ detail.createdBy ?? '—' }}</el-descriptions-item><el-descriptions-item label="创建时间">{{ detail.createdTime }}</el-descriptions-item>
@@ -66,16 +66,17 @@
           <p v-if="usersError" class="field-hint">{{ usersError }}</p>
         </el-form-item>
         <p v-else class="field-hint">当前无用户管理权限，不查询用户列表；可手填用户 ID，由后端校验。</p>
-        <el-form-item label="标题（1–64 字）" required><el-input v-model="form.title" maxlength="128" /><span class="field-hint">{{ Array.from(form.title).length }} / 64 字（按 Unicode 码点）</span></el-form-item>
-        <el-form-item label="任务内容（1–1000 字）" required><el-input v-model="form.content" type="textarea" :rows="4" maxlength="2000" /><span class="field-hint">{{ Array.from(form.content).length }} / 1000 字（按 Unicode 码点）</span></el-form-item>
         <el-form-item label="任务场景" required><el-select v-model="form.taskMode" style="width:100%"><el-option v-for="mode in taskModes" :key="mode.code" :value="mode.code" :label="mode.label" /></el-select></el-form-item>
-        <el-form-item label="场景标签（可选，最多 5 个）"><el-select v-model="form.tagIds" multiple :multiple-limit="5" style="width:100%" :loading="tagsLoading"><el-option v-for="tag in enabledTags" :key="tag.id" :label="tag.name" :value="tag.id" /></el-select><span class="field-hint">仅展示当前场景可用标签，切换场景会移除不适用的已选标签。</span><span v-if="tagsError" class="field-hint">标签加载失败，可不选标签或关闭弹窗后刷新。</span></el-form-item>
-        <p class="field-hint">{{ form.taskMode === 'ONLINE' ? '线上完成，无需填写地址。' : form.taskMode === 'ONSITE' ? '例如通马桶：只需一个服务地点，可选填写服务时间。' : '例如搬水泥：必须填写工作地点及工作时间。' }}所有场景均由现有骑手承接。</p>
+        <el-form-item v-if="!isTransportMode(form.taskMode)" label="标题（1–64 字）" required><el-input v-model="form.title" maxlength="128" /><span class="field-hint">{{ Array.from(form.title).length }} / 64 字（按 Unicode 码点）</span></el-form-item>
+        <p v-else class="field-hint">标题由后端按服务分类生成，无需填写标题或选择标签。</p>
+        <el-form-item :label="isTransportMode(form.taskMode) ? '备注（可选，最多 1000 字）' : '任务内容（1–1000 字）'" :required="!isTransportMode(form.taskMode)"><el-input v-model="form.content" type="textarea" :rows="4" maxlength="2000" /><span class="field-hint">{{ Array.from(form.content).length }} / 1000 字（按 Unicode 码点）</span></el-form-item>
+        <el-form-item v-if="!isTransportMode(form.taskMode)" label="场景标签（可选，最多 5 个）"><el-select v-model="form.tagIds" multiple :multiple-limit="5" style="width:100%" :loading="tagsLoading"><el-option v-for="tag in enabledTags" :key="tag.id" :label="tag.name" :value="tag.id" /></el-select><span class="field-hint">仅展示当前场景可用标签，切换场景会移除不适用的已选标签。</span><span v-if="tagsError" class="field-hint">标签加载失败，可不选标签或关闭弹窗后刷新。</span></el-form-item>
+        <p class="field-hint">{{ scenarioHint(form.taskMode) }}</p>
         <el-form-item label="自定义总价（元，0.01–1000000.00）" required><el-input v-model="form.priceYuan" inputmode="decimal" placeholder="如 100.00，最多两位小数" /></el-form-item>
         <div class="form-grid"><el-form-item label="联系人" required><el-input v-model="form.contact" /></el-form-item><el-form-item label="联系电话" required><el-input v-model="form.phone" maxlength="11" /></el-form-item></div>
         <template v-if="form.taskMode !== 'ONLINE'">
-          <el-form-item :label="form.taskMode === 'PART_TIME' ? '工作地点（管理员手填，无需地址簿）' : '服务地点（管理员手填，无需地址簿）'" required><el-input v-model="form.locationAddress" placeholder="填写一个详细地点" /></el-form-item>
-          <el-form-item :label="form.taskMode === 'PART_TIME' ? '工作时间（必填，最多 100 字）' : '服务时间（可选，最多 100 字）'" :required="form.taskMode === 'PART_TIME'"><el-input v-model="form.serviceTime" maxlength="100" placeholder="如 11 月 20 日 09:00–18:00" /></el-form-item>
+          <el-form-item :label="`${locationLabel(form.taskMode)}（管理员手填，无需地址簿）`" required><el-input v-model="form.locationAddress" placeholder="填写一个详细地点" /></el-form-item>
+          <el-form-item :label="`${form.taskMode === 'PART_TIME' ? '工作时间' : '服务时间'}（${requiresTime(form.taskMode) ? '必填' : '可选'}，最多 100 字）`" :required="requiresTime(form.taskMode)"><el-input v-model="form.serviceTime" maxlength="100" placeholder="如今天 18:30" /></el-form-item>
         </template>
       </el-form>
       <el-alert v-if="createError" :title="createError" type="error" :closable="false" class="notice" />
@@ -103,7 +104,11 @@ const canSearchUsers = computed(() => menuCodes.value.includes('users'))
 const tab = ref('tasks')
 const statuses = [{ code: 'WAIT_PAY', label: '待支付' }, { code: 'WAIT_GRAB', label: '待接单' }, { code: 'ACCEPTED', label: '已接单' }, { code: 'PICKING', label: '取件中' }, { code: 'DELIVERING', label: '配送中' }, { code: 'DELIVERED', label: '已送达' }, { code: 'FINISHED', label: '已完成' }, { code: 'CANCELED', label: '已取消' }]
 const statusLabel = status => statuses.find(s => s.code === status)?.label || status
-const taskModes = [{ code: 'ONLINE', label: '线上任务' }, { code: 'ONSITE', label: '上门服务' }, { code: 'PART_TIME', label: '兼职劳务' }]
+const taskModes = [{ code: 'ONLINE', label: '线上任务' }, { code: 'ONSITE', label: '上门服务' }, { code: 'PART_TIME', label: '兼职劳务' }, { code: 'RIDE', label: '接送' }, { code: 'DRIVING', label: '代驾' }]
+const isTransportMode = mode => mode === 'RIDE' || mode === 'DRIVING'
+const requiresTime = mode => mode === 'PART_TIME' || isTransportMode(mode)
+const locationLabel = mode => isTransportMode(mode) ? '起始地址' : mode === 'PART_TIME' ? '工作地点' : '服务地点'
+const scenarioHint = mode => isTransportMode(mode) ? '只需一个起始地址，必须填写服务时间，备注可选；仅限分别获平台授权的骑手承接，不代表驾驶资质审核。' : mode === 'ONLINE' ? '线上完成，无需填写地址，由现有骑手承接。' : mode === 'ONSITE' ? '例如通马桶：只需一个服务地点，可选填写服务时间，由现有骑手承接。' : '例如搬水泥：必须填写工作地点及工作时间，由现有骑手承接。'
 const taskModeLabel = mode => mode == null || mode === 'DELIVERY' ? '配送任务（历史）' : taskModes.find(item => item.code === mode)?.label || mode
 const taskPriceFen = task => task.priceFen ?? task.amountFen
 const isLegacyTask = task => task.taskMode == null || task.taskMode === 'DELIVERY'
@@ -111,10 +116,10 @@ const validId = id => /^[1-9]\d*$/.test(String(id ?? ''))
 const query = reactive({ status: '', userId: '' })
 const rows = ref([]), page = ref(1), total = ref(0), loading = ref(false), listError = ref('')
 const tags = ref([]), tagsLoading = ref(false), tagsError = ref('')
-const tagModes = tag => Array.isArray(tag.taskModes) && tag.taskModes.length > 0 && tag.taskModes.length <= 3 && new Set(tag.taskModes).size === tag.taskModes.length && tag.taskModes.every(code => taskModes.some(mode => mode.code === code)) ? tag.taskModes : []
+const tagModes = tag => Array.isArray(tag.taskModes) && tag.taskModes.length > 0 && tag.taskModes.length <= taskModes.length && new Set(tag.taskModes).size === tag.taskModes.length && tag.taskModes.every(code => taskModes.some(mode => mode.code === code)) ? tag.taskModes : []
 const enabledTags = computed(() => tags.value.filter(tag => tag.enabled === true && tagModes(tag).includes(form.taskMode)))
 function pruneSelectedTags() {
-  const valid = form.tagIds.filter(id => enabledTags.value.some(tag => tag.id === id))
+  const valid = isTransportMode(form.taskMode) ? [] : form.tagIds.filter(id => enabledTags.value.some(tag => tag.id === id))
   if (valid.length !== form.tagIds.length) form.tagIds = valid
 }
 const detail = ref(null), detailOpen = ref(false), detailLoading = ref(false), detailError = ref(''), detailOrderId = ref('')
@@ -191,21 +196,22 @@ async function searchUsers(keyword) {
 function buildPayload() {
   const userId = String(form.userId).trim(), title = form.title.trim(), content = form.content.trim()
   if (!validId(userId)) throw new Error('请填写有效的发布用户 ID（正整数），用户有效性由后端校验。')
-  if (!title || Array.from(title).length > 64) throw new Error('标题需为 1–64 字。')
-  if (!content || Array.from(content).length > 1000) throw new Error('任务内容需为 1–1000 字。')
-  if (!Array.isArray(form.tagIds) || form.tagIds.length > 5 || new Set(form.tagIds).size !== form.tagIds.length || form.tagIds.some(id => !enabledTags.value.some(tag => tag.id === id))) throw new Error('最多选择 5 个适用当前场景的启用标签。')
-  if (!taskModes.some(mode => mode.code === form.taskMode)) throw new Error('请选择线上任务、上门服务或兼职劳务。')
+  if (!taskModes.some(mode => mode.code === form.taskMode)) throw new Error('请选择有效任务场景。')
+  const transport = isTransportMode(form.taskMode)
+  if (!transport && (!title || Array.from(title).length > 64)) throw new Error('标题需为 1–64 字。')
+  if ((!transport && !content) || Array.from(content).length > 1000) throw new Error(transport ? '备注最多 1000 字。' : '任务内容需为 1–1000 字。')
+  if (!transport && (!Array.isArray(form.tagIds) || form.tagIds.length > 5 || new Set(form.tagIds).size !== form.tagIds.length || form.tagIds.some(id => !enabledTags.value.some(tag => tag.id === id)))) throw new Error('最多选择 5 个适用当前场景的启用标签。')
   const priceFen = yuanToFen(form.priceYuan)
   if (!isFen(priceFen) || priceFen < 1 || priceFen > 100000000) throw new Error('总价需为 0.01–1000000.00 元，最多两位小数。')
   const contact = form.contact.trim(), phone = form.phone.trim()
   if (!contact) throw new Error('请填写联系人。')
   if (!/^1[3-9]\d{9}$/.test(phone)) throw new Error('请填写有效的联系人手机号。')
-  const payload = { userId, title, content, tagIds: [...form.tagIds], taskMode: form.taskMode, priceFen, contact, phone }
+  const payload = { userId, ...(!transport ? { title } : {}), content, tagIds: transport ? [] : [...form.tagIds], taskMode: form.taskMode, priceFen, contact, phone }
   if (form.taskMode !== 'ONLINE') {
     const locationAddress = form.locationAddress.trim(), serviceTime = form.serviceTime.trim()
-    if (!locationAddress) throw new Error(form.taskMode === 'PART_TIME' ? '请填写工作地点。' : '请填写服务地点。')
+    if (!locationAddress) throw new Error(`请填写${locationLabel(form.taskMode)}。`)
     if (serviceTime.length > 100) throw new Error('服务或工作时间最多 100 字。')
-    if (form.taskMode === 'PART_TIME' && !serviceTime) throw new Error('兼职劳务必须填写工作时间。')
+    if (requiresTime(form.taskMode) && !serviceTime) throw new Error(form.taskMode === 'PART_TIME' ? '兼职劳务必须填写工作时间。' : '接送、代驾必须填写服务时间。')
     payload.locationAddress = locationAddress
     if (serviceTime) payload.serviceTime = serviceTime
   }
@@ -232,7 +238,7 @@ async function publish() {
   try {
     const payload = buildPayload(), session = createSession
     if (JSON.stringify(payload) !== JSON.stringify(quotedPayload)) throw new Error('发布信息已变化，请重新报价。')
-    await ElMessageBox.confirm(`为用户 ID ${payload.userId} 创建「${payload.title}」（${taskModeLabel(payload.taskMode)}）？服务端报价总价 ¥${formatFen(quote.value.totalFen)}，骑手预估收入 ¥${formatFen(quote.value.riderShareFen)}，平台分成 ¥${formatFen(quote.value.platformShareFen)}。仅创建待支付任务，不代付；用户须在小程序支付。`, '确认报价并创建', { type: 'warning', confirmButtonText: '创建待支付任务', cancelButtonText: '取消' })
+    await ElMessageBox.confirm(`为用户 ID ${payload.userId} 创建「${payload.title || taskModeLabel(payload.taskMode)}」（${taskModeLabel(payload.taskMode)}）？服务端报价总价 ¥${formatFen(quote.value.totalFen)}，骑手预估收入 ¥${formatFen(quote.value.riderShareFen)}，平台分成 ¥${formatFen(quote.value.platformShareFen)}。仅创建待支付任务，不代付；用户须在小程序支付。`, '确认报价并创建', { type: 'warning', confirmButtonText: '创建待支付任务', cancelButtonText: '取消' })
     if (disposed || !canManage.value || session !== createSession || !createOpen.value) return
     if (!quotedPayload || JSON.stringify(buildPayload()) !== JSON.stringify(payload)) throw new Error('发布信息已变化，请重新报价。')
     sent = true
@@ -268,7 +274,7 @@ function tagPayload(draft) {
   if (!Number.isInteger(draft.sort) || draft.sort < 0 || draft.sort > 100000 || typeof draft.enabled !== 'boolean') throw new Error('标签排序必须为 0–100000 的整数，启用状态必须为布尔值。')
   if (draft.id != null && (!Number.isSafeInteger(draft.version) || draft.version < 0)) throw new Error('版本无效，请刷新此标签。')
   const modes = tagModes(draft)
-  if (!modes.length) throw new Error('请选择 1–3 个适用场景；待分类标签请先编辑分类。')
+  if (!modes.length) throw new Error('请选择 1–5 个适用场景；待分类标签请先编辑分类。')
   return { name, enabled: draft.enabled, sort: draft.sort, taskModes: [...modes], ...(draft.id == null ? {} : { version: draft.version }) }
 }
 async function persistTag(draft, toggling = false) {

@@ -10,7 +10,7 @@ public final class CustomTaskDtos {
     private CustomTaskDtos() {}
     public record TagReq(@NotBlank @Size(max = 64) String name, @NotNull Boolean enabled,
                          @NotNull @Min(0) @Max(100000) Integer sort, @Min(0) Long version,
-                         @NotNull @Size(min = 1, max = 3) List<@NotNull @Pattern(regexp = "ONSITE|PART_TIME|ONLINE") String> taskModes) {
+                         @NotNull @Size(min = 1, max = 5) List<@NotNull @Pattern(regexp = "ONSITE|PART_TIME|ONLINE|RIDE|DRIVING") String> taskModes) {
         /** 仅保留Java源兼容；未明确分类的请求仍会被保存校验拒绝。 */
         public TagReq(String name, Boolean enabled, Integer sort, Long version) { this(name, enabled, sort, version, null); }
     }
@@ -24,9 +24,9 @@ public final class CustomTaskDtos {
         @JsonAnySetter public void unknown(String name, Object value) { throw new IllegalArgumentException("不支持的计价参数: " + name); }
     }
     public record QuoteVO(int totalFen, List<ApiDtos.FeeItem> items, int riderShareFen, int platformShareFen) {}
-    public record PublishReq(@NotBlank String title, @NotBlank String content,
+    public record PublishReq(String title, String content,
                              @Size(max = 5) List<@NotNull @Positive Long> tagIds,
-                             @NotBlank @Pattern(regexp = "ONLINE|ONSITE|PART_TIME") String taskMode,
+                             @NotBlank @Pattern(regexp = "ONLINE|ONSITE|PART_TIME|RIDE|DRIVING") String taskMode,
                              @NotNull @Min(1) @Max(100000000)
                              @JsonDeserialize(using = ComplaintDtos.StrictFenDeserializer.class) Integer priceFen,
                              @NotBlank String contact, @NotBlank String phone,
@@ -40,9 +40,9 @@ public final class CustomTaskDtos {
         }
         @JsonAnySetter public void unknown(String name, Object value) { throw new IllegalArgumentException("不支持的发布参数: " + name); }
     }
-    public record AdminPublishReq(@NotNull @Positive Long userId, @NotBlank String title, @NotBlank String content,
+    public record AdminPublishReq(@NotNull @Positive Long userId, String title, String content,
                                   @Size(max = 5) List<@NotNull @Positive Long> tagIds,
-                                  @NotBlank @Pattern(regexp = "ONLINE|ONSITE|PART_TIME") String taskMode,
+                                  @NotBlank @Pattern(regexp = "ONLINE|ONSITE|PART_TIME|RIDE|DRIVING") String taskMode,
                                   @NotNull @Min(1) @Max(100000000)
                                   @JsonDeserialize(using = ComplaintDtos.StrictFenDeserializer.class) Integer priceFen,
                                   @NotBlank String contact, @NotBlank String phone,

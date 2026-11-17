@@ -19,7 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class UserProfileControllerTest {
     private final UserProfileService profiles = mock(UserProfileService.class);
-    private final String token = "Bearer " + JwtUtil.create(42L, "USER");
+    private final String token = "Bearer " + TestAuth.userToken(42L, "USER");
     private MockMvc mvc;
 
     @BeforeEach

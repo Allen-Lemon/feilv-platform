@@ -3,7 +3,12 @@ package com.feilv.common;
 /** 请求级用户上下文：由认证拦截器写入，Controller/Service 内直接取用 */
 public class UserContext {
 
-    public record CurrentUser(long id, String role) {}
+    public record CurrentUser(long id, String role, String source, String appId) {
+        /** Java-only service fixtures; HTTP always supplies verified signed application claims. */
+        public CurrentUser(long id, String role) {
+            this(id, role, null, null);
+        }
+    }
 
     private static final ThreadLocal<CurrentUser> HOLDER = new ThreadLocal<>();
 

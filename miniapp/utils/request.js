@@ -38,8 +38,8 @@ function response(res, options, ctx, uploaded) {
   let body = res.data
   if (uploaded && typeof body === 'string') { try { body = JSON.parse(body) } catch { body = null } }
   const businessCode = body && typeof body === 'object' ? body.code : undefined
-  if (res.statusCode === 401 || businessCode === 401) {
-    session.clear()
+  if (res.statusCode === 401 || businessCode === 401 || businessCode === 40101) {
+    session.expire()
     if (!options.public) session.login()
     throw failure('登录已过期，请重新登录', { status: 401 })
   }

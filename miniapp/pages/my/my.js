@@ -1,11 +1,14 @@
 const session = require('../../utils/session')
 const { avatarURL } = require('../../utils/request')
 const { definePage, modal, toast } = require('../../utils/page')
-definePage({
-  data: { me: null, loggedIn: false, isRider: false, loading: false, error: '', nickname: '', avatarUrl: '', roleText: '' },
+const identityLink = require('../../utils/identity-link-page')
+definePage(Object.assign({}, identityLink, {
+  data: Object.assign({}, identityLink.data, { me: null, loggedIn: false, loading: false, error: '', nickname: '', avatarUrl: '', roleText: '' }),
+  onHide() { this.clearLinkCode() },
+  onUnload() { this.clearLinkCode() },
   onShow() {
     const loggedIn = !!session.token()
-    this.setData({ loggedIn, avatarUrl: loggedIn ? avatarURL(wx.getStorageSync('feilv_avatar_url')) : '', isRider: wx.getStorageSync('feilv_role') === 'RIDER', nickname: wx.getStorageSync('feilv_nickname') || '用户', roleText: wx.getStorageSync('feilv_role') === 'RIDER' ? '骑手账户' : '普通用户' })
+    this.setData({ loggedIn, avatarUrl: loggedIn ? avatarURL(wx.getStorageSync('feilv_avatar_url')) : '', nickname: loggedIn ? wx.getStorageSync('feilv_nickname') || '用户' : '用户', roleText: '平台账号' })
     if (!loggedIn) { this.setData({ me: null, error: '' }); return }
     return this.load()
   },
@@ -28,12 +31,10 @@ definePage({
   phone() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/profile/profile?from=my&mode=phone' }) },
   address() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/address/address' }) },
   wallet() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/wallet/wallet' }) },
-  rider() { wx.navigateTo({ url: '/pages/rider/register' }) },
-  workbench() { if (session.requireLogin()) wx.navigateTo({ url: '/pages/rider/workbench' }) },
   settings() { wx.navigateTo({ url: '/pages/settings/settings' }) },
   privacy() { wx.navigateTo({ url: '/pages/legal/legal?kind=privacy' }) },
   async logout() {
     if (!(await modal({ title: '退出登录', content: '将清除本机登录凭证与未完成订单草稿，确认退出？' })).confirm) return
-    session.clear(); this.setData({ me: null, loggedIn: false, isRider: false, nickname: '', avatarUrl: '', error: '' }); toast('已退出登录')
+    session.clear(); this.setData({ me: null, loggedIn: false, nickname: '', avatarUrl: '', error: '' }); toast('已退出登录')
   }
-})
+}))

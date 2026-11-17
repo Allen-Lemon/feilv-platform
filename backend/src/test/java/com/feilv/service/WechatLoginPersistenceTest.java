@@ -12,9 +12,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
 
 /** 本地 H2 持久化回归，禁止接触远程业务数据库。 */
-@DataJpaTest(properties = {"spring.sql.init.mode=never", "spring.jpa.hibernate.ddl-auto=create-drop",
+@DataJpaTest(properties = {com.feilv.controller.TestAuth.TEST_SECRET_PROPERTY, "spring.sql.init.mode=never", "spring.jpa.hibernate.ddl-auto=create-drop",
         "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect"})
-@Import(WechatLoginService.class)
+@Import({WechatLoginService.class, AuthTokenService.class})
 class WechatLoginPersistenceTest {
     @MockBean WechatSessionClient client;
     @Autowired WechatLoginService service;

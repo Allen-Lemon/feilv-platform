@@ -40,7 +40,7 @@ class ManualPhoneBindingControllerTest {
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
     private final ObjectMapper json = new ObjectMapper();
     private final Map<Long, User> accounts = new HashMap<>();
-    private final String token = "Bearer " + JwtUtil.create(42L, "USER");
+    private final String token = "Bearer " + TestAuth.userToken(42L, "USER");
     private MockMvc mvc;
     private User user;
 
@@ -68,8 +68,8 @@ class ManualPhoneBindingControllerTest {
             var bind = post("/api/v1/user/phone").contentType(MediaType.APPLICATION_JSON)
                     .content("{\"mobile\":\"13800138000\",\"code\":\"123456\",\"userId\":42}");
             if (authorization != null) { send.header("Authorization", authorization); bind.header("Authorization", authorization); }
-            mvc.perform(send).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value(401));
-            mvc.perform(bind).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value(401));
+            mvc.perform(send).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value(40101));
+            mvc.perform(bind).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value(40101));
         }
         verifyNoInteractions(messages);
         verify(users, never()).findByIdForUpdate(anyLong());
@@ -117,7 +117,7 @@ class ManualPhoneBindingControllerTest {
 
     @Test
     void riderCanSendAndBindWithoutWechatIdentity() throws Exception {
-        String riderToken = "Bearer " + JwtUtil.create(43L, "RIDER");
+        String riderToken = "Bearer " + TestAuth.riderToken(43L, "RIDER");
         String code = send(riderToken, MOBILE);
         mvc.perform(post("/api/v1/user/phone").header("Authorization", riderToken).contentType(MediaType.APPLICATION_JSON)
                         .content(json.writeValueAsString(Map.of("mobile", MOBILE, "code", code))))
@@ -163,15 +163,15 @@ class ManualPhoneBindingControllerTest {
 
     @Test
     void frozenMissingRoleMismatchAndAdminAccountsCannotUseEitherEndpoint() throws Exception {
-        String adminToken = "Bearer " + JwtUtil.create(1L, "ADMIN");
-        assertBlockedBoth(adminToken, 200, 403);
+        String adminToken = "Bearer " + TestAuth.adminToken(1L);
+        assertBlockedBoth(adminToken, 403, 403);
         user.setStatus(0);
         assertBlockedBoth(token, 403, 403);
         user.setStatus(1);
         user.setRole("RIDER");
-        assertBlockedBoth(token, 403, 403);
+        assertBlockedBoth(token, 401, 40101);
         accounts.remove(42L);
-        assertBlockedBoth(token, 403, 403);
+        assertBlockedBoth(token, 401, 40101);
         verifyNoInteractions(messages);
     }
 
@@ -216,7 +216,7 @@ class ManualPhoneBindingControllerTest {
     private MockMvc mvc(boolean enabled) {
         var service = new SmsPhoneBindingService(users, messages, mock(com.feilv.service.AuditService.class), mock(jakarta.persistence.EntityManager.class), manager, enabled);
         return MockMvcBuilders.standaloneSetup(new ManualPhoneBindingController(service))
-                .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(new AuthInterceptor(users)).build();
+                .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(new AuthInterceptor(TestAuth.tokens(), users, mock(com.feilv.repository.RiderRepository.class))).build();
     }
 
     private User account(long id, String role) {

@@ -215,6 +215,90 @@ test('part-time labor requires one work location and a nonblank time of at most 
   assert.equal(Object.hasOwn(body, 'order'), false)
 })
 
+test('ride and driving publish one start location with required time, optional notes and backend-owned titles', async t => {
+  for (const [taskMode, label] of [['RIDE', '接送'], ['DRIVING', '代驾']]) {
+    const h = harness(t, 'Tasks', { overrides: { taskTags: async () => { throw new Error('offline tags') }, createCustomTask: async () => task({ taskMode, title: `${label}服务`, content: '后端默认服务说明' }) } }); await tick()
+    fillTask(h, { taskMode, title: '', content: '', tagIds: [999], locationAddress: ' 德江县起点 ', serviceTime: ' 今天 18:30 ', fromAddress: '旧取件地址', toAddress: '不应提交的终点', distanceM: 1200, weightKg: 5 })
+    await h.state.getQuote(); await h.state.publish()
+    assert.deepEqual(called(h, 'createCustomTask')[0].args, [{ userId: '42', content: '', tagIds: [], taskMode, priceFen: 1234, contact: '张三', phone: '13800000000', locationAddress: '德江县起点', serviceTime: '今天 18:30' }])
+    assert.match(h.confirmations[0][0], new RegExp(label)); assert.doesNotMatch(h.confirmations[0][0], /undefined/)
+    assert.equal(h.state.taskModeLabel(taskMode), label); assert.equal(h.state.locationLabel(taskMode), '起始地址'); assert.equal(h.state.requiresTime(taskMode), true)
+    assert.ok(h.state.tagsError.value); assert.equal(h.messages.length, 1)
+    await h.state.openDetail(21); assert.equal(h.state.isLegacyTask(h.state.detail.value), false)
+    fillTask(h, { taskMode, title: '不应用作分类或生成标题'.repeat(20), content: '  门口等待  ', locationAddress: '起点 B', serviceTime: '明天 09:00' })
+    await h.state.getQuote(); await h.state.publish()
+    assert.equal(Object.hasOwn(called(h, 'createCustomTask')[1].args[0], 'title'), false)
+    assert.equal(called(h, 'createCustomTask')[1].args[0].content, '门口等待')
+  }
+  assert.match(components.Tasks.template, /v-if="!isTransportMode\(form.taskMode\)" label="标题/)
+  assert.match(components.Tasks.template, /标题由后端按服务分类生成/)
+  assert.match(components.Tasks.template, /备注（可选，最多 1000 字）/)
+})
+
+test('transport publishing keeps contact, time, notes and money validation without burdening old scenarios', async t => {
+  const h = harness(t, 'Tasks'); await tick()
+  for (const taskMode of ['RIDE', 'DRIVING']) {
+    for (const draft of [{ locationAddress: '' }, { serviceTime: ' ' }, { serviceTime: '时'.repeat(101) }, { content: '字'.repeat(1001) }, { contact: ' ' }, { phone: '123' }, { priceYuan: '0' }, { priceYuan: '1.001' }, { priceYuan: '1000000.01' }]) {
+      fillTask(h, { taskMode, title: '', content: '', locationAddress: '起点', serviceTime: '今晚', ...draft }); await h.state.getQuote()
+      assert.ok(h.state.createError.value, JSON.stringify({ taskMode, draft })); assert.equal(h.state.quote.value, null)
+    }
+  }
+  assert.equal(called(h, 'quoteCustomTask').length, 0)
+  fillTask(h, { taskMode: 'RIDE', title: '', content: '字'.repeat(1000), locationAddress: '起点', serviceTime: '时'.repeat(100), priceYuan: '0.29' })
+  await h.state.getQuote(); await h.state.publish()
+  assert.deepEqual(called(h, 'quoteCustomTask')[0].args, [{ priceFen: 29 }]); assert.equal(called(h, 'createCustomTask')[0].args[0].priceFen, 29)
+  h.state.openCreate(); Object.assign(h.state.form, { userId: '42', taskMode: 'DRIVING', priceYuan: '12.34', contact: '张三', phone: '13800000000', locationAddress: '起点', serviceTime: '今晚' })
+  h.state.form.taskMode = 'ONSITE'; await h.state.getQuote(); assert.match(h.state.createError.value, /标题/)
+})
+
+test('transport scenario, start address, time and notes invalidate quotes and cannot submit from stale confirmations', async t => {
+  const h = harness(t, 'Tasks'); await tick()
+  for (const [field, value] of [['taskMode', 'DRIVING'], ['locationAddress', '新起点'], ['serviceTime', '明晚'], ['content', '新备注'], ['priceYuan', '99.99']]) {
+    fillTask(h, { taskMode: 'RIDE', title: '', content: '', locationAddress: '原起点', serviceTime: '今晚' }); await h.state.getQuote()
+    assert.ok(h.state.quote.value)
+    const gate = deferred(); h.box.response = () => gate.promise
+    const publishing = h.state.publish(); h.state.form[field] = value; assert.equal(h.state.quote.value, null)
+    gate.resolve(true); await publishing
+    assert.equal(called(h, 'createCustomTask').length, 0); assert.match(h.state.createError.value, /重新报价/)
+  }
+})
+
+test('transport order summaries use explicit service types, starting locations and time, never delivery destinations', async t => {
+  const h = harness(t, 'OrderList'); await tick()
+  for (const [taskMode, label] of [['RIDE', '接送'], ['DRIVING', '代驾']]) {
+    const row = { orderType: 'CUSTOM', taskMode, locationAddress: '起点 A', serviceTime: '今天 18:30', fromAddress: '旧取件占位', toAddress: '不存在的终点', fromContact: '旧联系人', contact: '服务联系人' }
+    assert.equal(h.state.isServiceTask(row), true); assert.equal(h.state.isTransportTask(row), true); assert.equal(h.state.orderTypeLabel(row), label)
+    assert.equal(h.state.orderLocation(row), '起始地址：起点 A'); assert.equal(h.state.orderDestination(row), '服务时间：今天 18:30'); assert.equal(h.state.orderContact(row), '服务联系人')
+    assert.equal(h.state.orderLocation({ ...row, locationAddress: null }), '起始地址：—')
+    assert.equal(h.state.orderDestination({ ...row, serviceTime: undefined }), '服务时间：—')
+    assert.equal(h.state.isServiceTask({ ...row, orderType: 'SEND' }), false)
+  }
+  for (const taskMode of [null, undefined, 'DELIVERY']) {
+    const row = { orderType: 'CUSTOM', taskMode, fromAddress: '历史取件地址', toAddress: '历史送达地址' }
+    assert.equal(h.state.orderTypeLabel(row), '自定义任务'); assert.equal(h.state.orderLocation(row), '历史取件地址'); assert.equal(h.state.orderDestination(row), '历史送达地址')
+  }
+  assert.match(components.OrderList.template, /起始地址/)
+  assert.doesNotMatch(components.OrderList.template, /v-model="query\.(taskMode|orderType)"/)
+})
+
+test('tag assignments support all five scenes without weakening bounded duplicate or unknown checks', async t => {
+  const allModes = ['ONLINE', 'ONSITE', 'PART_TIME', 'RIDE', 'DRIVING']
+  const h = harness(t, 'Tasks', { overrides: { taskTags: async () => [tag({ taskModes: allModes })] } }); await tick()
+  assert.deepEqual(snapshot(h.state.taskModes.map(mode => mode.code)), allModes)
+  assert.deepEqual(snapshot(h.state.tagModes(h.state.tags.value[0])), allModes)
+  h.state.editTag(h.state.tags.value[0]); await h.state.saveTag()
+  assert.deepEqual(called(h, 'updateTaskTag')[0].args[1].taskModes, allModes)
+  h.state.editTag(); Object.assign(h.state.tagForm, { name: '接送代驾', taskModes: ['RIDE', 'DRIVING'] }); await h.state.saveTag()
+  assert.deepEqual(called(h, 'createTaskTag')[0].args[0].taskModes, ['RIDE', 'DRIVING'])
+  for (const taskModes of [[...allModes, 'UNKNOWN'], [...allModes, 'RIDE'], ['DRIVING', 'DRIVING'], ['RIDE', 'UNKNOWN']]) {
+    h.state.editTag(tag({ taskModes })); await h.state.saveTag(); assert.match(h.state.tagError.value, /场景/)
+  }
+  assert.equal(called(h, 'updateTaskTag').length, 1)
+  fillTask(h); assert.deepEqual(snapshot(h.state.form.tagIds), [3])
+  h.state.form.taskMode = 'RIDE'; assert.deepEqual(snapshot(h.state.form.tagIds), [])
+  h.state.form.tagIds = [3]; await h.state.loadTags(); assert.deepEqual(snapshot(h.state.form.tagIds), [])
+})
+
 test('task yuan input produces bounded exact integer fen in both quote and create requests', async t => {
   const h = harness(t, 'Tasks'); await tick()
   for (const priceYuan of ['', '-0', '-1', '0', '0.00', '0.001', '0.009', '1.001', '1e2', '.5', '1.', 'Infinity', 'NaN', '1000000.01', '90071992547409.92']) {
@@ -329,7 +413,8 @@ test('order list labels new custom scenarios without exposing online placeholder
   for (const row of [{ ...base, taskMode: 'DELIVERY' }, { ...base }, { ...base, orderType: 'SEND', taskMode: 'ONLINE' }]) {
     assert.equal(h.state.isServiceTask(row), false); assert.equal(h.state.orderLocation(row), 'ONLINE_PLACEHOLDER'); assert.equal(h.state.orderDestination(row), 'ONLINE_PLACEHOLDER'); assert.equal(h.state.orderContact(row), '旧寄件人')
   }
-  assert.match(components.OrderList.template, /v-if="isServiceTask\(row\)"/)
+  assert.match(components.OrderList.template, /orderTypeLabel\(row\)/)
+  assert.match(components.OrderList.template, /v-if="isServiceTask\(row\) && !isTransportTask\(row\)"/)
   assert.match(components.OrderList.template, /v-if="!isServiceTask\(row\) && row.toContact"/)
 })
 

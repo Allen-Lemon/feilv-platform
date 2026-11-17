@@ -45,6 +45,15 @@ public interface OrderRepository extends JpaRepository<OrderMain, Long> {
             "and exists (select p.id from PayRecord p where p.orderId = o.id and p.channel = 'MOCK' and p.status = 'SUCCESS') order by o.id desc")
     List<OrderMain> findPaidGrabOrders(@Param("status") OrderStatus status, @Param("userId") long userId, Pageable pageable);
 
+    /** 接送/代驾在数据库先按实时授权过滤，再取大厅页，避免无权限订单挤占20条。 */
+    @Query("select o from OrderMain o where o.status = :status and o.userId <> :userId " +
+            "and exists (select p.id from PayRecord p where p.orderId = o.id and p.channel = 'MOCK' and p.status = 'SUCCESS') " +
+            "and (o.orderType <> 'CUSTOM' or not exists (select t.id from CustomTask t where t.orderId = o.id " +
+            "and ((t.taskMode = 'RIDE' and :rideEnabled = false) or (t.taskMode = 'DRIVING' and :drivingEnabled = false)))) order by o.id desc")
+    List<OrderMain> findEligiblePaidGrabOrders(@Param("status") OrderStatus status, @Param("userId") long userId,
+                                              @Param("rideEnabled") boolean rideEnabled, @Param("drivingEnabled") boolean drivingEnabled,
+                                              Pageable pageable);
+
     /** 经营看板：今日订单量 */
     long countByCreatedTimeAfter(LocalDateTime time);
 

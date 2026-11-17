@@ -38,19 +38,22 @@ public class CustomTaskService {
     public OrderVO publish(long userId, long operatorId, String source, PublishReq req) {
         User user = users.findByIdForUpdate(userId).orElseThrow(() -> BizException.of(404, "发布用户不存在"));
         if (user.getStatus() != 1 || !Set.of("USER", "RIDER").contains(user.getRole())) throw BizException.of(403, "此用户不可发布任务");
-        String title = TaskTagService.text(req.title(), 64, "任务标题");
-        String content = TaskTagService.text(req.content(), 1000, "任务内容");
+        if (req.taskMode() == null || !Set.of("ONLINE", "ONSITE", "PART_TIME", "RIDE", "DRIVING").contains(req.taskMode())) throw BizException.of(400, "请选择有效任务场景");
+        boolean ride = Set.of("RIDE", "DRIVING").contains(req.taskMode());
+        String title = ride ? ("RIDE".equals(req.taskMode()) ? "接送服务" : "代驾服务") : TaskTagService.text(req.title(), 64, "任务标题");
+        String content = ride ? optionalText(req.content(), 1000, "服务备注") : TaskTagService.text(req.content(), 1000, "任务内容");
+        if (ride && content.isEmpty()) content = title + "，请按约定时间到起始地点提供服务。";
         banWords.checkGoods(title + " " + content);
-        if (req.taskMode() == null || !Set.of("ONLINE", "ONSITE", "PART_TIME").contains(req.taskMode())) throw BizException.of(400, "请选择有效任务场景");
         int price = price(req.priceFen());
         String contact = TaskTagService.text(req.contact(), 32, "联系人");
         String phone = phone(req.phone());
-        String location = optionalText(req.locationAddress(), 255, "服务地址");
-        String serviceTime = optionalText(req.serviceTime(), 100, "工作时间");
-        if (!"ONLINE".equals(req.taskMode()) && location.isBlank()) throw BizException.of(400, "上门或兼职任务必须填写服务地址");
-        if ("PART_TIME".equals(req.taskMode()) && serviceTime.isBlank()) throw BizException.of(400, "兼职任务必须填写工作时间");
+        String location = optionalText(req.locationAddress(), 255, ride ? "起始地址" : "服务地址");
+        String serviceTime = optionalText(req.serviceTime(), 100, ride ? "服务时间" : "工作时间");
+        if (!"ONLINE".equals(req.taskMode()) && location.isBlank()) throw BizException.of(400, ride ? "接送或代驾必须填写起始地址" : "上门或兼职任务必须填写服务地址");
+        if (("PART_TIME".equals(req.taskMode()) || ride) && serviceTime.isBlank()) throw BizException.of(400, ride ? "接送或代驾必须填写服务时间" : "兼职任务必须填写工作时间");
         if ("ONLINE".equals(req.taskMode())) { location = ""; serviceTime = ""; }
         List<Long> ids = req.tagIds() == null ? List.of() : req.tagIds();
+        if (ride && !ids.isEmpty()) throw BizException.of(400, "接送或代驾服务不支持标签");
         if (ids.size() > 5 || ids.stream().anyMatch(id -> id == null || id <= 0) || new HashSet<>(ids).size() != ids.size()) throw BizException.of(400, "请选择最多5个不同标签");
         List<TaskTag> chosen = new ArrayList<>();
         // 固定顺序锁定标签，与停用/改名互斥；发布保存当时的名称快照。

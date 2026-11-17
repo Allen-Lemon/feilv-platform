@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /** 真实鉴权、H2事务和JSON契约；仅本地内存数据库，不调用任何资金渠道。 */
-@SpringBootTest(properties = {
+@SpringBootTest(properties = {TestAuth.TEST_SECRET_PROPERTY,
         "spring.datasource.url=jdbc:h2:mem:complaint-http;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa", "spring.datasource.password=", "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect", "spring.jpa.hibernate.ddl-auto=create-drop",
@@ -240,7 +240,7 @@ class ComplaintHttpTest {
     private User user(String name, String role) {
         var user = new User(); user.setNickname(name); user.setRole(role); return users.saveAndFlush(user);
     }
-    private String token(User user) { return "Bearer " + JwtUtil.create(user.getId(), user.getRole()); }
+    private String token(User user) { return TestAuth.bearer(user); }
     private AdminMenu grant(String code, long roleId) {
         var menu = new AdminMenu(); menu.setCode(code); menu.setName(code); menu = menus.saveAndFlush(menu);
         var link = new AdminRoleMenu(); link.setRoleId(roleId); link.setMenuId(menu.getId()); roleMenus.saveAndFlush(link); return menu;

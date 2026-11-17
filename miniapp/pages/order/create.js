@@ -5,23 +5,25 @@ const draftState = require('../../utils/draft')
 const addresses = require('../../utils/address')
 const { amountFen, fenText } = require('../../utils/wallet')
 const goodsBudget = require('../../utils/goods-budget')
-const initial = type => type === 'CUSTOM'
-  ? { orderType: type, taskTitle: '', taskContent: '', taskTagIds: '', taskMode: 'ONSITE', contact: '', phone: '', locationAddress: '', serviceTime: '' }
+const initial = (type, transport = false) => type === 'CUSTOM'
+  ? { orderType: type, taskTitle: '', taskContent: '', taskTagIds: '', taskMode: transport ? 'RIDE' : 'ONSITE', contact: '', phone: '', locationAddress: '', serviceTime: '' }
   : { orderType: type, fromContact: '', fromPhone: '', fromAddress: '', fromLng: null, fromLat: null, toContact: '', toPhone: '', toAddress: '', toLng: null, toLat: null, goodsDesc: '', remark: '' }
-const deliveryOptions = ['SEND', 'BUY', 'ERRAND'].map(code => ({ code, label: fmt.types[code] }))
+const deliveryOptions = ['SEND', 'BUY'].map(code => ({ code, label: code === 'SEND' ? '飞毛腿' : fmt.types[code] }))
 const sceneOptions = [{ code: 'ONSITE', label: '上门服务', example: '日常清洁 / 物品整理' }, { code: 'PART_TIME', label: '兼职任务', example: '搬运协助 / 临时帮手' }, { code: 'ONLINE', label: '线上任务', example: '资料整理 / 信息录入' }]
-const legacyCustom = payload => payload.orderType === 'CUSTOM' && !['ONLINE', 'ONSITE', 'PART_TIME'].includes(payload.taskMode)
+const transportOptions = [{ code: 'RIDE', label: '接送', example: '从约定起点接送' }, { code: 'DRIVING', label: '代驾', example: '从约定起点提供代驾' }]
+const allScenes = sceneOptions.concat(transportOptions)
+const legacyCustom = payload => payload.orderType === 'CUSTOM' && !allScenes.some(s => s.code === payload.taskMode)
 definePage({
-  data: { form: initial('SEND'), typeText: '跑腿送', distanceKm: '', weightKg: '1', busy: false, quote: null,
+  data: { form: initial('SEND'), typeText: '飞毛腿', distanceKm: '', weightKg: '1', busy: false, quote: null,
     fromContactEditing: false, toContactEditing: false, moreVisible: false, restored: false,
-    goodsPlaceholder: '例如：文件一份、鲜花一束', goodsSuggestions: ['文件', '鲜花', '日用品'],
-    custom: false, taskPrice: '', goodsBudget: '', budgetRequired: false, deliveryOptions, sceneOptions, legacyDraft: false,
+    goodsPlaceholder: '例如：送文件、代取快递、代排队', goodsSuggestions: ['文件', '鲜花', '代取快递', '代排队', '代送资料'],
+    custom: false, transport: false, taskPrice: '', goodsBudget: '', budgetRequired: false, deliveryOptions, sceneOptions, legacyDraft: false,
     taskTags: [], tagsLoading: false, tagsLoaded: false, tagsError: '', selectedTagCount: 0,
     addressOptions: [], addressLoading: false, addressError: '', locationAddressId: null, locationAddressIndex: 0,
     fromAddressId: null, toAddressId: null, fromAddressIndex: 0, toAddressIndex: 0 },
   onLoad(q) {
-    const type = fmt.types[q.type] ? q.type : 'SEND'
-    this._type = type
+    const type = q.type === 'CUSTOM' ? 'CUSTOM' : q.type === 'BUY' ? 'BUY' : 'SEND'
+    this._transport = type === 'CUSTOM' && q.service === 'transport'
     this.setType(type)
     this._version = 0
     this._defaultRevision = session.revision()
@@ -29,17 +31,22 @@ definePage({
   },
   setType(type) {
     this._type = type
+    this._group = type === 'CUSTOM' ? this._transport ? 'TRANSPORT' : 'CUSTOM' : 'RUNNER'
     this._allTaskTags = []
-    this.setData({ form: initial(type), typeText: fmt.types[type], custom: type === 'CUSTOM', quote: null, taskPrice: '', goodsBudget: '', budgetRequired: false,
+    this.setData({ form: initial(type, this._transport), typeText: this._transport ? '滴滴接送' : type === 'SEND' ? '飞毛腿' : fmt.types[type],
+      custom: type === 'CUSTOM', transport: !!this._transport, sceneOptions: this._transport ? transportOptions : sceneOptions, quote: null, taskPrice: '', goodsBudget: '', budgetRequired: false,
       taskTags: [], tagsLoaded: false, tagsError: '', selectedTagCount: 0,
       distanceKm: '', weightKg: '1', moreVisible: false, restored: false, legacyDraft: false, fromContactEditing: false, toContactEditing: false,
       fromAddressId: null, toAddressId: null, fromAddressIndex: 0, toAddressIndex: 0, locationAddressId: null, locationAddressIndex: 0,
-      goodsPlaceholder: type === 'BUY' ? '需要买什么、数量多少？' : type === 'ERRAND' ? '需要代办什么事？请简要说明' : '例如：文件一份、鲜花一束',
-      goodsSuggestions: type === 'BUY' ? ['日用品', '食品饮料', '文具'] : type === 'ERRAND' ? ['代取快递', '代排队', '代送资料'] : ['文件', '鲜花', '日用品'] })
+      goodsPlaceholder: type === 'BUY' ? '需要买什么、数量多少？' : '例如：送文件、代取快递、代排队',
+      goodsSuggestions: type === 'BUY' ? ['日用品', '食品饮料', '文具'] : ['文件', '鲜花', '代取快递', '代排队', '代送资料'] })
   },
   typeChoice(e) {
-    const type = e.currentTarget.dataset.type
-    if (this._working || this.data.custom || !['SEND', 'BUY', 'ERRAND'].includes(type) || type === this._type) return
+    const choice = e.currentTarget.dataset.type
+    const type = choice === 'ERRAND' ? 'SEND' : choice
+    if (this._working || this.data.custom || !['SEND', 'BUY'].includes(type)) return
+    if (type === this._type) { if (type === 'SEND') this.safeSet({ goodsBudget: '' }); return }
+    this.persistDraft()
     this._version++; this._defaultApplied = false
     this.setType(type)
     this.restoreDraft(type)
@@ -47,44 +54,50 @@ definePage({
   },
   sceneChoice(e) {
     const mode = e.currentTarget.dataset.mode
-    if (this._working || !this.data.custom || !sceneOptions.some(s => s.code === mode) || mode === this.data.form.taskMode) return
-    // 场景变化清理不适用的地点和时间，联系人可继续核对修改。
-    this.safeSet({ 'form.taskMode': mode, 'form.locationAddress': '', 'form.serviceTime': '', locationAddressId: null, locationAddressIndex: 0 })
+    if (this._working || !this.data.custom || !this.data.sceneOptions.some(s => s.code === mode) || mode === this.data.form.taskMode) return
+    // 普通场景清理不适用地点/时间；接送和代驾均为单起点，可保留填写内容但必须重新报价。
+    this.safeSet(this.data.transport ? { 'form.taskMode': mode } : { 'form.taskMode': mode, 'form.locationAddress': '', 'form.serviceTime': '', locationAddressId: null, locationAddressIndex: 0 })
     this.filterTaskTags()
     this.invalidate()
     if (mode !== 'ONLINE') return this.loadAddresses()
   },
   restoreDraft(type) {
-    const draft = wx.getStorageSync('native_draft')
     const owner = wx.getStorageSync('feilv_user_id')
-    if (!session.token() || !draft || draft.owner !== owner || !draft.payload || draft.payload.orderType !== type) return
+    const draft = draftState.read(owner, this._group, type)
+    if (!session.token() || !draft || draft.owner !== owner || !draft.payload) return
+    const compatibleType = draft.payload.orderType === type || type === 'SEND' && draft.payload.orderType === 'ERRAND'
+    if (!compatibleType) return
     if (legacyCustom(draft.payload)) { this.safeSet({ legacyDraft: true }); return }
-    const form = initial(type)
+    const form = initial(type, this._transport)
     for (const key of Object.keys(form)) if (draft.payload[key] !== undefined) form[key] = draft.payload[key]
+    // 只将未创建历史代办表单带入合并入口；旧订单续办仍使用原始 ERRAND payload。
+    form.orderType = type
+    if (this.data.transport) { form.taskTitle = ''; form.taskTagIds = '' }
     if (type === 'CUSTOM' && form.taskMode === 'ONLINE') { form.locationAddress = ''; form.serviceTime = '' }
-    if (type !== 'CUSTOM' && (!Number.isFinite(Number(draft.payload.distanceM)) || Number(draft.payload.distanceM) <= 0)) return
-    this.safeSet({ form, distanceKm: Number(draft.payload.distanceM) > 0 ? String(Number(draft.payload.distanceM) / 1000) : '', weightKg: String(draft.payload.weightKg || 1),
+    this.safeSet({ form, distanceKm: Number(draft.payload.distanceM) > 0 ? String(Number(draft.payload.distanceM) / 1000) : draft.distanceKm || '', weightKg: String(draft.payload.weightKg || draft.weightKg || 1),
       fromAddressId: draft.fromAddressId == null ? null : draft.fromAddressId, toAddressId: draft.toAddressId == null ? null : draft.toAddressId,
       locationAddressId: draft.locationAddressId == null ? null : draft.locationAddressId,
       taskPrice: type === 'CUSTOM' ? (Number.isSafeInteger(draft.payload.taskPriceFen) ? fenText(draft.payload.taskPriceFen) : draft.taskPrice || '') : '',
-      goodsBudget: type === 'BUY' && goodsBudget.valid(draft.payload.goodsBudgetFen) ? fenText(draft.payload.goodsBudgetFen) : '',
-      budgetRequired: type === 'BUY' && !goodsBudget.valid(draft.payload.goodsBudgetFen),
+      goodsBudget: type === 'BUY' ? goodsBudget.valid(draft.payload.goodsBudgetFen) ? fenText(draft.payload.goodsBudgetFen) : draft.goodsBudget || '' : '',
+      budgetRequired: type === 'BUY' && !goodsBudget.valid(draft.payload.goodsBudgetFen) && !draft.goodsBudget,
       restored: true, selectedTagCount: 0 })
     if (type === 'CUSTOM' && this.data.tagsLoaded) this.filterTaskTags()
   },
-  persistCustomDraft() {
-    if (!this.data.custom || !session.token() || this._sessionRevision !== session.revision()) return
+  persistDraft() {
+    if (!session.token() || this._sessionRevision !== session.revision()) return
     const owner = wx.getStorageSync('feilv_user_id')
     const previous = wx.getStorageSync('native_draft')
     const pending = wx.getStorageSync('native_pending_order')
-    // 编辑保存不能覆盖任何已创建或结果未知订单，也不能破坏另一类型的草稿。
-    if (previous && previous.owner === owner && (draftState.matches(pending, owner, previous.savedAt) || (!previous.payload || previous.payload.orderType !== 'CUSTOM'))) return
-    const payload = Object.assign({}, this.data.form)
-    wx.setStorageSync('native_draft', { owner, savedAt: draftState.timestamp(), payload, quote: null,
-      taskPrice: this.data.taskPrice, locationAddressId: this.data.locationAddressId })
+    // pending 保留自己的子槽和活动身份；其他子类/服务组仍可保存未发布编辑内容。
+    const pendingWork = previous && previous.owner === owner && draftState.matches(pending, owner, previous.savedAt)
+    if (pendingWork && draftState.slot(previous.payload) === draftState.slot(this.data.form)) return
+    const saved = { owner, savedAt: draftState.timestamp(), payload: Object.assign({}, this.data.form), quote: null,
+      taskPrice: this.data.taskPrice, goodsBudget: this.data.goodsBudget, distanceKm: this.data.distanceKm, weightKg: this.data.weightKg,
+      locationAddressId: this.data.locationAddressId, fromAddressId: this.data.fromAddressId, toAddressId: this.data.toAddressId }
+    draftState.save(saved, !pendingWork && (!previous || previous.owner !== owner || draftState.group(previous.payload) === this._group))
   },
   async loadTaskTags() {
-    if (!this.data.custom || !session.token()) return
+    if (!this.data.custom || this.data.transport || !session.token()) return
     return this.run('tagsLoading', api => this.fetchTaskTags(api))
   },
   async fetchTaskTags(api) {
@@ -95,8 +108,8 @@ definePage({
       if (!Array.isArray(list)) throw new Error('任务标签返回异常，请重试')
       // taskModes 必须由后端明确分类；旧空分类、未知分类和停用标签不猜测归属。
       this._allTaskTags = list.filter(t => t && Number.isSafeInteger(t.id) && t.id > 0 && typeof t.name === 'string' && t.name.trim()
-        && (t.enabled === true || t.enabled === 1) && Array.isArray(t.taskModes) && t.taskModes.length > 0 && t.taskModes.length <= 3
-        && new Set(t.taskModes).size === t.taskModes.length && t.taskModes.every(mode => sceneOptions.some(s => s.code === mode)))
+        && (t.enabled === true || t.enabled === 1) && Array.isArray(t.taskModes) && t.taskModes.length > 0 && t.taskModes.length <= 5
+        && new Set(t.taskModes).size === t.taskModes.length && t.taskModes.every(mode => allScenes.some(s => s.code === mode)))
         .sort((a, b) => Number(a.sort || 0) - Number(b.sort || 0) || a.id - b.id)
         .map(t => ({ id: t.id, name: t.name, taskModes: t.taskModes.slice() }))
       this.safeSet({ tagsLoaded: true, tagsError: '' })
@@ -116,7 +129,7 @@ definePage({
     return ids.join(',') !== selected.join(',')
   },
   tagChoice(e) {
-    if (this._working || !this.data.custom || !this.data.tagsLoaded) return
+    if (this._working || !this.data.custom || this.data.transport || !this.data.tagsLoaded) return
     const id = Number(e.currentTarget.dataset.id)
     const chosen = this.data.taskTags.find(t => t.id === id)
     if (!chosen) return
@@ -150,7 +163,7 @@ definePage({
     if (this._working) { this._showAfterRun = true; return }
     const revision = session.revision()
     if (!this.data.custom || this.data.form.taskMode !== 'ONLINE') await this.loadAddresses()
-    if (revision === session.revision() && this.data.custom && !this._dead && this._visible) return this.loadTaskTags()
+    if (revision === session.revision() && this.data.custom && !this.data.transport && !this._dead && this._visible) return this.loadTaskTags()
   },
   loadAddresses() {
     if (!session.token()) return
@@ -228,7 +241,7 @@ definePage({
       [side + 'ContactEditing']: !value.contact || !fmt.mobile(value.phone) })
     this.invalidate()
   },
-  invalidate() { this._version++; this.setData({ quote: null }); this._quotedPayload = null; this.persistCustomDraft() },
+  invalidate() { this._version++; this.setData({ quote: null }); this._quotedPayload = null; this.persistDraft() },
   input(e) {
     const field = e.currentTarget.dataset.field
     if (this._working || !['fromContact', 'fromPhone', 'toContact', 'toPhone', 'goodsDesc', 'remark', 'taskTitle', 'taskContent', 'contact', 'phone', 'serviceTime'].includes(field)) return
@@ -254,23 +267,29 @@ definePage({
     if (data.orderType === 'CUSTOM') {
       data.taskTitle = String(data.taskTitle || '').trim()
       data.taskContent = String(data.taskContent || '').trim()
-      if (!data.taskTitle || data.taskTitle.length > 64) throw new Error('任务标题请填写1至64字')
-      if (!data.taskContent || data.taskContent.length > 1000) throw new Error('任务内容请填写1至1000字')
-      if (!this.data.tagsLoaded || this.data.tagsError) throw new Error('请先重试读取任务标签')
-      const ids = String(data.taskTagIds || '').split(',').filter(Boolean).map(Number)
-      if (ids.length > 5 || new Set(ids).size !== ids.length || ids.some(id => !this.data.taskTags.some(t => t.id === id && t.taskModes.includes(data.taskMode)))) throw new Error('任务标签已变化，请重新选择')
-      data.taskTagIds = ids.sort((a, b) => a - b).join(',')
-      if (!sceneOptions.some(s => s.code === data.taskMode)) throw new Error('请选择有效任务场景')
+      if (!this.data.sceneOptions.some(s => s.code === data.taskMode)) throw new Error('请选择有效任务场景')
+      if (this.data.transport) {
+        data.taskTitle = ''; data.taskTagIds = ''
+        if (data.taskContent.length > 1000) throw new Error('备注最多1000字')
+      } else {
+        if (!data.taskTitle || data.taskTitle.length > 64) throw new Error('任务标题请填写1至64字')
+        if (!data.taskContent || data.taskContent.length > 1000) throw new Error('任务内容请填写1至1000字')
+        if (!this.data.tagsLoaded || this.data.tagsError) throw new Error('请先重试读取任务标签')
+        const ids = String(data.taskTagIds || '').split(',').filter(Boolean).map(Number)
+        if (ids.length > 5 || new Set(ids).size !== ids.length || ids.some(id => !this.data.taskTags.some(t => t.id === id && t.taskModes.includes(data.taskMode)))) throw new Error('任务标签已变化，请重新选择')
+        data.taskTagIds = ids.sort((a, b) => a - b).join(',')
+      }
       data.taskPriceFen = amountFen(this.data.taskPrice)
       ;['contact', 'phone', 'locationAddress', 'serviceTime'].forEach(k => { data[k] = String(data[k] || '').trim() })
       if (!data.contact || data.contact.length > 30 || !fmt.mobile(data.phone)) throw new Error('请填写1至30字联系人及11位手机号')
       if (data.taskMode === 'ONLINE') { data.locationAddress = ''; data.serviceTime = '' }
       else if (!data.locationAddress || data.locationAddress.length > 255) throw new Error('请从地址簿选择一个有效服务地点（最多255字）')
-      if (data.serviceTime.length > 100 || data.taskMode === 'PART_TIME' && !data.serviceTime) throw new Error('兼职必须填写工作时间；时间说明最多100字')
+      if (data.serviceTime.length > 100 || (data.taskMode === 'PART_TIME' || this.data.transport) && !data.serviceTime) throw new Error(this.data.transport ? '请填写服务时间，最多100字' : '兼职必须填写工作时间；时间说明最多100字')
       // 仅保留服务契约字段，绝不携带旧配送地址、重量或距离。
       return { orderType: 'CUSTOM', taskTitle: data.taskTitle, taskContent: data.taskContent, taskTagIds: data.taskTagIds,
         taskMode: data.taskMode, taskPriceFen: data.taskPriceFen, contact: data.contact, phone: data.phone, locationAddress: data.locationAddress, serviceTime: data.serviceTime }
     }
+    data.orderType = this._type === 'BUY' ? 'BUY' : 'SEND'
     ;['fromContact', 'fromPhone', 'fromAddress', 'toContact', 'toPhone', 'toAddress', 'goodsDesc', 'remark'].forEach(k => { data[k] = data[k].trim() })
     if (!data.fromContact || !data.toContact || !fmt.mobile(data.fromPhone) || !fmt.mobile(data.toPhone) || !data.fromAddress || !data.toAddress) throw new Error('请完整填写取送联系人、11位手机号与地址')
     if (data.fromAddress.length > 255 || data.toAddress.length > 255) throw new Error('完整地址不能超过255个字符，请修改地址簿')
@@ -306,7 +325,7 @@ definePage({
     const saved = { payload: data, quote: reuse ? previous.quote : null, owner, savedAt: reuse ? previous.savedAt : draftState.timestamp(),
       fromAddressId: this.data.fromAddressId, toAddressId: this.data.toAddressId, locationAddressId: this.data.locationAddressId,
       tagNames: this.data.custom ? this.data.taskTags.filter(t => t.selected).map(t => t.name) : [] }
-    wx.setStorageSync('native_draft', saved)
+    draftState.save(saved)
     return this.run('busy', async (api) => {
       const version = this._version
       const active = () => !this._dead && this._visible && version === this._version && draftState.current(owner, saved.savedAt)
@@ -317,7 +336,7 @@ definePage({
       if (!result || !Number.isSafeInteger(result.totalFen) || result.totalFen < 0 || !Array.isArray(result.items)) throw new Error('计价结果异常，请重试；未创建任务')
       if (this.data.custom && (result.totalFen !== data.taskPriceFen || !fmt.validShares(result, result.totalFen))) throw new Error('任务总价或分成响应异常，请重试；未创建任务')
       const quote = fmt.quote(result)
-      wx.setStorageSync('native_draft', Object.assign({}, saved, { quote }))
+      draftState.save(Object.assign({}, saved, { quote }))
       this.safeSet({ quote })
       wx.navigateTo({ url: '/pages/order/confirm' })
     })

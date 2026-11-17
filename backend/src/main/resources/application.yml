@@ -25,7 +25,14 @@ spring:
     init:
       mode: always
       encoding: UTF-8
-      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql,classpath:db/migrations/20261113_wechat_config.sql,classpath:db/migrations/20261114_user_profile.sql,classpath:db/migrations/20261115_address_region.sql,classpath:db/migrations/20261115_custom_tasks.sql,classpath:db/migrations/20261115_wallet.sql,classpath:db/migrations/20261115_task_service_pricing.sql,classpath:db/migrations/20261115_phone_transfer.sql,classpath:db/migrations/20261116_buy_budget_task_tag_modes.sql,classpath:db/migrations/20261116_retire_admin_menus.sql
+      schema-locations: classpath:db/schema.sql,classpath:db/migrations/20261112_wechat_login.sql,classpath:db/migrations/20261113_wechat_config.sql,classpath:db/migrations/20261114_user_profile.sql,classpath:db/migrations/20261115_address_region.sql,classpath:db/migrations/20261115_custom_tasks.sql,classpath:db/migrations/20261115_wallet.sql,classpath:db/migrations/20261115_task_service_pricing.sql,classpath:db/migrations/20261115_phone_transfer.sql,classpath:db/migrations/20261116_buy_budget_task_tag_modes.sql,classpath:db/migrations/20261116_retire_admin_menus.sql,classpath:db/migrations/20261117_rider_service_capabilities.sql,classpath:db/migrations/20261117_dual_miniapp_identity.sql
+
+# JWT 签名与配置加密使用不同密钥；缺失/弱签名密钥由认证服务拒绝启动。
+security:
+  jwt-secret: ${JWT_SECRET:}
+auth:
+  # 仅显式local/development且非prod/production/docker可生效；不是生产短信服务。
+  demo-sms-enabled: ${AUTH_DEMO_SMS_ENABLED:false}
 
 # 调度参数（对应功能设计文档 8.2 调度引擎 / 详细设计 3.3 计价，全部可配置化）
 feilv:
@@ -39,6 +46,8 @@ feilv:
   wechat:
     app-id: ${WECHAT_APP_ID:}
     app-secret: ${WECHAT_APP_SECRET:}
+    rider-app-id: ${WECHAT_RIDER_APP_ID:}
+    rider-app-secret: ${WECHAT_RIDER_APP_SECRET:}
   dispatch:
     radius-km: 5                 # 候选推送半径
     order-grab-timeout-min: 10    # 待接单超时（分钟）

@@ -29,7 +29,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /** 真实鉴权/事务/H2与MockMvc集成；不使用远程数据库或微信接口。 */
-@SpringBootTest(properties = {
+@SpringBootTest(properties = {TestAuth.TEST_SECRET_PROPERTY,
         "spring.datasource.url=jdbc:h2:mem:admin-users-orders;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa", "spring.datasource.password=", "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect", "spring.jpa.hibernate.ddl-auto=create-drop",
@@ -41,6 +41,7 @@ class AdminUsersOrdersHttpTest {
     @Autowired ObjectMapper json;
     @SpyBean UserRepository users;
     @Autowired OrderRepository orders;
+    @SpyBean CustomTaskRepository tasks;
     @Autowired AdminAccountRepository accounts;
     @Autowired AdminRoleRepository roles;
     @Autowired AdminUserRoleRepository userRoles;
@@ -63,7 +64,7 @@ class AdminUsersOrdersHttpTest {
         role = new AdminRole(); role.setCode("OPERATOR"); role.setName("运营"); role = roles.saveAndFlush(role);
         AdminUserRole link = new AdminUserRole(); link.setUserId(admin.getId()); link.setRoleId(role.getId()); userRoles.saveAndFlush(link);
         usersMenu = grant("users"); grant("orders");
-        token = "Bearer " + JwtUtil.create(admin.getId(), "ADMIN");
+        token = "Bearer " + TestAuth.adminToken(admin.getId());
     }
 
     @Test
@@ -128,7 +129,7 @@ class AdminUsersOrdersHttpTest {
         assertEquals("userId=" + target.getId() + ", oldStatus=1, status=0", audit.get(0).getDetail());
         assertFalse(audit.get(0).getDetail().contains("138"));
         // 冻结前签发的JWT在后续请求也不可用（由实时拦截器保证）。
-        mvc.perform(get("/api/v1/user/me").header("Authorization", "Bearer " + JwtUtil.create(target.getId(), "RIDER")))
+        mvc.perform(get("/api/v1/user/me").header("Authorization", "Bearer " + TestAuth.riderToken(target.getId(), "RIDER")))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/admin/users/" + admin.getId()).header("Authorization", token)).andExpect(jsonPath("$.code").value(403));
         mvc.perform(post("/api/v1/admin/users/" + admin.getId() + "/status").header("Authorization", token)
@@ -162,7 +163,7 @@ class AdminUsersOrdersHttpTest {
     void realtimeMenuRoleAccountAndUserEnablementAndSuperAdmin() throws Exception {
         User customer = user("客户", "USER", null, 1);
         mvc.perform(get("/api/v1/admin/users")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/api/v1/admin/users").header("Authorization", "Bearer " + JwtUtil.create(customer.getId(), "USER")))
+        mvc.perform(get("/api/v1/admin/users").header("Authorization", "Bearer " + TestAuth.userToken(customer.getId(), "USER")))
                 .andExpect(status().isForbidden());
         usersMenu.setEnabled(0); menus.saveAndFlush(usersMenu);
         getUsers("", 403);
@@ -210,7 +211,7 @@ class AdminUsersOrdersHttpTest {
             if (!"owner".equals(component.getName())) assertTrue(row.has(component.getName()), component.getName());
         }
         assertFalse(row.has("owner"), "C端所有者布尔值无需增加到后台订单DTO");
-        assertEquals("WAIT_PAY", row.path("status").asText()); assertFalse(row.has("statusCode")); assertEquals(23, row.size()); assertEquals("DELIVERY", row.path("taskMode").asText());
+        assertEquals("WAIT_PAY", row.path("status").asText()); assertFalse(row.has("statusCode")); assertEquals(25, row.size()); assertEquals("DELIVERY", row.path("taskMode").asText());
         assertEquals(12345, row.path("goodsBudgetFen").asInt());
         assertTrue(rows.get(0).has("goodsBudgetFen")); assertTrue(rows.get(0).path("goodsBudgetFen").isNull());
         assertTrue(rows.get(2).has("goodsBudgetFen")); assertTrue(rows.get(2).path("goodsBudgetFen").isNull());
@@ -231,6 +232,62 @@ class AdminUsersOrdersHttpTest {
         }
         assertEquals(com.feilv.enums.OrderStatus.WAIT_PAY, orders.findById(first.getId()).orElseThrow().getStatus());
         assertEquals(0, logs.count());
+    }
+
+    @Test
+    void ordersIncludeBatchTaskLocationAndTimeSummariesWithoutPerRowLookupsOrContactLeaks() throws Exception {
+        User customer = user("服务发布者", "USER", "13800138003", 1);
+        var metadata = new java.util.LinkedHashMap<Long, CustomTask>();
+        for (String mode : List.of("ONSITE", "PART_TIME", "ONLINE", "RIDE", "DRIVING", "DELIVERY")) {
+            OrderMain order = order(customer.getId(), "SUMMARY-" + mode); order.setOrderType("CUSTOM");
+            order.setStatus(com.feilv.enums.OrderStatus.PICKING); orders.saveAndFlush(order);
+            CustomTask task = new CustomTask(); task.setOrderId(order.getId()); task.setUserId(customer.getId());
+            task.setTitle(mode + "标题"); task.setContent("不应出现在订单摘要的完整需求"); task.setTaskMode(mode);
+            task.setPublishSource("MINIAPP"); task.setCreatedBy(customer.getId()); task.setContact("摘要不应新增联系人"); task.setPhone("13800138003");
+            task.setLocationAddress("ONLINE".equals(mode) ? "" : "DELIVERY".equals(mode) ? null : mode + "地点");
+            task.setServiceTime("ONLINE".equals(mode) ? "" : "DELIVERY".equals(mode) ? null : mode + "时间");
+            metadata.put(order.getId(), tasks.saveAndFlush(task));
+        }
+        OrderMain missing = order(customer.getId(), "SUMMARY-MISSING"); missing.setOrderType("CUSTOM"); orders.saveAndFlush(missing);
+        order(customer.getId(), "SUMMARY-SEND");
+        em.clear(); clearInvocations(tasks, users);
+        JsonNode result = data(mvc.perform(get("/api/v1/admin/orders").header("Authorization", token))
+                .andExpect(jsonPath("$.code").value(0)).andReturn());
+        verify(tasks, times(1)).findByOrderIdIn(any()); verify(tasks, never()).findByOrderId(anyLong());
+        verify(users, times(1)).findAllById(any());
+        assertEquals(8, result.path("content").size());
+        for (JsonNode row : result.path("content")) {
+            assertEquals(25, row.size()); assertTrue(row.has("locationAddress")); assertTrue(row.has("serviceTime"));
+            assertFalse(row.has("phone")); assertFalse(row.has("contact")); assertFalse(row.has("content"));
+            long id = row.path("id").asLong(); CustomTask task = metadata.get(id);
+            if (task == null || "DELIVERY".equals(task.getTaskMode())) {
+                assertTrue(row.path("locationAddress").isNull()); assertTrue(row.path("serviceTime").isNull());
+                assertEquals("DELIVERY", row.path("taskMode").asText());
+            } else {
+                assertEquals(task.getLocationAddress(), row.path("locationAddress").asText());
+                assertEquals(task.getServiceTime(), row.path("serviceTime").asText());
+                assertEquals(task.getTaskMode(), row.path("taskMode").asText()); assertEquals("服务中", row.path("statusLabel").asText());
+            }
+        }
+        assertFalse(result.toString().contains("13800138003")); assertFalse(result.toString().contains("完整需求"));
+        assertEquals(19, com.feilv.dto.ApiDtos.OrderVO.class.getRecordComponents().length);
+    }
+
+    @Test
+    void adminOrderSummaryPreservesBothLegacyConstructorsAndFactory() {
+        var original = new com.feilv.dto.ApiDtos.OrderVO(1L, "LEGACY", "BUY", "WAIT_PAY", "待支付", "起点", "终点", "文件",
+                500, 600, null, "1234", null, null, null, null, false, "DELIVERY", 12345);
+        var legacy22 = new com.feilv.dto.AdminOrderVO(1L, "LEGACY", "BUY", "WAIT_PAY", "待支付", "起点", "终点", "文件",
+                500, 600, null, "1234", null, null, null, null, 2L, "客户", "", "", false, "DELIVERY");
+        var legacy23 = new com.feilv.dto.AdminOrderVO(1L, "LEGACY", "BUY", "WAIT_PAY", "待支付", "起点", "终点", "文件",
+                500, 600, null, "1234", null, null, null, null, 2L, "客户", "", "", false, "DELIVERY", 12345);
+        var factory = com.feilv.dto.AdminOrderVO.from(original, 2L, null);
+        assertNull(legacy22.goodsBudgetFen()); assertEquals(12345, legacy23.goodsBudgetFen()); assertEquals(12345, factory.goodsBudgetFen());
+        for (var row : List.of(legacy22, legacy23, factory)) {
+            assertNull(row.locationAddress()); assertNull(row.serviceTime()); assertEquals("DELIVERY", row.taskMode());
+        }
+        var components = com.feilv.dto.AdminOrderVO.class.getRecordComponents();
+        assertEquals(25, components.length); assertEquals("locationAddress", components[23].getName()); assertEquals("serviceTime", components[24].getName());
     }
 
     @Test

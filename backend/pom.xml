@@ -48,7 +48,7 @@
       <artifactId>mysql-connector-j</artifactId>
       <scope>runtime</scope>
     </dependency>
-    <!-- H2 演示环境：无 MySQL 时使用 spring.profiles.active=h2 -->
+    <!-- 隔离测试/冒烟显式配置H2；仓库没有可直接启动的h2 profile。 -->
     <dependency>
       <groupId>com.h2database</groupId>
       <artifactId>h2</artifactId>

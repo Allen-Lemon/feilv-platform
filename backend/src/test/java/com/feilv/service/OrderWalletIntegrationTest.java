@@ -29,7 +29,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties = {"spring.datasource.url=jdbc:h2:mem:wallet-order-integration;DB_CLOSE_DELAY=-1", "spring.datasource.username=sa", "spring.datasource.password=",
+@SpringBootTest(properties = {com.feilv.controller.TestAuth.TEST_SECRET_PROPERTY,"spring.datasource.url=jdbc:h2:mem:wallet-order-integration;DB_CLOSE_DELAY=-1", "spring.datasource.username=sa", "spring.datasource.password=",
         "spring.datasource.driver-class-name=org.h2.Driver", "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect", "spring.jpa.hibernate.ddl-auto=create-drop", "spring.sql.init.mode=never"})
 @AutoConfigureMockMvc
 class OrderWalletIntegrationTest {
@@ -83,7 +83,7 @@ class OrderWalletIntegrationTest {
         User admin = new User(); admin.setRole("ADMIN"); admin.setNickname("后台完成"); admin = users.saveAndFlush(admin);
         Fixture forced = fixture(OrderStatus.DELIVERED, true);
         mvc.perform(post("/api/v1/admin/orders/" + forced.order.getId() + "/complete")
-                        .header("Authorization", "Bearer " + JwtUtil.create(admin.getId(), "ADMIN"))
+                        .header("Authorization", "Bearer " + com.feilv.controller.TestAuth.adminToken(admin.getId()))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"后台核实完成\"}"))
                 .andExpect(jsonPath("$.code").value(0));
         assertEquals(700, accounts.findById(forced.riderUser.getId()).orElseThrow().getAvailableFen());

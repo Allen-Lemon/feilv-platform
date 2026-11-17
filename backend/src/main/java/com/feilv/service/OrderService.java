@@ -310,6 +310,12 @@ public class OrderService {
     public OrderVO toVO(OrderMain o) { return toVO(o, serviceTaskMode(o)); }
 
     public OrderVO toVO(OrderMain o, String taskMode) {
+        return toVO(o, taskMode, com.feilv.common.UserContext.get() != null && o.getUserId() != null
+                && o.getUserId().equals(com.feilv.common.UserContext.get().id()));
+    }
+
+    /** Rider read routes must explicitly suppress owner capabilities, including historical self-orders. */
+    OrderVO toVO(OrderMain o, String taskMode, boolean owner) {
         return new OrderVO(o.getId(), o.getOrderNo(), o.getOrderType(),
                 o.getStatus().name(), statusLabel(o.getStatus(), taskMode),
                 o.getFromAddress(), o.getToAddress(),
@@ -319,7 +325,6 @@ public class OrderService {
                 o.getAcceptedTime() == null ? null : o.getAcceptedTime().toString(),
                 o.getDeliveredTime() == null ? null : o.getDeliveredTime().toString(),
                 o.getFinishTime() == null ? null : o.getFinishTime().toString(),
-                com.feilv.common.UserContext.get() != null && o.getUserId() != null
-                        && o.getUserId().equals(com.feilv.common.UserContext.get().id()), taskMode, o.getGoodsBudgetFen());
+                owner, taskMode, o.getGoodsBudgetFen());
     }
 }

@@ -3,13 +3,38 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
-const native = path.resolve(__dirname, '..')
+const { projectOptions, inside } = require('./native-project.cjs')
+const { root: native, client, pages: expectedPages, tabs: expectedTabs, flags } = projectOptions()
+const manifest = JSON.parse(fs.readFileSync(path.join(native, 'app.json'), 'utf8'))
+const registeredPages = new Set(manifest.pages)
+const tabPages = new Set(((manifest.tabBar || {}).list || []).map(tab => tab.pagePath))
 const tests = []
-const test = (name, fn) => tests.push({ name, fn })
+const inventory = []
+let activeEnvironments = []
+function register(suite, name, fn) {
+  inventory.push({ suite, name })
+  if (suite === 'COMMON' || suite === client) tests.push({ name, fn, suite })
+}
+const commonTest = (name, fn) => register('COMMON', name, fn)
+const userTest = (name, fn) => register('USER', name, fn)
+const riderTest = (name, fn) => register('RIDER', name, fn)
+const homeRoute = client === 'RIDER' ? 'pages/rider/workbench' : 'pages/index/index'
 const flush = () => new Promise(resolve => setImmediate(resolve))
 function environment(overrides = {}) {
   const storage = new Map()
-  const calls = { requests: [], uploads: [], toast: [], navigation: [], locations: 0 }
+  const calls = { requests: [], uploads: [], toast: [], navigation: [], locations: 0, navigationErrors: [] }
+  activeEnvironments.push(calls)
+  function navigate(method, value) {
+    const route = String(value && value.url || '').replace(/^\//, '').split('?')[0]
+    let error
+    if (!registeredPages.has(route)) error = method + ' targets unregistered page: ' + route
+    else if (method === 'switchTab' && !tabPages.has(route)) error = 'switchTab requires registered tab: ' + route
+    else if ((method === 'navigateTo' || method === 'redirectTo') && tabPages.has(route)) error = method + ' cannot target tab: ' + route
+    if (error) { calls.navigationErrors.push(error); assert.fail(error) }
+    calls.navigation.push(Object.assign({}, value, { method }))
+    if (value.success) value.success({})
+    if (value.complete) value.complete({})
+  }
   const timers = new Map()
   let timerId = 0
   let definition
@@ -21,8 +46,10 @@ function environment(overrides = {}) {
     getFileInfo(options) { options.success({ size: 1024 }) },
     getImageInfo(options) { options.success({ type: 'jpeg' }) },
     showToast(value) { calls.toast.push(value.title) },
-    navigateTo(value) { calls.navigation.push(value); if (value.complete) value.complete() },
-    redirectTo(value) { calls.navigation.push(value) }, navigateBack() { calls.navigation.push({ back: true }) }, switchTab(value) { calls.navigation.push(value) },
+    navigateTo(value) { navigate('navigateTo', value) },
+    redirectTo(value) { navigate('redirectTo', value) }, navigateBack() { calls.navigation.push({ back: true, method: 'navigateBack' }) }, switchTab(value) { navigate('switchTab', value) },
+    reLaunch(value) { navigate('reLaunch', value) },
+    setClipboardData(value) { calls.clipboard = value.data; if (value.success) value.success({}) },
     showModal(options) { options.success({ confirm: true, cancel: false }) },
     getAccountInfoSync() { return { miniProgram: { envVersion: 'develop' } } },
     login(options) { options.success({ code: 'temporary-wx-code' }) },
@@ -30,12 +57,13 @@ function environment(overrides = {}) {
     getPrivacySetting(options) { options.success({ needAuthorization: false }) },
     openPrivacyContract(options) { options.success({}) },
     stopPullDownRefresh() {}, openSetting() {},
-    getLocation(options) { calls.locations++; options.success({ longitude: 108.123456, latitude: 28.234567, speed: 4 }) }
+    getLocation(options) { assert.equal(client, 'RIDER', 'USER cannot request location'); calls.locations++; options.success({ longitude: 108.123456, latitude: 28.234567, speed: 4 }) }
   }
   Object.assign(wx, overrides)
   const cache = new Map()
   function load(file) {
     const absolute = path.resolve(file)
+    assert.ok(inside(native, absolute), 'native modules cannot escape their selected root: ' + absolute)
     if (cache.has(absolute)) return cache.get(absolute).exports
     const module = { exports: {} }
     cache.set(absolute, module)
@@ -51,6 +79,7 @@ function environment(overrides = {}) {
     return module.exports
   }
   function page(relative, api) {
+    assert.ok(registeredPages.has(relative), client + ' test attempted unregistered page: ' + relative)
     if (api) {
       // 测试替身也实现会话作用域，防止用Mock绕开真实请求层的账号隔离。
       const forSession = revision => Object.fromEntries(Object.entries(api).map(([name, fn]) => [name, (...args) => {
@@ -79,11 +108,11 @@ function environment(overrides = {}) {
   }
   function authenticated(role = 'USER') { storage.set('feilv_token', 'token-1'); storage.set('feilv_user_id', 1); storage.set('feilv_role', role) }
   function app() { load(path.join(native, 'app.js')); return definition }
-  return { wx, storage, calls, timers, load, page, app, authenticated, setPages(value) { pages = value } }
+  return { wx, storage, calls, timers, load, page, app, authenticated, setPages(value) { value.forEach(p => assert.ok(registeredPages.has(p.route), 'Mock page stack contains unregistered route: ' + p.route)); pages = value } }
 }
 function event(field, value) { return { currentTarget: { dataset: { field } }, detail: { value } } }
 
-test('architecture: root App launches directly without framework or bundled runtime', () => {
+commonTest('architecture: root App launches directly without framework or bundled runtime', () => {
   const env = environment()
   const app = env.app()
   assert.equal(typeof app.onLaunch, 'function')
@@ -92,7 +121,7 @@ test('architecture: root App launches directly without framework or bundled runt
   assert.equal(env.calls.requests.length, 0)
   assert.equal(env.calls.locations, 0)
 })
-test('request: bearer, method helpers, valid Result and base URL', async () => {
+commonTest('request: bearer, method helpers, valid Result and base URL', async () => {
   const env = environment(); env.authenticated()
   const { request } = env.load(path.join(native, 'utils/request.js'))
   const promise = request.post('/api/v1/example', { agreed: true })
@@ -104,7 +133,7 @@ test('request: bearer, method helpers, valid Result and base URL', async () => {
   assert.equal((await promise).id, 8)
   for (const method of ['get', 'post', 'put', 'delete']) assert.equal(typeof request[method], 'function')
 })
-test('deployment: old localhost override cannot redirect requests from official HTTPS service', async () => {
+commonTest('deployment: old localhost override cannot redirect requests from official HTTPS service', async () => {
   const env = environment(); env.authenticated()
   env.storage.set('native_base_url', 'http://localhost:8080')
   const { request, baseURL, canOverrideBaseURL } = env.load(path.join(native, 'utils/request.js'))
@@ -115,7 +144,7 @@ test('deployment: old localhost override cannot redirect requests from official 
   env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: {} } })
   await pending
 })
-test('deployment: only explicitly enabled develop environment may override API origin', () => {
+commonTest('deployment: only explicitly enabled develop environment may override API origin', () => {
   for (const version of ['develop', 'trial', 'release']) {
     const env = environment({ getAccountInfoSync: () => ({ miniProgram: { envVersion: version } }) })
     const config = env.load(path.join(native, 'config.js'))
@@ -126,7 +155,7 @@ test('deployment: only explicitly enabled develop environment may override API o
     assert.equal(request.baseURL(), version === 'develop' ? 'http://localhost:8080' : 'https://xt.allms.cn')
   }
 })
-test('deployment: startup clears old service token, draft and override before first request', () => {
+commonTest('deployment: startup clears old service token, draft and override before first request', () => {
   const env = environment(); env.authenticated()
   env.storage.set('native_base_url', 'http://localhost:8080')
   env.storage.set('native_draft', { owner: 1 })
@@ -136,20 +165,20 @@ test('deployment: startup clears old service token, draft and override before fi
   for (const key of ['feilv_token', 'native_draft', 'native_pending_order', 'native_base_url']) assert.equal(env.storage.has(key), false)
   assert.equal(env.storage.get('native_effective_base_url'), 'https://xt.allms.cn')
 })
-test('deployment: current official service session survives subsequent startup', () => {
+commonTest('deployment: current official service session survives subsequent startup', () => {
   const env = environment(); env.authenticated()
   env.storage.set('native_effective_base_url', 'https://xt.allms.cn')
   const { initializeServerConfig } = env.load(path.join(native, 'utils/request.js'))
   initializeServerConfig()
   assert.equal(env.storage.get('feilv_token'), 'token-1')
 })
-test('deployment: unknown legacy session without service marker is cleared once', () => {
+commonTest('deployment: unknown legacy session without service marker is cleared once', () => {
   const env = environment(); env.authenticated()
   const { initializeServerConfig } = env.load(path.join(native, 'utils/request.js'))
   initializeServerConfig()
   assert.equal(env.storage.has('feilv_token'), false)
 })
-test('deployment: settings cannot save a different backend when release configuration is locked', async () => {
+commonTest('deployment: settings cannot save a different backend when release configuration is locked', async () => {
   const env = environment(); const page = env.page('pages/settings/settings')
   page.onLoad({}); page.onShow()
   assert.equal(page.data.editable, false)
@@ -158,7 +187,7 @@ test('deployment: settings cannot save a different backend when release configur
   assert.equal(env.storage.has('native_base_url'), false)
   assert.equal(env.calls.requests.length, 0)
 })
-test('request: HTTP failures, business failures, invalid body and network errors reject', async () => {
+commonTest('request: HTTP failures, business failures, invalid body and network errors reject', async () => {
   for (const response of [
     { statusCode: 500, data: { code: 0, msg: 'HTTP error' } },
     { statusCode: 403, data: { code: 403, msg: 'forbidden' } },
@@ -172,7 +201,7 @@ test('request: HTTP failures, business failures, invalid body and network errors
   const env = environment(); const { request } = env.load(path.join(native, 'utils/request.js'))
   const p = request.get('/test'); env.calls.requests[0].fail({ errMsg: 'timeout' }); await assert.rejects(p, /网络异常/)
 })
-test('request: HTTP/business 401 clears credentials and sends protected user to login', async () => {
+commonTest('request: HTTP/business 401 clears credentials and sends protected user to login', async () => {
   for (const statusCode of [200, 401]) {
     const env = environment(); env.authenticated()
     const { request } = env.load(path.join(native, 'utils/request.js'))
@@ -182,7 +211,7 @@ test('request: HTTP/business 401 clears credentials and sends protected user to 
     assert.equal(env.calls.navigation.length, 1)
   }
 })
-test('request: stale responses after logout/account switch are discarded', async () => {
+commonTest('request: stale responses after logout/account switch are discarded', async () => {
   const env = environment(); env.authenticated()
   const { request } = env.load(path.join(native, 'utils/request.js'))
   const session = env.load(path.join(native, 'utils/session.js'))
@@ -190,7 +219,7 @@ test('request: stale responses after logout/account switch are discarded', async
   env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: 'old account data' } })
   await assert.rejects(p, /账户状态已变化/)
 })
-test('login: agreement required; wx.login code contract, no mobile or client openid', async () => {
+commonTest('login: agreement required; wx.login code contract, no mobile or client openid', async () => {
   const env = environment()
   const page = env.page('pages/login/login')
   page.onLoad({}); page._visible = true
@@ -198,23 +227,23 @@ test('login: agreement required; wx.login code contract, no mobile or client ope
   page.consent({ detail: { value: ['yes'] } })
   const pending = page.wechat(); await flush()
   const req = env.calls.requests[0]
-  assert.ok(req.url.endsWith('/api/v1/auth/wechat-login'))
+  assert.ok(req.url.endsWith('/api/v1/auth/miniapps/' + client + '/login'))
   assert.equal(req.data.code, 'temporary-wx-code'); assert.equal(req.data.agreed, true)
   assert.equal('mobile' in req.data, false); assert.equal('openid' in req.data, false)
-  req.success({ statusCode: 200, data: { code: 0, data: { token: 'wx-token', userId: 9, role: 'USER', nickname: '微信用户' } } })
+  req.success({ statusCode: 200, data: { code: 0, data: { state: 'AUTHENTICATED', login: { token: 'wx-token', userId: 9, role: 'USER', nickname: '微信用户' } } } })
   await flush()
   env.calls.requests[1].success({ statusCode: 200, data: { code: 0, data: profileValue({ userId: 9, nickname: '微信用户' }) } })
   await pending
   assert.equal(env.storage.get('feilv_token'), 'wx-token'); assert.equal(env.storage.get('feilv_role'), 'USER')
 })
-test('login: returning WeChat rider keeps server role while admin response is rejected', async () => {
+commonTest('login: returning WeChat rider keeps server role while admin response is rejected', async () => {
   for (const role of ['RIDER', 'ADMIN']) {
     const env = environment()
     const page = env.page('pages/login/login')
     page.onLoad({}); page._visible = true
     page.consent({ detail: { value: ['yes'] } })
     const pending = page.wechat(); await flush()
-    env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: { token: 'wx-token', userId: 9, role, nickname: '用户' } } })
+    env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: { state: 'AUTHENTICATED', login: { token: 'wx-token', userId: 9, role, nickname: '用户' } } } })
     await flush()
     if (role === 'RIDER') env.calls.requests[1].success({ statusCode: 200, data: { code: 0, data: profileValue({ userId: 9, role }) } })
     await pending
@@ -222,7 +251,7 @@ test('login: returning WeChat rider keeps server role while admin response is re
     if (role === 'ADMIN') assert.equal(env.storage.has('feilv_token'), false)
   }
 })
-test('format: user OrderVO uses status, rider-only statusCode never controls user actions', () => {
+commonTest('format: user OrderVO uses status, rider-only statusCode never controls user actions', () => {
   const env = environment(); const fmt = env.load(path.join(native, 'utils/format.js'))
   assert.equal(fmt.order({ status: 'DELIVERED', statusCode: 'WAIT_PAY' }).canConfirm, true)
   assert.equal(fmt.order({ status: 'DELIVERED' }).canPay, false)
@@ -231,7 +260,7 @@ test('format: user OrderVO uses status, rider-only statusCode never controls use
   assert.equal(fmt.order({ status: 'DELIVERING' }).canCancel, false)
   assert.equal(fmt.money(1099), '10.99')
 })
-test('address: select event returns whitelisted data and native create populates selected side', () => {
+userTest('address: select event returns whitelisted data and native create populates selected side', () => {
   const env = environment()
   const address = env.page('pages/address/address', {})
   address.onLoad({ select: '1' })
@@ -247,14 +276,14 @@ test('address: select event returns whitelisted data and native create populates
   assert.equal(create.data.form.toContact, '王先生'); assert.equal(create.data.form.toAddress, '南门 一号楼'); assert.equal(create.data.form.toLng, 108)
   assert.equal(create.data.form.fromContact, '')
 })
-test('address: default uses existing PUT contract with isDefault=1', async () => {
+userTest('address: default uses existing PUT contract with isDefault=1', async () => {
   const env = environment(); let submitted
   const page = env.page('pages/address/address', { async updateAddress(id, data) { submitted = { id, data } }, async addressList() { return [] } })
   page.onLoad({}); page.data.list = [{ id: 3, contact: '张', phone: '13800000000', address: '街道', isDefault: 0 }]
   await page.setDefault({ currentTarget: { dataset: { id: 3 } } })
   assert.equal(submitted.id, 3); assert.equal(submitted.data.isDefault, 1)
 })
-test('address: manual address edits clear old coordinates instead of reusing another location', () => {
+userTest('address: manual address edits clear old coordinates instead of reusing another location', () => {
   const env = environment(); const page = env.page('pages/address/address', {})
   page.onLoad({})
   Object.assign(page.data.form, { address: '旧地址', poiName: '旧地点', lng: 108, lat: 28 })
@@ -266,17 +295,17 @@ test('address: manual address edits clear old coordinates instead of reusing ano
   page.input(event('poiName', '新地点'))
   assert.equal(page.data.form.lng, null); assert.equal(page.data.form.lat, null)
 })
-test('rider: refuses blank pickup code and submits exact user input, not fabricated code', async () => {
+riderTest('rider: refuses blank pickup code and submits exact user input, not fabricated code', async () => {
   const env = environment(); env.authenticated('RIDER'); const submitted = []
   const page = env.page('pages/rider/workbench', { async pickup(id, code) { submitted.push({ id, code }) } })
-  page.onLoad({}); page.load = async () => {}
+  page.onLoad({}); page._visible = true; page._generation = 1; page.load = async () => {}
   await page.pickup({ currentTarget: { dataset: { id: 12 } } })
   assert.equal(submitted.length, 0)
   page.codeInput({ currentTarget: { dataset: { id: 12 } }, detail: { value: '012345' } })
   await page.pickup({ currentTarget: { dataset: { id: 12 } } })
   assert.equal(submitted.length, 1); assert.equal(submitted[0].code, '012345')
 })
-test('rider: real wx.getLocation coordinates and failures never produce random report', async () => {
+riderTest('rider: real wx.getLocation coordinates and failures never produce random report', async () => {
   const env = environment(); env.authenticated('RIDER'); const reports = []
   const page = env.page('pages/rider/workbench', { async reportTrack(value) { reports.push(value) } })
   page.onLoad({}); page._visible = true
@@ -286,17 +315,17 @@ test('rider: real wx.getLocation coordinates and failures never produce random r
   await page.report({ currentTarget: { dataset: { id: 4 } } })
   assert.equal(reports.length, 1); assert.equal(page.data.locationDenied, true)
 })
-test('lifecycle: polling timers are cleared on hide/unload and late request cannot restart them', async () => {
+userTest('lifecycle: polling timers are cleared on hide/unload and late request cannot restart them', async () => {
   const env = environment(); env.authenticated(); let complete
-  const page = env.page('pages/order/track', { orderTrack: () => new Promise(resolve => { complete = resolve }) })
-  page.onLoad({ id: '5' }); const pending = page.onShow()
+  const page = env.page('pages/order/track', { async orderDetail() { return { id: 5, orderType: 'SEND' } }, orderTrack: () => new Promise(resolve => { complete = resolve }) })
+  page.onLoad({ id: '5' }); const pending = page.onShow(); await flush()
   page.onHide(); complete([]); await pending
   assert.equal(env.timers.size, 0)
   page.later(() => {}, 5000); assert.equal(env.timers.size, 1)
   page.onUnload(); assert.equal(env.timers.size, 0)
   const before = page.data.lastUpdated; page.safeSet({ lastUpdated: 'late' }); assert.equal(page.data.lastUpdated, before)
 })
-test('lifecycle: SMS cooldown timer reclaimed and run lock suppresses duplicate submissions', async () => {
+commonTest('lifecycle: SMS cooldown timer reclaimed and run lock suppresses duplicate submissions', async () => {
   const env = environment(); const page = env.page('pages/login/login', {})
   page.onLoad({}); page._visible = true; page._smsUntil = Date.now() + 60000
   page.updateCooling(); assert.equal(env.timers.size, 1)
@@ -306,7 +335,7 @@ test('lifecycle: SMS cooldown timer reclaimed and run lock suppresses duplicate 
   await page.run('busy', async () => { calls++ }); assert.equal(calls, 1)
   finish(); await first; assert.equal(page.data.busy, false)
 })
-test('orders: known create success + pay failure retries same order without duplicate creation', async () => {
+userTest('orders: known create success + pay failure retries same order without duplicate creation', async () => {
   const env = environment(); env.authenticated()
   env.storage.set('native_draft', { owner: 1, savedAt: 123, payload: { orderType: 'SEND' }, quote: { totalText: '5.00' } })
   let creates = 0; let pays = 0
@@ -315,7 +344,7 @@ test('orders: known create success + pay failure retries same order without dupl
   await page.submit(); assert.equal(creates, 1); assert.equal(pays, 2)
   assert.equal(env.storage.has('native_draft'), false)
 })
-test('orders: uncertain create response blocks blind resubmit and persists across page reopen', async () => {
+userTest('orders: uncertain create response blocks blind resubmit and persists across page reopen', async () => {
   const env = environment(); env.authenticated()
   env.storage.set('native_draft', { owner: 1, savedAt: 123, payload: { orderType: 'SEND' }, quote: {} })
   let creates = 0
@@ -326,13 +355,13 @@ test('orders: uncertain create response blocks blind resubmit and persists acros
   const reopened = env.page('pages/order/confirm', api); reopened.onLoad({})
   assert.equal(reopened.data.uncertain, true); await reopened.submit(); assert.equal(creates, 1)
 })
-test('orders: paginated list advances on success and stops on last page', async () => {
+userTest('orders: paginated list advances on success and stops on last page', async () => {
   const env = environment(); env.authenticated(); const pages = []
   const page = env.page('pages/order/list', { async myOrders(n) { pages.push(n); return { content: [{ id: n + 1, status: 'WAIT_PAY' }], last: n === 1 } } })
   page.onLoad({}); await page.onShow(); await page.more(); await page.more()
   assert.equal(pages.join(','), '0,1'); assert.equal(page.data.list.length, 2); assert.equal(page.data.hasMore, false)
 })
-test('quote: changes invalidate old quote and validate contacts/distance/weight', () => {
+userTest('quote: changes invalidate old quote and validate contacts/distance/weight', () => {
   const env = environment(); const page = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) } })
   page.onLoad({ type: 'BUY' })
   assert.throws(() => page.buildPayload(), /联系人/)
@@ -342,7 +371,7 @@ test('quote: changes invalidate old quote and validate contacts/distance/weight'
   page.data.quote = { totalText: '1.00' }; page._quotedPayload = {}
   page.number(event('distanceKm', '3')); assert.equal(page.data.quote, null); assert.equal(page._quotedPayload, null)
 })
-test('orders: returning to unchanged create form preserves known and uncertain pending order', async () => {
+userTest('orders: returning to unchanged create form preserves known and uncertain pending order', async () => {
   for (const pendingFields of [{ id: 88 }, { uncertain: true }]) {
     const env = environment(); env.authenticated()
     const create = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) }, async quote() { return { totalFen: 500, items: [] } } })
@@ -361,7 +390,7 @@ test('orders: returning to unchanged create form preserves known and uncertain p
     assert.equal(confirm.data.uncertain, !!pendingFields.uncertain)
   }
 })
-test('orders: old payment callback cannot delete replacement draft and pending marker', async () => {
+userTest('orders: old payment callback cannot delete replacement draft and pending marker', async () => {
   const env = environment(); env.authenticated()
   env.storage.set('native_draft', { owner: 1, savedAt: 100, payload: { orderType: 'SEND' }, quote: {} })
   let paid
@@ -376,7 +405,7 @@ test('orders: old payment callback cannot delete replacement draft and pending m
   assert.equal(env.storage.get('native_pending_order').uncertain, true)
   assert.equal(env.calls.navigation.some(item => item.url && item.url.includes('detail')), false)
 })
-test('orders: old create success cannot overwrite a new draft pending marker', async () => {
+userTest('orders: old create success cannot overwrite a new draft pending marker', async () => {
   const env = environment(); env.authenticated()
   env.storage.set('native_draft', { owner: 1, savedAt: 100, payload: { orderType: 'SEND' }, quote: {} })
   let created; let pays = 0
@@ -390,7 +419,7 @@ test('orders: old create success cannot overwrite a new draft pending marker', a
   assert.equal(env.storage.get('native_pending_order').id, undefined)
   assert.equal(pays, 0)
 })
-test('orders: payment retry detects accepted order instead of paying again forever', async () => {
+userTest('orders: payment retry detects accepted order instead of paying again forever', async () => {
   const env = environment(); env.authenticated()
   env.storage.set('native_draft', { owner: 1, savedAt: 100, payload: { orderType: 'SEND' }, quote: {} })
   env.storage.set('native_pending_order', { owner: 1, savedAt: 100, id: 88 })
@@ -402,7 +431,7 @@ test('orders: payment retry detects accepted order instead of paying again forev
   assert.equal(env.storage.has('native_draft'), false)
   assert.ok(env.calls.navigation.some(item => item.url === '/pages/order/detail?id=88'))
 })
-test('session: order tab clears previous account addresses before failed replacement request', async () => {
+userTest('session: order tab clears previous account addresses before failed replacement request', async () => {
   const env = environment(); env.authenticated()
   const page = env.page('pages/order/list', { async myOrders() { return { content: [{ id: 1, status: 'WAIT_PAY', fromAddress: 'A的地址' }], last: true } } })
   page.onLoad({}); await page.onShow(); assert.equal(page.data.list.length, 1)
@@ -419,7 +448,7 @@ test('session: order tab clears previous account addresses before failed replace
   assert.equal(page.data.list.length, 0)
   assert.equal(page.data.loggedIn, true)
 })
-test('session: rider switch clears old pickup codes and credit details even when refresh fails', async () => {
+riderTest('session: rider switch clears old pickup codes and credit details even when refresh fails', async () => {
   const env = environment(); env.authenticated('RIDER')
   const page = env.page('pages/rider/workbench', { async riderMe() { throw new Error('retry later') } })
   page.onLoad({})
@@ -432,7 +461,7 @@ test('session: rider switch clears old pickup codes and credit details even when
   assert.equal(page.data.logs.length, 0); assert.equal(page.data.logsVisible, false)
   assert.equal(page.data.info, null); assert.equal(page.data.orders.length, 0); assert.equal(page.data.locationInfo, '')
 })
-test('session: late old-account response cannot repopulate page after onShow reset', async () => {
+userTest('session: late old-account response cannot repopulate page after onShow reset', async () => {
   const env = environment(); env.authenticated()
   let respond
   const page = env.page('pages/order/list', { myOrders: () => new Promise(resolve => { respond = resolve }) })
@@ -446,7 +475,7 @@ test('session: late old-account response cannot repopulate page after onShow res
   assert.equal(page.data.list.length, 0)
   assert.equal(env.timers.size > 0, true)
 })
-test('session: multi-step rider load cannot send follow-up request with another user token', async () => {
+riderTest('session: multi-step rider load cannot send follow-up request with another user token', async () => {
   const env = environment(); env.authenticated('RIDER')
   const page = env.page('pages/rider/workbench')
   page.onLoad({}); const pending = page.onShow()
@@ -469,34 +498,37 @@ async function readyProfile(env, api, from = 'my') {
   page.onLoad({ from }); await page.onShow()
   return page
 }
-test('login: WeChat keeps profile inline and GET uses the new authenticated session scope', async () => {
+commonTest('login: WeChat keeps profile inline and GET uses the new authenticated session scope', async () => {
   const env = environment()
-  env.setPages([{ route: 'pages/order/create' }, { route: 'pages/login/login' }])
+  env.setPages([{ route: client === 'USER' ? 'pages/order/create' : homeRoute }, { route: 'pages/login/login' }])
   const login = env.page('pages/login/login')
-  login.onLoad({}); login.onShow(); login.consent({ detail: { value: ['yes'] } })
+  login.onLoad({}); const showing = login.onShow()
+  assert.ok(env.calls.requests[0].url.endsWith('/auth/miniapps/' + client + '/options'))
+  okRequest(env.calls.requests[0], { smsLoginEnabled: false }); await showing
+  login.consent({ detail: { value: ['yes'] } })
   const session = env.load(path.join(native, 'utils/session.js')); const before = session.revision()
   const pending = login.wechat(); await flush()
-  env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: { token: 'new-wechat-token', userId: 1, role: 'USER', nickname: '平台昵称' } } })
+  env.calls.requests[1].success({ statusCode: 200, data: { code: 0, data: { state: 'AUTHENTICATED', login: { token: 'new-wechat-token', userId: 1, role: 'USER', nickname: '平台昵称' } } } })
   await flush()
   assert.equal(session.revision(), before + 1)
-  assert.equal(env.calls.requests.length, 2, 'me must use a new scope after session.save')
+  assert.equal(env.calls.requests.length, 3, 'me must use a new scope after session.save')
   assert.equal(env.calls.navigation.length, 0, 'profile must remain on the login page')
-  const req = env.calls.requests[1]
+  const req = env.calls.requests[2]
   assert.ok(req.url.endsWith('/user/me')); assert.equal(req.header.Authorization, 'Bearer new-wechat-token')
   req.success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await pending
   assert.equal(login.data.loaded, true); assert.equal(login.data.profileStage, true)
   login.browse(); assert.equal(env.calls.navigation.at(-1).back, true)
 })
-test('profile: complete returning WeChat profile continues; from=my always allows editing', async () => {
+commonTest('profile: complete returning WeChat profile continues; from=my always allows editing', async () => {
   for (const from of ['login', 'my']) {
-    const env = environment(); env.setPages([{ route: 'pages/order/create' }, { route: 'pages/profile/profile' }])
+    const env = environment(); env.setPages([{ route: client === 'USER' ? 'pages/order/create' : homeRoute }, { route: 'pages/profile/profile' }])
     const page = await readyProfile(env, { async me() { return profileValue({ mobile: '138****8000', mobileBound: true }) } }, from)
     assert.equal(env.calls.navigation.length, from === 'login' ? 1 : 0)
     assert.equal(page.data.mobile, '138****8000')
     assert.equal(page.data.mobileBound, true)
   }
 })
-test('profile: nickname cache update preserves drafts, pending order and session revision', async () => {
+commonTest('profile: nickname cache update preserves drafts, pending order and session revision', async () => {
   const env = environment()
   const page = await readyProfile(env, { async me() { return profileValue() }, async updateProfile(value) { return profileValue({ nickname: value }) } })
   const session = env.load(path.join(native, 'utils/session.js')); const revision = session.revision()
@@ -510,7 +542,7 @@ test('profile: nickname cache update preserves drafts, pending order and session
   assert.equal(session.updateNickname('过期', 1, revision - 1), false)
   assert.equal(env.storage.get('feilv_nickname'), '新昵称')
 })
-test('profile: nickname validates Unicode codepoints, trims and rejects empty, long or control input', async () => {
+commonTest('profile: nickname validates Unicode codepoints, trims and rejects empty, long or control input', async () => {
   const env = environment(); const submitted = []
   const page = await readyProfile(env, { async me() { return profileValue() }, async updateProfile(value) { submitted.push(value); return profileValue({ nickname: value }) } })
   for (const value of ['  ', 'a'.repeat(33), '昵称\n', 'ab', 'ab', '😀'.repeat(33)]) {
@@ -520,7 +552,7 @@ test('profile: nickname validates Unicode codepoints, trims and rejects empty, l
   page.input({ detail: { value: '  ' + '😀'.repeat(32) + '  ' } }); await page.save()
   assert.equal(Array.from(submitted[0]).length, 32)
 })
-test('profile: denial, cancellation and old encrypted response without code send nothing and keep login', async () => {
+commonTest('profile: denial, cancellation and old encrypted response without code send nothing and keep login', async () => {
   const env = environment(); let bindings = 0
   const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { bindings++ } })
   for (const detail of [
@@ -531,7 +563,7 @@ test('profile: denial, cancellation and old encrypted response without code send
   ]) { page.preparePhone(); await page.bindPhone({ detail }) }
   assert.equal(bindings, 0); assert.equal(env.storage.get('feilv_token'), 'token-1'); assert.equal(env.calls.navigation.length, 0)
 })
-test('profile: binding request sends only getPhoneNumber code; draft nickname remains unsaved', async () => {
+commonTest('profile: binding request sends only getPhoneNumber code; draft nickname remains unsaved', async () => {
   const env = environment(); env.authenticated()
   const page = env.page('pages/profile/profile'); page.onLoad({ from: 'my' }); const loading = page.onShow()
   env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await loading
@@ -548,7 +580,7 @@ test('profile: binding request sends only getPhoneNumber code; draft nickname re
   page.complete(); assert.equal(env.calls.navigation.length, 0, 'complete must not silently discard edits')
   for (const [key, value] of env.storage) { assert.equal(/mobile|phone/i.test(key), false); assert.notEqual(value, '13800000000') }
 })
-test('profile: nickname PUT contract is limited to nickname and masked server response is not cached', async () => {
+commonTest('profile: nickname PUT contract is limited to nickname and masked server response is not cached', async () => {
   const env = environment(); env.authenticated()
   const page = env.page('pages/profile/profile'); page.onLoad({ from: 'my' }); const loading = page.onShow()
   env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await loading
@@ -560,18 +592,18 @@ test('profile: nickname PUT contract is limited to nickname and masked server re
   page.preparePhone(); await page.bindPhone(phoneEvent('new-code')); assert.equal(env.calls.requests.length, 2)
   assert.equal(env.storage.get('feilv_nickname'), '保存名')
 })
-test('profile: skip returns prior business page or falls back to My without writes', async () => {
+commonTest('profile: skip returns prior business page or falls back to My without writes', async () => {
   for (const count of [1, 2]) {
     const env = environment(); env.setPages(Array.from({ length: count }, () => ({ route: 'pages/profile/profile' })))
     const page = await readyProfile(env, { async me() { return profileValue() } }, 'login')
     page.input({ detail: { value: '不保存' } }); page.leave(); page.leave()
     assert.equal(env.calls.navigation.length, 1)
     if (count === 2) assert.equal(env.calls.navigation[0].back, true)
-    else assert.equal(env.calls.navigation[0].url, '/pages/my/my')
+    else { assert.equal(env.calls.navigation[0].url, client === 'RIDER' ? '/pages/rider/workbench' : '/pages/my/my'); assert.equal(env.calls.navigation[0].method, 'switchTab') }
     assert.equal(env.storage.get('feilv_nickname'), '平台昵称')
   }
 })
-test('profile: repeat binding and consumed authorization code cannot send duplicate requests', async () => {
+commonTest('profile: repeat binding and consumed authorization code cannot send duplicate requests', async () => {
   const env = environment(); let complete; let calls = 0
   const page = await readyProfile(env, { async me() { return profileValue() }, bindWechatPhone() { calls++; return new Promise(resolve => { complete = resolve }) } })
   page.preparePhone(); const pending = page.bindPhone(phoneEvent('single-use-code'))
@@ -582,7 +614,7 @@ test('profile: repeat binding and consumed authorization code cannot send duplic
   complete(profileValue({ mobile: '138****8000', mobileBound: true })); await again
   page.preparePhone(); await page.bindPhone(phoneEvent('third-code')); assert.equal(calls, 2)
 })
-test('profile: binding conflict/network failure retains authenticated session and nickname draft', async () => {
+commonTest('profile: binding conflict/network failure retains authenticated session and nickname draft', async () => {
   for (const message of ['手机号已绑定其他账号', '网络异常']) {
     const env = environment()
     const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { throw new Error(message) } })
@@ -591,7 +623,7 @@ test('profile: binding conflict/network failure retains authenticated session an
     assert.equal(page.data.mobileBound, false); assert.equal(env.storage.get('feilv_token'), 'token-1'); assert.equal(env.calls.navigation.length, 0)
   }
 })
-test('profile: stale account me/save/phone responses never update cache, UI or navigation', async () => {
+commonTest('profile: stale account me/save/phone responses never update cache, UI or navigation', async () => {
   for (const operation of ['me', 'save', 'phone']) {
     const env = environment(); env.authenticated(); let respond
     const api = { async me() { return profileValue() }, updateProfile: () => new Promise(resolve => { respond = resolve }), bindWechatPhone: () => new Promise(resolve => { respond = resolve }) }
@@ -609,7 +641,7 @@ test('profile: stale account me/save/phone responses never update cache, UI or n
     assert.notEqual(page.data.nickname, 'A秘密昵称'); assert.equal(env.storage.get('feilv_nickname'), 'B昵称'); assert.equal(env.calls.navigation.length, 0)
   }
 })
-test('profile: late phone event after account change, hide or unload is discarded', async () => {
+commonTest('profile: late phone event after account change, hide or unload is discarded', async () => {
   for (const state of ['switch', 'hide', 'unload']) {
     const env = environment(); let calls = 0
     const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { calls++; return profileValue() } })
@@ -620,7 +652,7 @@ test('profile: late phone event after account change, hide or unload is discarde
     await page.bindPhone(phoneEvent('old-code')); assert.equal(calls, 0)
   }
 })
-test('profile: privacy agreement is separate, verified, and required before native phone intent', async () => {
+commonTest('profile: privacy agreement is separate, verified, and required before native phone intent', async () => {
   let needed = true; let opens = 0; let binds = 0
   const env = environment({ getPrivacySetting(options) { options.success({ needAuthorization: needed, privacyContractName: '隐私保护指引' }) }, openPrivacyContract(options) { opens++; options.success({}) } })
   const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { binds++; return profileValue() } })
@@ -631,7 +663,7 @@ test('profile: privacy agreement is separate, verified, and required before nati
   needed = false; await page.agreePrivacy(); assert.equal(page.data.privacyReady, true)
   page.preparePhone(); await page.bindPhone(phoneEvent('privacy-approved')); assert.equal(binds, 1)
 })
-test('profile: privacy query failure, old version and missing capabilities fail safely without logout', async () => {
+commonTest('profile: privacy query failure, old version and missing capabilities fail safely without logout', async () => {
   for (const override of [
     { getPrivacySetting(options) { options.fail({ errMsg: 'failed' }) } },
     { canIUse() { return false } },
@@ -648,7 +680,7 @@ test('profile: privacy query failure, old version and missing capabilities fail 
   const page = await readyProfile(env, { async me() { return profileValue() } })
   assert.equal(page.data.phoneSupported, true); assert.equal(page.data.privacyReady, true)
 })
-test('profile: late privacy callbacks cannot mutate hidden, unloaded or replacement-account page', async () => {
+commonTest('profile: late privacy callbacks cannot mutate hidden, unloaded or replacement-account page', async () => {
   for (const change of ['hide', 'unload', 'switch']) {
     let respond
     const env = environment({ getPrivacySetting(options) { respond = options } }); env.authenticated()
@@ -661,7 +693,7 @@ test('profile: late privacy callbacks cannot mutate hidden, unloaded or replacem
     assert.equal(page.data.privacyReady, false); assert.equal(env.calls.navigation.length, 0)
   }
 })
-test('profile: My entry and refresh preserve draft nickname without resetting revision', async () => {
+commonTest('profile: My entry and refresh preserve draft nickname without resetting revision', async () => {
   const env = environment(); env.authenticated(); const session = env.load(path.join(native, 'utils/session.js'))
   const page = env.page('pages/my/my', { async me() { return profileValue({ nickname: '服务端昵称', mobileBound: true, mobile: '138****8000' }) } })
   page.onLoad({}); env.storage.set('native_draft', { owner: 1 }); const revision = session.revision(); await page.onShow()
@@ -671,24 +703,27 @@ test('profile: My entry and refresh preserve draft nickname without resetting re
   const profile = await readyProfile(env, { async me() { return profileValue() } })
   profile.input({ detail: { value: '未保存编辑' } }); await profile.load(); assert.equal(profile.data.nickname, '未保存编辑')
 })
-test('login: SMS reads inline profile using the new authenticated session', async () => {
+commonTest('login: SMS reads inline profile using the new authenticated session', async () => {
   for (const count of [1, 2]) {
     const env = environment(); env.setPages(Array.from({ length: count }, () => ({ route: 'pages/login/login' })))
-    const page = env.page('pages/login/login'); page.onLoad({}); page.onShow()
+    const page = env.page('pages/login/login'); page.onLoad({}); const showing = page.onShow()
+    assert.equal(page.data.smsLoginEnabled, false)
+    await page.smsLogin(); assert.equal(env.calls.requests.length, 1, 'unknown capabilities must not submit SMS login')
+    okRequest(env.calls.requests[0], { smsLoginEnabled: true }); await showing
     page.consent({ detail: { value: ['yes'] } }); page.input(event('mobile', '13800000000')); page.input(event('code', '123456'))
-    const pending = page.smsLogin(); const req = env.calls.requests[0]
+    const pending = page.smsLogin(); const req = env.calls.requests[1]
     assert.ok(req.url.endsWith('/auth/login')); assert.equal(req.data.mobile, '13800000000'); assert.equal(req.data.code, '123456')
     req.success({ statusCode: 200, data: { code: 0, data: { token: 'sms-token', userId: 1, role: 'USER', nickname: '短信用户' } } }); await flush()
     assert.equal(env.storage.get('feilv_token'), 'sms-token')
     assert.equal(env.calls.navigation.length, 0)
-    assert.equal(env.calls.requests[1].header.Authorization, 'Bearer sms-token')
-    env.calls.requests[1].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await pending
+    assert.equal(env.calls.requests[2].header.Authorization, 'Bearer sms-token')
+    env.calls.requests[2].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await pending
     assert.equal(page.data.profileStage, true); assert.equal(page.data.loaded, true)
   }
 })
-test('profile: native privacy APIs never use getUserProfile or declare getPhoneNumber as requiredPrivateInfos', () => {
+commonTest('profile: native privacy APIs never use getUserProfile or declare getPhoneNumber as requiredPrivateInfos', () => {
   const app = JSON.parse(fs.readFileSync(path.join(native, 'app.json'), 'utf8'))
-  assert.ok(app.pages.includes('pages/profile/profile')); assert.equal(app.requiredPrivateInfos.includes('getPhoneNumber'), false)
+  assert.ok(app.pages.includes('pages/profile/profile')); assert.equal((app.requiredPrivateInfos || []).includes('getPhoneNumber'), false)
   const source = fs.readFileSync(path.join(native, 'utils/profile-page.js'), 'utf8')
   const template = fs.readFileSync(path.join(native, 'pages/profile/profile.wxml'), 'utf8')
   assert.equal(/wx\.(?:getUserProfile|login)\s*\(/.test(source), false)
@@ -702,7 +737,7 @@ function fillCreate(page) {
   if (page.data.form.orderType === 'BUY' && !page.data.goodsBudget) page.data.goodsBudget = '12.34'
   page._quotedPayload = page.buildPayload(); page.data.quote = { totalText: '5.00' }
 }
-test('avatar: multipart bearer upload parses string Result; API /api suffix and avatar origin resolve correctly', async () => {
+commonTest('avatar: multipart bearer upload parses string Result; API /api suffix and avatar origin resolve correctly', async () => {
   const env = environment(); env.authenticated()
   env.load(path.join(native, 'config.js')).BASE_URL = 'https://service.example/api/'
   const transport = env.load(path.join(native, 'utils/request.js'))
@@ -718,7 +753,7 @@ test('avatar: multipart bearer upload parses string Result; API /api suffix and 
   req.success({ statusCode: 200, data: JSON.stringify({ code: 0, data: profileValue({ avatarUrl: AVATAR }) }) })
   assert.equal((await pending).avatarUrl, AVATAR)
 })
-test('avatar: file validation rejects oversized, empty, unsupported and unreadable files before upload', async () => {
+commonTest('avatar: file validation rejects oversized, empty, unsupported and unreadable files before upload', async () => {
   for (const override of [
     { getFileInfo(o) { o.success({ size: 5 * 1024 * 1024 + 1 }) } },
     { getFileInfo(o) { o.success({ size: 0 }) } },
@@ -731,7 +766,7 @@ test('avatar: file validation rejects oversized, empty, unsupported and unreadab
     assert.equal(env.calls.uploads.length, 0); assert.equal(env.storage.get('feilv_token'), 'token-1')
   }
 })
-test('avatar: HTTP/business 401 clear session; other upload errors retain it', async () => {
+commonTest('avatar: HTTP/business 401 clear session; other upload errors retain it', async () => {
   for (const response of [
     { statusCode: 401, data: '{}' }, { statusCode: 200, data: '{"code":401}' },
     { statusCode: 413, data: '{"code":413,"msg":"too large"}' },
@@ -747,7 +782,7 @@ test('avatar: HTTP/business 401 clear session; other upload errors retain it', a
     assert.equal(env.calls.navigation.length, unauthorized ? 1 : 0)
   }
 })
-test('avatar: late success, 401 and failure from switched account cannot clear or overwrite new session', async () => {
+commonTest('avatar: late success, 401 and failure from switched account cannot clear or overwrite new session', async () => {
   for (const outcome of ['success', '401', 'fail']) {
     const env = environment(); env.authenticated()
     const pending = env.load(path.join(native, 'utils/api.js')).uploadAvatar('wxfile://tmp/file'); await flush()
@@ -759,7 +794,7 @@ test('avatar: late success, 401 and failure from switched account cannot clear o
     assert.equal(env.storage.get('feilv_token'), 'B-token'); assert.equal(env.storage.has('feilv_avatar_url'), false); assert.equal(env.calls.navigation.length, 0)
   }
 })
-test('avatar: account switch during file inspection prevents upload with either account token', async () => {
+commonTest('avatar: account switch during file inspection prevents upload with either account token', async () => {
   let inspect
   const env = environment({ getFileInfo(o) { inspect = o } }); env.authenticated()
   const api = env.load(path.join(native, 'utils/api.js')); const session = env.load(path.join(native, 'utils/session.js'))
@@ -769,7 +804,7 @@ test('avatar: account switch during file inspection prevents upload with either 
   await assert.rejects(scoped.uploadAvatar('wxfile://tmp/file'), e => e.silent === true)
   assert.equal(env.calls.uploads.length, 0)
 })
-test('profile: chooseAvatar is explicit; successful save persists only server path and preserves nickname draft', async () => {
+commonTest('profile: chooseAvatar is explicit; successful save persists only server path and preserves nickname draft', async () => {
   const env = environment(); let uploaded = 0
   const page = await readyProfile(env, { async me() { return profileValue() }, async uploadAvatar(p) { uploaded++; assert.equal(p, 'wxfile://tmp/avatar'); return profileValue({ avatarUrl: AVATAR }) } })
   page.chooseAvatar({ detail: { avatarUrl: 'ignored' } }); assert.equal(page.data.avatarDraft, '')
@@ -787,14 +822,14 @@ test('profile: chooseAvatar is explicit; successful save persists only server pa
   assert.equal(reopened.data.avatarUrl, 'https://xt.allms.cn' + AVATAR)
   session.clear(); assert.equal(env.storage.has('feilv_avatar_url'), false)
 })
-test('profile: failed avatar upload retains preview for retry without changing saved avatar', async () => {
+commonTest('profile: failed avatar upload retains preview for retry without changing saved avatar', async () => {
   const env = environment(); let attempts = 0
   const page = await readyProfile(env, { async me() { return profileValue({ avatarUrl: AVATAR }) }, async uploadAvatar() { if (++attempts === 1) throw new Error('上传失败'); return profileValue({ avatarUrl: AVATAR }) } })
   selectAvatar(page); await page.saveAvatar()
   assert.equal(page.data.avatarDraft, 'wxfile://tmp/avatar'); assert.equal(page.data.error, '上传失败'); assert.equal(env.storage.get('feilv_avatar_url'), AVATAR)
   await page.saveAvatar(); assert.equal(page.data.avatarDraft, ''); assert.equal(attempts, 2)
 })
-test('profile: late avatar events and upload results cannot cross accounts or hidden pages', async () => {
+commonTest('profile: late avatar events and upload results cannot cross accounts or hidden pages', async () => {
   for (const state of ['switch', 'hide', 'unload']) {
     const env = environment(); let resolve
     const page = await readyProfile(env, { async me() { return profileValue() }, uploadAvatar() { return new Promise(r => { resolve = r }) } })
@@ -806,16 +841,16 @@ test('profile: late avatar events and upload results cannot cross accounts or hi
     page.chooseAvatar({ detail: { avatarUrl: 'late-temp' } }); assert.notEqual(page.data.avatarDraft, 'late-temp')
   }
 })
-test('profile: complete requires loaded saved non-default nickname and bound phone but never requires avatar', async () => {
+commonTest('profile: complete requires loaded saved non-default nickname and bound phone but never requires avatar', async () => {
   const env = environment()
   const page = await readyProfile(env, { async me() { return profileValue({ nickname: '微信用户' }) }, async updateProfile(nickname) { return profileValue({ nickname }) }, async bindWechatPhone() { return profileValue({ nickname: '主动昵称', mobileBound: true }) } }, 'login')
   assert.equal(env.calls.navigation.length, 0); page.complete(); assert.equal(env.calls.navigation.length, 0)
   page.input({ detail: { value: '主动昵称' } }); page.complete(); assert.equal(env.calls.navigation.length, 0)
   await page.save(); page.complete(); assert.equal(env.calls.navigation.length, 0)
   page.preparePhone(); await page.bindPhone(phoneEvent('phone-code')); page.complete()
-  assert.equal(env.calls.navigation.at(-1).url, '/pages/my/my'); assert.equal(page.data.avatarUrl, '')
+  assert.equal(env.calls.navigation.at(-1).url, client === 'RIDER' ? '/pages/rider/workbench' : '/pages/my/my'); assert.equal(page.data.avatarUrl, '')
 })
-test('orders: create and confirm query real me, block incomplete profiles, retain drafts and allow retry after binding', async () => {
+userTest('orders: create and confirm query real me, block incomplete profiles, retain drafts and allow retry after binding', async () => {
   for (const route of ['create', 'confirm']) {
     for (const incomplete of [{ mobileBound: false }, { mobileBound: true, nickname: '' }, { mobileBound: true, nickname: '微信用户' }]) {
       const env = environment(); env.authenticated(); let bound = false; let reads = 0; let creates = 0
@@ -834,7 +869,7 @@ test('orders: create and confirm query real me, block incomplete profiles, retai
     }
   }
 })
-test('orders: me network failure and switched-account response never create, navigate or discard another draft', async () => {
+userTest('orders: me network failure and switched-account response never create, navigate or discard another draft', async () => {
   for (const route of ['create', 'confirm']) {
     for (const mode of ['failure', 'switch']) {
       const env = environment(); env.authenticated(); let respond; let creates = 0
@@ -853,7 +888,7 @@ test('orders: me network failure and switched-account response never create, nav
     }
   }
 })
-test('orders: backend 4091 redirects to profile with draft intact and no uncertain-create deadlock', async () => {
+userTest('orders: backend 4091 redirects to profile with draft intact and no uncertain-create deadlock', async () => {
   const env = environment(); env.authenticated()
   env.storage.set('native_draft', { owner: 1, savedAt: 12, payload: { orderType: 'SEND' }, quote: {} })
   const page = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async createOrder() { throw Object.assign(new Error('请绑定手机号'), { code: 4091 }) } })
@@ -861,7 +896,7 @@ test('orders: backend 4091 redirects to profile with draft intact and no uncerta
   assert.equal(page.data.uncertain, false); assert.equal(env.storage.has('native_pending_order'), false)
   assert.equal(env.storage.get('native_draft').savedAt, 12); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=order')
 })
-test('login: home order intent resumes after profile return without trapping browsing on cancellation', async () => {
+userTest('login: home order intent resumes after profile return without trapping browsing on cancellation', async () => {
   const env = environment(); const home = env.page('pages/index/index', {})
   home.onLoad({}); home.onShow(); home.create({ currentTarget: { dataset: { type: 'SEND' } } })
   assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
@@ -870,7 +905,7 @@ test('login: home order intent resumes after profile return without trapping bro
   home.onShow(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=SEND')
   home.onHide(); home.onShow(); assert.equal(env.calls.navigation.length, 2)
 })
-test('copy: avatar selection and required phone are explicit; no legacy no-avatar or optional-phone claims', () => {
+userTest('copy: avatar selection and required phone are explicit; no legacy no-avatar or optional-phone claims', () => {
   const source = ['pages/profile/profile.wxml', 'pages/login/login.wxml', 'pages/my/my.wxml', 'pages/legal/legal.js', 'README.md', 'WECHAT_DEPLOYMENT.md'].map(f => fs.readFileSync(path.join(native, f), 'utf8')).join('\n')
   assert.equal(/无需另设用户名或头像|不设置独立用户名或采集头像|绑定手机号为可选|尚未绑定手机号（可选）/.test(source), false)
   assert.ok(source.includes('open-type="chooseAvatar"')); assert.ok(source.includes('下单必填')); assert.ok(source.includes('生产'))
@@ -881,13 +916,13 @@ async function inlineLogin(env, api) {
   page.onLoad({}); await page.onShow()
   return page
 }
-test('login inline: returning complete account leaves directly without another profile route', async () => {
-  const env = environment(); env.setPages([{ route: 'pages/index/index' }, { route: 'pages/login/login' }])
+commonTest('login inline: returning complete account leaves directly without another profile route', async () => {
+  const env = environment(); env.setPages([{ route: homeRoute }, { route: 'pages/login/login' }])
   const page = await inlineLogin(env, { async me() { return profileValue({ mobileBound: true, avatarUrl: AVATAR }) } })
   assert.equal(page.data.profileStage, true)
   assert.equal(env.calls.navigation.length, 1); assert.equal(env.calls.navigation[0].back, true)
 })
-test('login inline: one save uploads chosen avatar and nickname then verifies me before leaving', async () => {
+commonTest('login inline: one save uploads chosen avatar and nickname then verifies me before leaving', async () => {
   const env = environment(); const calls = []; let value = profileValue({ nickname: '微信用户' })
   const page = await inlineLogin(env, {
     async me() { calls.push('me'); return value },
@@ -901,10 +936,10 @@ test('login inline: one save uploads chosen avatar and nickname then verifies me
   const saving = page.complete(); await page.complete(); await saving
   assert.deepEqual(calls, ['me', 'phone-once', 'wxfile://tmp/avatar', '新昵称', 'me'])
   assert.equal(env.storage.get('feilv_avatar_url'), AVATAR); assert.equal(env.storage.get('feilv_nickname'), '新昵称')
-  assert.equal(env.calls.navigation.at(-1).url, '/pages/my/my')
+  assert.equal(env.calls.navigation.at(-1).url, client === 'RIDER' ? '/pages/rider/workbench' : '/pages/my/my')
   assert.equal(page.data.avatarDraft, ''); assert.equal(page.data.saving, false)
 })
-test('login inline: save validates phone and nickname; partial upload success is reused on retry', async () => {
+commonTest('login inline: save validates phone and nickname; partial upload success is reused on retry', async () => {
   const env = environment(); let value = profileValue({ nickname: '微信用户' }); let uploads = 0; let saves = 0
   const page = await inlineLogin(env, {
     async me() { return value },
@@ -919,14 +954,14 @@ test('login inline: save validates phone and nickname; partial upload success is
   assert.equal(page.data.nickname, '新昵称'); assert.equal(env.calls.navigation.length, 0)
   await page.complete(); assert.equal(uploads, 1); assert.equal(saves, 2); assert.equal(env.calls.navigation.length, 1)
 })
-test('login inline: failed me can retry without repeating login or discarding account', async () => {
+commonTest('login inline: failed me can retry without repeating login or discarding account', async () => {
   const env = environment(); let attempts = 0
   const page = await inlineLogin(env, { async me() { if (++attempts === 1) throw new Error('读取失败'); return profileValue() } })
   assert.equal(page.data.profileStage, true); assert.equal(page.data.loaded, false); assert.equal(page.data.error, '读取失败')
   assert.equal(env.storage.get('feilv_token'), 'token-1'); await page.load()
   assert.equal(page.data.loaded, true); assert.equal(page.data.error, ''); assert.equal(env.calls.navigation.length, 0)
 })
-test('login inline: account switch during upload prevents nickname writes and late navigation', async () => {
+commonTest('login inline: account switch during upload prevents nickname writes and late navigation', async () => {
   const env = environment(); let resolve; let writes = 0
   const page = await inlineLogin(env, { async me() { return profileValue({ nickname: '微信用户', mobileBound: true }) },
     uploadAvatar() { return new Promise(r => { resolve = r }) }, async updateProfile() { writes++; return profileValue() } })
@@ -937,11 +972,11 @@ test('login inline: account switch during upload prevents nickname writes and la
   resolve(profileValue({ avatarUrl: AVATAR })); await pending
   assert.equal(writes, 0); assert.equal(env.storage.get('feilv_nickname'), '其他用户'); assert.equal(env.calls.navigation.length, 0)
 })
-test('login inline: expired inline session restores login entry instead of stranding profile form', async () => {
+commonTest('login inline: expired inline session restores login entry instead of stranding profile form', async () => {
   const env = environment(); env.setPages([{ route: 'pages/login/login' }])
   const page = env.page('pages/login/login'); page.onLoad({}); page.onShow(); page.consent({ detail: { value: ['yes'] } })
   const pending = page.wechat(); await flush()
-  env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: { token: 'new', userId: 1, role: 'USER', nickname: '微信用户' } } })
+  env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: { state: 'AUTHENTICATED', login: { token: 'new', userId: 1, role: 'USER', nickname: '微信用户' } } } })
   await flush()
   env.calls.requests[1].success({ statusCode: 401, data: { code: 401, msg: '过期' } }); await pending
   assert.equal(page.data.profileStage, false); assert.equal(page.data.busy, false); assert.equal(env.storage.has('feilv_token'), false)
@@ -950,14 +985,14 @@ test('login inline: expired inline session restores login entry instead of stran
   assert.equal(env.calls.requests.length, 3)
   env.calls.requests[2].fail({}); await retry
 })
-test('login inline: native UI uses explicit avatar and nickname choices without obsolete profile APIs', () => {
+commonTest('login inline: native UI uses explicit avatar and nickname choices without obsolete profile APIs', () => {
   const template = fs.readFileSync(path.join(native, 'pages/login/login.wxml'), 'utf8')
   const source = fs.readFileSync(path.join(native, 'pages/login/login.js'), 'utf8')
   assert.ok(template.includes('open-type="chooseAvatar"')); assert.ok(template.includes('type="nickname"'))
   assert.ok(template.includes('open-type="getPhoneNumber"')); assert.ok(template.includes('保存并继续'))
   assert.equal(/getUserProfile|getUserInfo|redirectTo/.test(source), false)
 })
-test('login layout: signed-in form has compact welcome, grouped fields and separate save actions', () => {
+commonTest('login layout: signed-in form has compact welcome, grouped fields and separate save actions', () => {
   const template = fs.readFileSync(path.join(native, 'pages/login/login.wxml'), 'utf8')
   const styles = fs.readFileSync(path.join(native, 'pages/login/login.wxss'), 'utf8')
   assert.ok(template.includes('wx:if="{{!profileStage}}" class="login-intro"'))
@@ -971,7 +1006,7 @@ test('login layout: signed-in form has compact welcome, grouped fields and separ
   assert.ok(styles.includes('.identity-preview .profile-avatar-button'))
   assert.ok(styles.includes('@media (max-width: 350px)'))
 })
-test('main pages: home and account quick links preserve native navigation and login gates', async () => {
+userTest('main pages: home and account quick links preserve native navigation and login gates', async () => {
   const env = environment()
   const home = env.page('pages/index/index', {}); home.onLoad({}); home.onShow()
   assert.equal(home.orders, undefined); assert.equal(home.address, undefined); assert.equal(home.settings, undefined)
@@ -982,21 +1017,21 @@ test('main pages: home and account quick links preserve native navigation and lo
   env.authenticated(); my.address(); assert.equal(env.calls.navigation.at(-1).url, '/pages/address/address')
   my.profile(); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=my')
 })
-test('main pages: layouts group identity, services and order routes without exposing extra profile fields', () => {
+userTest('main pages: layouts group identity, services and order routes without exposing extra profile fields', () => {
   const home = fs.readFileSync(path.join(native, 'pages/index/index.wxml'), 'utf8')
   const my = fs.readFileSync(path.join(native, 'pages/my/my.wxml'), 'utf8')
   const orders = fs.readFileSync(path.join(native, 'pages/order/list.wxml'), 'utf8')
   assert.equal(home.includes('class="home-orders"'), false); assert.ok(home.includes('MOCK')); assert.ok(home.includes('绑定手机号'))
   assert.ok(my.includes('class="account-identity"')); assert.ok(my.includes('class="account-info"'))
   assert.ok(my.includes('class="card menu-card account-menu"')); assert.ok(my.includes('bindtap="orders"'))
-  assert.ok(my.includes('wx:if="{{isRider}}"')); assert.ok(my.includes('wx:if="{{loggedIn}}"'))
+  assert.equal(my.includes('wx:if="{{isRider}}"'), false); assert.equal(/pages\/rider|bindtap="(?:rider|register)"/.test(my), false); assert.ok(my.includes('wx:if="{{loggedIn}}"'))
   assert.ok(orders.includes('class="order-route"')); assert.ok(orders.includes('status-{{item.status}}'))
   assert.ok(orders.includes('data-id="{{item.id}}"')); assert.ok(orders.includes('class="amount-value"'))
   assert.equal(/me\.(?:openid|mobileRaw|sessionKey)|item\.userMobile/.test(my + orders), false)
 })
 const regionAddress = (patch = {}) => Object.assign({ id: 11, contact: '王先生', phone: '13800000000', province: '贵州省', city: '铜仁市', district: '德江县', detailAddress: '青龙街道一号楼', address: '客户端旧地址', poiName: '南门', lng: 108, lat: 28, isDefault: 1 }, patch)
 function regionEvent(value) { return { detail: { value } } }
-test('address region: new addresses require confirmed region and detail and compose full payload', async () => {
+userTest('address region: new addresses require confirmed region and detail and compose full payload', async () => {
   const env = environment(); env.authenticated(); let saved
   const page = env.page('pages/address/address', { async addAddress(data) { saved = data }, async addressList() { return [] } })
   page.onLoad({}); page._visible = true
@@ -1010,7 +1045,7 @@ test('address region: new addresses require confirmed region and detail and comp
   assert.equal(saved.detailAddress, '青龙街道一号楼'); assert.equal(saved.address, '贵州省铜仁市德江县青龙街道一号楼')
   assert.equal(saved.lng, null); assert.equal(saved.lat, null); assert.equal(page.data.regionText, '')
 })
-test('address region: edit restores structured fields; legacy remains readable and needs deliberate completion', () => {
+userTest('address region: edit restores structured fields; legacy remains readable and needs deliberate completion', () => {
   const env = environment(); const page = env.page('pages/address/address', {}); page.onLoad({})
   page.data.list = [regionAddress(), { id: 12, contact: '旧用户', address: '原街道未知地区', lng: 109, lat: 29 }]
   page.edit({ currentTarget: { dataset: { id: 11 } } })
@@ -1021,7 +1056,7 @@ test('address region: edit restores structured fields; legacy remains readable a
   assert.equal(page.data.legacyAddress, '原街道未知地区'); assert.equal(page.data.regionText, ''); assert.equal(page.data.form.detailAddress, '')
   page.regionChange(regionEvent(['贵州省', '铜仁市'])); assert.equal(page.data.regionText, '')
 })
-test('address region: default updates preserve structured fields and selection exposes no owner metadata', async () => {
+userTest('address region: default updates preserve structured fields and selection exposes no owner metadata', async () => {
   const env = environment(); env.authenticated(); let submitted; let emitted
   const value = regionAddress({ userId: 999, extraSecret: 'not-for-client' })
   const page = env.page('pages/address/address', { async updateAddress(id, data) { submitted = data }, async addressList() { return [value] } })
@@ -1032,7 +1067,7 @@ test('address region: default updates preserve structured fields and selection e
   page.select({ currentTarget: { dataset: { id: 11 } } })
   assert.equal(emitted.id, 11); assert.equal(emitted.province, '贵州省'); assert.equal(emitted.userId, undefined); assert.equal(emitted.extraSecret, undefined)
 })
-test('address dropdown: selector fills only chosen side, including full address and coordinates, invalidates quote', async () => {
+userTest('address dropdown: selector fills only chosen side, including full address and coordinates, invalidates quote', async () => {
   const env = environment(); env.authenticated()
   const page = env.page('pages/order/create', { async addressList() { return [regionAddress({ isDefault: 0 })] } })
   page.onLoad({}); await page.onShow()
@@ -1045,7 +1080,7 @@ test('address dropdown: selector fills only chosen side, including full address 
   page.input(event('toAddress', '不能手工覆盖')); assert.ok(page.data.form.toAddress.includes('青龙街道'))
   page.addressChange({ currentTarget: { dataset: { side: 'from' } }, detail: { value: '99' } }); assert.equal(page.data.form.fromAddress, '')
 })
-test('address dropdown: reloading edited/deleted saved address invalidates stale quote without overwriting contact edits', async () => {
+userTest('address dropdown: reloading edited/deleted saved address invalidates stale quote without overwriting contact edits', async () => {
   const env = environment(); env.authenticated(); let list = [regionAddress()]
   const page = env.page('pages/order/create', { async addressList() { return list } }); page.onLoad({}); await page.onShow()
   page.addressChange({ currentTarget: { dataset: { side: 'from' } }, detail: { value: '0' } })
@@ -1055,7 +1090,7 @@ test('address dropdown: reloading edited/deleted saved address invalidates stale
   page.data.quote = {}; list = []; await page.loadAddresses()
   assert.equal(page.data.form.fromAddress, ''); assert.equal(page.data.fromAddressId, null); assert.equal(page.data.quote, null)
 })
-test('address dropdown: failure is retryable; old address-list and selection callbacks cannot cross accounts', async () => {
+userTest('address dropdown: failure is retryable; old address-list and selection callbacks cannot cross accounts', async () => {
   const env = environment(); env.authenticated(); let resolve; let fail = true
   const page = env.page('pages/order/create', { addressList() { if (fail) throw new Error('读取地址失败'); return new Promise(r => { resolve = r }) } })
   page.onLoad({}); await page.onShow(); assert.equal(page.data.addressError, '读取地址失败'); assert.equal(page.data.addressLoading, false)
@@ -1065,15 +1100,16 @@ test('address dropdown: failure is retryable; old address-list and selection cal
   eventChannel.addressSelected(regionAddress()); resolve([regionAddress()]); await pending
   assert.equal(page.data.form.toAddress, ''); assert.equal(page.data.addressOptions.length, 0)
 })
-test('address UI: region picker plus street detail and saved-address dropdown replace freeform order addresses', () => {
+userTest('address UI: region picker plus street detail and saved-address dropdown replace freeform order addresses', () => {
   const address = fs.readFileSync(path.join(native, 'pages/address/address.wxml'), 'utf8')
   const order = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8')
   assert.ok(address.includes('mode="region"')); assert.ok(address.includes('data-field="detailAddress"'))
+  assert.equal(address.includes('地点名称'), false); assert.equal(/<input[^>]*data-field="poiName"/.test(address), false)
   assert.ok(order.includes('range-key="label"')); assert.ok(order.includes('data-side="from" bindchange="addressChange"'))
   assert.ok(order.includes('data-side="to" bindchange="addressChange"'))
   assert.equal(/<input[^>]*data-field="(?:fromAddress|toAddress|address)"/.test(address + order), false)
 })
-test('phone binding: My exposes explicit entry and phone-only completion never changes nickname or avatar', async () => {
+commonTest('phone binding: My exposes explicit entry and phone-only completion never changes nickname or avatar', async () => {
   const env = environment(); env.authenticated(); env.setPages([{ route: 'pages/my/my' }, { route: 'pages/profile/profile' }])
   const my = env.page('pages/my/my', { async me() { return profileValue() } }); my.onLoad({}); await my.onShow()
   assert.equal(my.data.me.mobileBound, false); my.phone(); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=my&mode=phone')
@@ -1085,7 +1121,7 @@ test('phone binding: My exposes explicit entry and phone-only completion never c
   assert.equal(binds, 1); assert.equal(page.data.mobileBound, true); assert.equal(page.data.phoneError, '')
   page.complete(); assert.equal(env.calls.navigation.at(-1).back, true); assert.equal(env.storage.get('feilv_nickname'), '微信用户')
 })
-test('phone binding: unconfirmed server response cannot show success; fresh authorization permits retry', async () => {
+commonTest('phone binding: unconfirmed server response cannot show success; fresh authorization permits retry', async () => {
   const env = environment(); let attempts = 0
   const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { attempts++; return profileValue({ mobileBound: attempts > 1, mobile: attempts > 1 ? '138****8000' : '' }) } })
   page.preparePhone(); await page.bindPhone(phoneEvent('first'))
@@ -1094,7 +1130,7 @@ test('phone binding: unconfirmed server response cannot show success; fresh auth
   page.preparePhone(); await page.bindPhone(phoneEvent('second'))
   assert.equal(page.data.mobileBound, true); assert.equal(page.data.phoneError, ''); assert.equal(attempts, 2)
 })
-test('phone binding: missing capability/code and denial have actionable errors without raw event leakage', async () => {
+commonTest('phone binding: missing capability/code and denial have actionable errors without raw event leakage', async () => {
   const env = environment(); let binds = 0
   const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { binds++ } })
   page.preparePhone(); await page.bindPhone({ detail: { errMsg: 'getPhoneNumber:fail internal-private-value', phoneNumber: '13800138000' } })
@@ -1102,7 +1138,7 @@ test('phone binding: missing capability/code and denial have actionable errors w
   page.preparePhone(); await page.bindPhone(phoneEvent('', 'getPhoneNumber:fail user deny'))
   assert.ok(page.data.phoneError.includes('仍可返回浏览')); assert.equal(binds, 0); assert.equal(env.storage.get('feilv_token'), 'token-1')
 })
-test('phone binding: server conflict, capacity and expired authorization preserve account and display binding error', async () => {
+commonTest('phone binding: server conflict, capacity and expired authorization preserve account and display binding error', async () => {
   for (const code of [400, 409, 429, 503]) {
     const env = environment()
     const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { throw Object.assign(new Error('授权未完成-' + code), { code }) } })
@@ -1111,7 +1147,7 @@ test('phone binding: server conflict, capacity and expired authorization preserv
     assert.equal(page.data.phoneError, '授权未完成-' + code); assert.equal(env.storage.get('feilv_token'), 'token-1')
   }
 })
-test('phone binding: phone-only UI hides nickname/avatar forms and exposes native authorization and feedback', () => {
+commonTest('phone binding: phone-only UI hides nickname/avatar forms and exposes native authorization and feedback', () => {
   const profile = fs.readFileSync(path.join(native, 'pages/profile/profile.wxml'), 'utf8')
   const my = fs.readFileSync(path.join(native, 'pages/my/my.wxml'), 'utf8')
   assert.ok(my.includes('bindtap="phone"')); assert.ok(my.includes('手机号绑定'))
@@ -1119,7 +1155,7 @@ test('phone binding: phone-only UI hides nickname/avatar forms and exposes nativ
   assert.ok(profile.includes('open-type="getPhoneNumber"')); assert.ok(profile.includes('phoneError'))
   assert.ok(profile.includes('完成，返回我的'))
 })
-test('phone binding: expired inline binding session returns to login, not a false bound state', async () => {
+commonTest('phone binding: expired inline binding session returns to login, not a false bound state', async () => {
   const env = environment(); env.authenticated(); env.setPages([{ route: 'pages/login/login' }])
   const page = env.page('pages/login/login'); page.onLoad({}); const showing = page.onShow()
   env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await showing
@@ -1128,7 +1164,7 @@ test('phone binding: expired inline binding session returns to login, not a fals
   assert.equal(page.data.profileStage, false); assert.equal(page.data.mobileBound, false); assert.equal(page.data.binding, false)
   assert.equal(env.storage.has('feilv_token'), false)
 })
-test('order UI: home service hierarchy and create form keep saved-address selectors ahead of contacts', () => {
+userTest('order UI: home service hierarchy and create form keep saved-address selectors ahead of contacts', () => {
   const home = fs.readFileSync(path.join(native, 'pages/index/index.wxml'), 'utf8')
   const styles = fs.readFileSync(path.join(native, 'pages/index/index.wxss'), 'utf8')
   const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8')
@@ -1138,7 +1174,7 @@ test('order UI: home service hierarchy and create form keep saved-address select
   assert.ok(create.indexOf('data-side="to" bindchange="addressChange"') < create.indexOf('id="to-contact"'))
   assert.ok(create.includes('距离为手工预估')); assert.ok(create.includes('disabled="{{busy || addressLoading}}"'))
 })
-test('order UI: details prioritize next action and retain all state branches, privacy and MOCK notices', () => {
+userTest('order UI: details prioritize next action and retain all state branches, privacy and MOCK notices', () => {
   const detail = fs.readFileSync(path.join(native, 'pages/order/detail.wxml'), 'utf8')
   for (const state of ['WAIT_PAY', 'WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED', 'CANCELED']) {
     assert.ok(detail.includes("order.status === '" + state + "'"))
@@ -1151,7 +1187,7 @@ test('order UI: details prioritize next action and retain all state branches, pr
   assert.ok(detail.includes('不发生真实扣款')); assert.ok(detail.includes('退款仅为模拟'))
   assert.ok(detail.includes('disabled="{{busy || loading}}"')); assert.ok(detail.includes('service-state-{{order.status}}'))
 })
-test('order UI: confirmation keeps retry and uncertain-submit protections visible and native', () => {
+userTest('order UI: confirmation keeps retry and uncertain-submit protections visible and native', () => {
   const confirm = fs.readFileSync(path.join(native, 'pages/order/confirm.wxml'), 'utf8')
   assert.ok(confirm.includes('wx:if="{{invalid}}"')); assert.ok(confirm.includes('wx:if="{{uncertain}}"'))
   assert.ok(confirm.includes('wx:elif="{{orderId}}"')); assert.ok(confirm.includes('disabled="{{busy || uncertain}}"'))
@@ -1163,7 +1199,7 @@ test('order UI: confirmation keeps retry and uncertain-submit protections visibl
     assert.ok(css.includes('max-width: 960rpx')); assert.ok(css.includes('@media (max-width: 350px)'))
   }
 })
-test('order details: MOCK pay, cancel and receipt actions retain correct APIs and refresh state', async () => {
+userTest('order details: MOCK pay, cancel and receipt actions retain correct APIs and refresh state', async () => {
   for (const action of ['pay', 'cancel', 'confirm']) {
     const env = environment(); env.authenticated(); const calls = []
     let value = { id: 25, orderNo: 'LONG-ORDER-25', orderType: 'SEND', status: action === 'confirm' ? 'DELIVERED' : 'WAIT_PAY', realFeeFen: 1200, fromAddress: '长地址'.repeat(40), toAddress: '送达地址' }
@@ -1183,7 +1219,7 @@ test('order details: MOCK pay, cancel and receipt actions retain correct APIs an
     page.track(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/track?id=25')
   }
 })
-test('order details: cancelled confirmations do not mutate orders and failed actions recover loading state', async () => {
+userTest('order details: cancelled confirmations do not mutate orders and failed actions recover loading state', async () => {
   for (const action of ['pay', 'cancel', 'confirm']) {
     const env = environment({ showModal(options) { options.success({ confirm: false, cancel: true }) } }); env.authenticated(); let calls = 0
     const api = { async orderDetail() { return { id: 9, status: 'DELIVERED' } }, async orderComplaints() { return [] }, async payOrder() { calls++; throw new Error('操作失败') }, async cancelOrder() { calls++; throw new Error('操作失败') }, async confirmOrder() { calls++; throw new Error('操作失败') } }
@@ -1194,7 +1230,7 @@ test('order details: cancelled confirmations do not mutate orders and failed act
     assert.ok(env.calls.toast.includes('操作失败'))
   }
 })
-test('order details: review and complaint form selections still submit only current order data', async () => {
+userTest('order details: review and complaint form selections still submit only current order data', async () => {
   const env = environment(); env.authenticated(); let review; let complaint
   const page = env.page('pages/order/detail', {
     async orderDetail() { return { id: 33, status: 'FINISHED' } },
@@ -1210,7 +1246,7 @@ test('order details: review and complaint form selections still submit only curr
   assert.equal(complaint.orderId, 33); assert.equal(complaint.type, 'DAMAGE'); assert.equal(complaint.description, '包装破损')
   assert.ok(page.data.ticket.includes('66')); assert.equal(page.data.complaintDescription, '')
 })
-test('simple publish: home keeps only distinct service entries and routes shared tools to existing navigation', () => {
+userTest('simple publish: home keeps only distinct service entries and routes shared tools to existing navigation', () => {
   const home = fs.readFileSync(path.join(native, 'pages/index/index.wxml'), 'utf8')
   assert.equal(home.includes('home-shortcuts'), false)
   for (const handler of ['orders', 'address', 'settings']) assert.equal(home.includes('bindtap="' + handler + '"'), false)
@@ -1221,7 +1257,7 @@ test('simple publish: home keeps only distinct service entries and routes shared
   assert.ok(create.includes('wx:if="{{fromContactEditing}}"')); assert.ok(create.includes('wx:if="{{moreVisible}}"'))
   assert.ok(create.includes('重量 {{weightKg}} 公斤')); assert.ok(create.includes('默认按1公斤计费'))
 })
-test('simple publish: one continue calculates quote then opens confirmation without creating or paying', async () => {
+userTest('simple publish: one continue calculates quote then opens confirmation without creating or paying', async () => {
   const env = environment(); env.authenticated(); const calls = []
   const page = env.page('pages/order/create', {
     async me() { calls.push('me'); return profileValue({ mobileBound: true }) },
@@ -1233,7 +1269,7 @@ test('simple publish: one continue calculates quote then opens confirmation with
   assert.deepEqual(calls, ['me', 'quote']); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
   const saved = env.storage.get('native_draft'); assert.equal(saved.quote.totalText, '6.50'); assert.equal(saved.payload.goodsDesc, '文件')
 })
-test('simple publish: quote failure retains inputs and draft; repeated taps cannot double quote or navigate', async () => {
+userTest('simple publish: quote failure retains inputs and draft; repeated taps cannot double quote or navigate', async () => {
   const env = environment(); env.authenticated(); let respond; let attempts = 0
   const page = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) }, quote() { attempts++; if (attempts === 1) throw new Error('计价失败'); return new Promise(r => { respond = r }) } })
   page.onLoad({}); page._visible = true; fillCreate(page)
@@ -1241,7 +1277,7 @@ test('simple publish: quote failure retains inputs and draft; repeated taps cann
   const pending = page.next(); await flush(); await page.next(); assert.equal(attempts, 2)
   respond({ totalFen: 500, items: [] }); await pending; assert.equal(env.calls.navigation.length, 1); assert.equal(page.data.busy, false)
 })
-test('simple publish: late quote cannot replace another draft or navigate after account changes or hiding', async () => {
+userTest('simple publish: late quote cannot replace another draft or navigate after account changes or hiding', async () => {
   for (const change of ['draft', 'account', 'hide']) {
     const env = environment(); env.authenticated(); let respond
     const page = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) }, quote() { return new Promise(r => { respond = r }) } })
@@ -1253,7 +1289,7 @@ test('simple publish: late quote cannot replace another draft or navigate after 
     if (change !== 'hide') assert.equal(env.storage.get('native_draft').savedAt, 999)
   }
 })
-test('simple publish: default pickup fills once, leaves destination empty and does not overwrite restored addresses', async () => {
+userTest('simple publish: default pickup fills once, leaves destination empty and does not overwrite restored addresses', async () => {
   const env = environment(); env.authenticated()
   const page = env.page('pages/order/create', { async addressList() { return [regionAddress()] } }); page.onLoad({}); await page.onShow()
   assert.ok(page.data.form.fromAddress.includes('青龙街道')); assert.equal(page.data.form.toAddress, '')
@@ -1263,7 +1299,7 @@ test('simple publish: default pickup fills once, leaves destination empty and do
   page.toggleMore(); assert.equal(page.data.moreVisible, true)
   page.data.form.fromAddress = '明确选择的其他地址'; page.data.fromAddressId = null; await page.loadAddresses(); assert.equal(page.data.form.fromAddress, '明确选择的其他地址')
 })
-test('simple publish: draft restoration belongs to current account and matching service type only', () => {
+userTest('simple publish: draft restoration belongs to current account and matching service type only', () => {
   const env = environment(); env.authenticated()
   const original = { orderType: 'SEND', fromContact: '甲', fromPhone: '13800000000', fromAddress: '原取件地址', toContact: '乙', toPhone: '13900000000', toAddress: '原收件地址', goodsDesc: '文件', distanceM: 3500, weightKg: 8, remark: '轻拿轻放' }
   env.storage.set('native_draft', { owner: 1, savedAt: 123, payload: original, fromAddressId: 11, toAddressId: 12 })
@@ -1273,7 +1309,7 @@ test('simple publish: draft restoration belongs to current account and matching 
   const buy = env.page('pages/order/create', {}); buy.onLoad({ type: 'BUY' }); assert.equal(buy.data.restored, false)
   env.storage.set('feilv_user_id', 2); const other = env.page('pages/order/create', {}); other.onLoad({ type: 'SEND' }); assert.equal(other.data.restored, false)
 })
-test('simple publish: edited task cannot overwrite known or uncertain earlier order protections', async () => {
+userTest('simple publish: edited task cannot overwrite known or uncertain earlier order protections', async () => {
   for (const pendingFields of [{ id: 88 }, { uncertain: true }]) {
     const env = environment(); env.authenticated(); const previous = { owner: 1, savedAt: 111, payload: { orderType: 'SEND' }, quote: { totalText: '5.00' } }
     env.storage.set('native_draft', previous); env.storage.set('native_pending_order', Object.assign({ owner: 1, savedAt: 111 }, pendingFields))
@@ -1282,7 +1318,7 @@ test('simple publish: edited task cannot overwrite known or uncertain earlier or
     assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
   }
 })
-test('simple publish: final confirmation directly submits once without redundant modal and preserves failure handling', async () => {
+userTest('simple publish: final confirmation directly submits once without redundant modal and preserves failure handling', async () => {
   const env = environment({ showModal() { assert.fail('no redundant confirmation dialog') } }); env.authenticated(); let creates = 0; let pays = 0
   env.storage.set('native_draft', { owner: 1, savedAt: 123, payload: { orderType: 'SEND' }, quote: { totalText: '5.00' } })
   const page = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async createOrder() { creates++; return { id: 88 } }, async payOrder() { pays++ } })
@@ -1290,7 +1326,7 @@ test('simple publish: final confirmation directly submits once without redundant
   assert.equal(creates, 1); assert.equal(pays, 1); assert.equal(env.storage.has('native_draft'), false)
   assert.equal(env.calls.navigation.at(-1).url, '/pages/order/detail?id=88')
 })
-test('simple publish: missing distance and malformed quotes never create a fabricated fee or confirmation', async () => {
+userTest('simple publish: missing distance and malformed quotes never create a fabricated fee or confirmation', async () => {
   for (const invalid of [null, {}, { totalFen: -1, items: [] }, { totalFen: 500 }, { totalFen: '500', items: [] }]) {
     const env = environment(); env.authenticated(); let quotes = 0
     const page = env.page('pages/order/create', { async me() { return profileValue({ mobileBound: true }) }, async quote() { quotes++; return invalid } })
@@ -1300,7 +1336,7 @@ test('simple publish: missing distance and malformed quotes never create a fabri
     assert.equal(quotes, 1); assert.equal(env.calls.navigation.length, 0); assert.equal(env.storage.get('native_draft').quote, null)
   }
 })
-test('simple publish: default pickup is account-specific after switching users in an existing page', async () => {
+userTest('simple publish: default pickup is account-specific after switching users in an existing page', async () => {
   const env = environment(); env.authenticated(); let value = regionAddress()
   const page = env.page('pages/order/create', { async addressList() { return [value] } }); page.onLoad({}); await page.onShow()
   assert.equal(page.data.fromAddressId, 11)
@@ -1309,7 +1345,7 @@ test('simple publish: default pickup is account-specific after switching users i
   assert.equal(page.data.fromAddressId, 22); assert.ok(page.data.form.fromAddress.includes('B的新地址'))
   assert.equal(page.data.form.fromContact, 'B'); assert.equal(page.data.form.toAddress, '')
 })
-test('orders layout: compact card keeps route first, footer actions and single secondary order number', () => {
+userTest('orders layout: compact card keeps route first, footer actions and single secondary order number', () => {
   const template = fs.readFileSync(path.join(native, 'pages/order/list.wxml'), 'utf8')
   const css = fs.readFileSync(path.join(native, 'pages/order/list.wxss'), 'utf8')
   assert.ok(template.indexOf('class="order-time"') < template.indexOf('class="order-route"'))
@@ -1322,7 +1358,7 @@ test('orders layout: compact card keeps route first, footer actions and single s
   assert.ok(template.includes('wx:if="{{hasMore && list.length}}"')); assert.ok(css.includes('min-height: 44px'))
   for (const state of ['WAIT_PAY', 'WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED', 'CANCELED']) assert.ok(css.includes('.order-status.status-' + state))
 })
-test('orders layout: card navigation opens details without mutating pending payment or receipt orders', async () => {
+userTest('orders layout: card navigation opens details without mutating pending payment or receipt orders', async () => {
   for (const status of ['WAIT_PAY', 'DELIVERED', 'FINISHED', 'CANCELED']) {
     const env = environment(); env.authenticated()
     const page = env.page('pages/order/list', { async myOrders() { return { content: [{ id: 7, orderNo: '订单号'.repeat(30), status, fromAddress: '很长的取件地址'.repeat(30), toAddress: '送达地址', realFeeFen: 2500 }], last: true } } })
@@ -1342,7 +1378,7 @@ async function readyManualPhone(env, api, route = 'pages/profile/profile') {
 function manualFill(page, mobile = '13800138000', code = '') {
   page.manualPhoneInput(event('manualMobile', mobile)); page.manualPhoneInput(event('manualCode', code))
 }
-test('manual phone: authenticated API uses separate binding purpose and never the public login SMS route', async () => {
+commonTest('manual phone: authenticated API uses separate binding purpose and never the public login SMS route', async () => {
   const env = environment(); env.authenticated()
   const api = env.load(path.join(native, 'utils/api.js'))
   const sending = api.phoneSmsCode('13800138000'); const req = env.calls.requests[0]
@@ -1352,7 +1388,7 @@ test('manual phone: authenticated API uses separate binding purpose and never th
   assert.ok(bind.url.endsWith('/user/phone')); assert.deepEqual(Object.keys(bind.data), ['mobile', 'code'])
   bind.success({ statusCode: 200, data: { code: 0, data: profileValue({ mobileBound: true, mobile: '138****8000' }) } }); await binding
 })
-test('manual phone: validates entered phone, explicit request and six-digit code before any bind', async () => {
+commonTest('manual phone: validates entered phone, explicit request and six-digit code before any bind', async () => {
   const env = environment(); let sends = 0; let binds = 0
   const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { sends++; return { retryAfterSeconds: 60, mock: true, demoCode: '123456' } }, async bindPhone() { binds++; return profileValue({ mobileBound: true }) } })
   manualFill(page, 'bad', '123456'); await page.sendPhoneSms(); await page.bindManualPhone(); assert.equal(sends, 0); assert.equal(binds, 0)
@@ -1362,7 +1398,7 @@ test('manual phone: validates entered phone, explicit request and six-digit code
   page.manualPhoneInput(event('manualCode', '123')); await page.bindManualPhone(); assert.equal(binds, 0)
   page.manualPhoneInput(event('manualCode', '123456')); await page.bindManualPhone(); assert.equal(binds, 1)
 })
-test('manual phone: binding preserves nickname draft, clears raw credentials and does not alter account or order draft', async () => {
+commonTest('manual phone: binding preserves nickname draft, clears raw credentials and does not alter account or order draft', async () => {
   const env = environment(); let payload
   const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { return { retryAfterSeconds: 60, mock: true, demoCode: '234567' } }, async bindPhone(mobile, code) { payload = { mobile, code }; return profileValue({ mobileBound: true, mobile: '138****8000' }) } })
   env.storage.set('native_draft', { owner: 1, savedAt: 99 }); const revision = env.load(path.join(native, 'utils/session.js')).revision()
@@ -1374,7 +1410,7 @@ test('manual phone: binding preserves nickname draft, clears raw credentials and
   assert.equal(env.load(path.join(native, 'utils/session.js')).revision(), revision)
   for (const [key, value] of env.storage) { assert.notEqual(value, '13800138000'); assert.notEqual(value, '234567') }
 })
-test('manual phone: SMS not configured, code mismatch and phone conflicts never claim binding success', async () => {
+commonTest('manual phone: SMS not configured, code mismatch and phone conflicts never claim binding success', async () => {
   for (const code of [400, 409, 429, 503]) {
     const env = environment()
     const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { throw Object.assign(new Error('短信未完成-' + code), { code }) } })
@@ -1384,7 +1420,7 @@ test('manual phone: SMS not configured, code mismatch and phone conflicts never 
     assert.equal(env.storage.get('feilv_token'), 'token-1'); assert.equal(env.calls.toast.some(message => message.includes('已发送')), false)
   }
 })
-test('manual phone: changing phone clears old code and mock display; cooldown blocks repeated sends', async () => {
+commonTest('manual phone: changing phone clears old code and mock display; cooldown blocks repeated sends', async () => {
   const env = environment(); let sends = 0; let binds = 0
   const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { sends++; return { retryAfterSeconds: 60, mock: true, demoCode: '123456' } }, async bindPhone() { binds++ } })
   manualFill(page); await page.sendPhoneSms(); assert.equal(sends, 1); assert.equal(page.data.phoneCooling, 60)
@@ -1394,14 +1430,14 @@ test('manual phone: changing phone clears old code and mock display; cooldown bl
   page.onHide(); assert.equal(env.timers.size, 0); page._phoneSmsUntil = Date.now() - 1; await page.onShow()
   assert.equal(page.data.phoneCooling, 0); assert.equal(page.data.phoneSmsLabel, '获取验证码')
 })
-test('manual phone: switching method revokes pending WeChat phone intent but keeps manual form in page memory', async () => {
+commonTest('manual phone: switching method revokes pending WeChat phone intent but keeps manual form in page memory', async () => {
   const env = environment(); let binds = 0
   const page = await readyProfile(env, { async me() { return profileValue() }, async bindWechatPhone() { binds++ } })
   page.preparePhone(); await page.togglePhoneMethod(); await page.bindPhone(phoneEvent('late-code')); assert.equal(binds, 0)
   manualFill(page, '13800138000', '123456'); page.togglePhoneMethod(); assert.equal(page.data.manualPhone, false)
   page.togglePhoneMethod(); assert.equal(page.data.manualMobile, '13800138000'); assert.equal(page.data.manualCode, '123456')
 })
-test('manual phone: concurrent send and bind taps are suppressed and hidden/switched responses never mutate another page', async () => {
+commonTest('manual phone: concurrent send and bind taps are suppressed and hidden/switched responses never mutate another page', async () => {
   for (const operation of ['send', 'bind']) {
     const env = environment(); let resolve; let calls = 0
     const api = { async me() { return profileValue() }, phoneSmsCode() { return Promise.resolve({ retryAfterSeconds: 60, mock: true, demoCode: '123456' }) }, bindPhone() { calls++; return new Promise(r => { resolve = r }) } }
@@ -1416,14 +1452,14 @@ test('manual phone: concurrent send and bind taps are suppressed and hidden/swit
     assert.equal(env.calls.navigation.length, 0)
   }
 })
-test('manual phone: inline login supports manual binding even when WeChat phone capability is unavailable', async () => {
+commonTest('manual phone: inline login supports manual binding even when WeChat phone capability is unavailable', async () => {
   const env = environment({ canIUse() { return false } })
   const page = await readyManualPhone(env, { async me() { return profileValue({ nickname: '微信用户' }) }, async phoneSmsCode() { return { retryAfterSeconds: 60, mock: true, demoCode: '123456' } }, async bindPhone() { return profileValue({ mobileBound: true, mobile: '138****8000', nickname: '微信用户' }) } }, 'pages/login/login')
   assert.equal(page.data.phoneSupported, false); assert.equal(page.data.manualPhone, true)
   manualFill(page); await page.sendPhoneSms(); page.manualPhoneInput(event('manualCode', '123456')); await page.bindManualPhone()
   assert.equal(page.data.profileStage, true); assert.equal(page.data.mobileBound, true); assert.equal(page.data.manualMobile, '')
 })
-test('manual phone: failed binding keeps current input for retry but never displays a false bound state', async () => {
+commonTest('manual phone: failed binding keeps current input for retry but never displays a false bound state', async () => {
   for (const result of ['wrong-code', 'unconfirmed']) {
     const env = environment()
     const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { return { retryAfterSeconds: 60, mock: true, demoCode: '123456' } }, async bindPhone() { if (result === 'wrong-code') throw new Error('验证码错误'); return profileValue() } })
@@ -1432,7 +1468,7 @@ test('manual phone: failed binding keeps current input for retry but never displ
     assert.equal(page.data.binding, false); assert.equal(env.calls.toast.some(message => message.includes('已验证并绑定')), false)
   }
 })
-test('manual phone: native reusable template exists in both binding entry points and requires code verification', () => {
+commonTest('manual phone: native reusable template exists in both binding entry points and requires code verification', () => {
   const form = fs.readFileSync(path.join(native, 'templates/manual-phone.wxml'), 'utf8')
   assert.ok(form.includes('bindtap="sendPhoneSms"')); assert.ok(form.includes('bindtap="bindManualPhone"')); assert.ok(form.includes('data-field="manualMobile"'))
   assert.ok(form.includes('未发送真实短信')); assert.ok(form.includes('不能仅填写号码直接绑定'))
@@ -1441,7 +1477,7 @@ test('manual phone: native reusable template exists in both binding entry points
     assert.ok(template.includes('is="manualPhoneForm"')); assert.ok(template.includes('bindtap="togglePhoneMethod"'))
   }
 })
-test('manual phone: non-mock send never displays server demo payload and invalid send responses fail closed', async () => {
+commonTest('manual phone: non-mock send never displays server demo payload and invalid send responses fail closed', async () => {
   for (const result of [
     { retryAfterSeconds: 60, mock: false, demoCode: 'must-not-display' },
     { retryAfterSeconds: 60, mock: true, demoCode: '' },
@@ -1456,7 +1492,7 @@ test('manual phone: non-mock send never displays server demo payload and invalid
     } else { assert.ok(page.data.phoneError); assert.equal(page.data.phoneCooling, 0) }
   }
 })
-test('manual phone: code expiry is not platform session expiry; switched mode retains WeChat authorization support', async () => {
+commonTest('manual phone: code expiry is not platform session expiry; switched mode retains WeChat authorization support', async () => {
   const env = environment()
   const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneSmsCode() { return { retryAfterSeconds: 60, mock: true, demoCode: '123456' } }, async bindPhone() { throw Object.assign(new Error('验证码已过期，请重新获取'), { code: 4010 }) }, async bindWechatPhone() { return profileValue({ mobileBound: true }) } })
   manualFill(page); await page.sendPhoneSms(); page.manualPhoneInput(event('manualCode', '123456')); await page.bindManualPhone()
@@ -1464,7 +1500,7 @@ test('manual phone: code expiry is not platform session expiry; switched mode re
   page.togglePhoneMethod(); page.preparePhone(); await page.bindPhone(phoneEvent('fresh-wechat-code'))
   assert.equal(page.data.mobileBound, true); assert.equal(page.data.manualMobile, '')
 })
-test('manual phone: HTTP 401 during inline send restores login instead of leaving stale phone credentials', async () => {
+commonTest('manual phone: HTTP 401 during inline send restores login instead of leaving stale phone credentials', async () => {
   const env = environment(); env.authenticated(); env.setPages([{ route: 'pages/login/login' }])
   const page = env.page('pages/login/login'); page.onLoad({}); const showing = page.onShow()
   env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: profileValue() } }); await showing
@@ -1475,21 +1511,21 @@ test('manual phone: HTTP 401 during inline send restores login instead of leavin
   assert.equal(page.data.profileStage, false); assert.equal(page.data.manualMobile, ''); assert.equal(page.data.phoneSending, false)
   assert.equal(env.storage.has('feilv_token'), false)
 })
-test('development phone: backend option allows direct binding without sending or entering a code', async () => {
+commonTest('development phone: backend option allows direct binding without sending or entering a code', async () => {
   const env = environment(); let direct = 0; let sms = 0
   const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneBindingOptions() { return { developmentBypass: true } }, async phoneSmsCode() { sms++; }, async bindDevelopmentPhone(mobile) { direct++; assert.equal(mobile, '13800138000'); return profileValue({ mobileBound: true, mobile: '138****8000' }) } })
   assert.equal(page.data.phoneDevelopment, true); manualFill(page); await page.sendPhoneSms(); assert.equal(sms, 0)
   await page.bindManualPhone(); assert.equal(direct, 1); assert.equal(page.data.mobileBound, true); assert.equal(page.data.manualMobile, '')
   assert.ok(env.calls.toast.includes('开发测试手机号已绑定（未验证归属）'))
 })
-test('development phone: options failures and nonboolean values never unlock bypass', async () => {
+commonTest('development phone: options failures and nonboolean values never unlock bypass', async () => {
   for (const value of [null, {}, { developmentBypass: 'true' }, { developmentBypass: false }, 'failure']) {
     const env = environment(); let direct = 0
     const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneBindingOptions() { if (value === 'failure') throw new Error('失败'); return value }, async bindDevelopmentPhone() { direct++ } })
     assert.equal(page.data.phoneDevelopment, false); manualFill(page); await page.bindManualPhone(); assert.equal(direct, 0)
   }
 })
-test('development phone: stale server options cannot unlock another account and server rejection never marks bound', async () => {
+commonTest('development phone: stale server options cannot unlock another account and server rejection never marks bound', async () => {
   const env = environment(); env.authenticated(); let respond
   const page = env.page('pages/profile/profile', { async me() { return profileValue() }, phoneBindingOptions() { return new Promise(r => { respond = r }) } })
   page.onLoad({}); await page.onShow(); const options = page.togglePhoneMethod()
@@ -1498,7 +1534,7 @@ test('development phone: stale server options cannot unlock another account and 
   const other = environment(); const manual = await readyManualPhone(other, { async me() { return profileValue() }, async phoneBindingOptions() { return { developmentBypass: true } }, async bindDevelopmentPhone() { throw Object.assign(new Error('开发权限已关闭'), { code: 403 }) } })
   manualFill(manual); await manual.bindManualPhone(); assert.equal(manual.data.mobileBound, false); assert.equal(manual.data.phoneError, '开发权限已关闭')
 })
-test('development phone: client sends phone only to dedicated authenticated endpoint', async () => {
+commonTest('development phone: client sends phone only to dedicated authenticated endpoint', async () => {
   const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
   const options = api.phoneBindingOptions(); assert.ok(env.calls.requests[0].url.endsWith('/user/phone/options'))
   env.calls.requests[0].success({ statusCode: 200, data: { code: 0, data: { developmentBypass: true } } }); await options
@@ -1508,7 +1544,7 @@ test('development phone: client sends phone only to dedicated authenticated endp
   const template = fs.readFileSync(path.join(native, 'templates/manual-phone.wxml'), 'utf8')
   assert.ok(template.includes('wx:if="{{!phoneDevelopment}}"')); assert.ok(template.includes('开发模式直接绑定')); assert.ok(template.includes('号码归属未经验证'))
 })
-test('development options: disabled mode displays backend reason and current service instead of silently requiring SMS', async () => {
+commonTest('development options: disabled mode displays backend reason and current service instead of silently requiring SMS', async () => {
   for (const reason of ['DEVELOPMENT_PROFILE_REQUIRED', 'PROTECTED_PROFILE', 'DISABLED']) {
     const env = environment()
     const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneBindingOptions() { return { developmentBypass: false, reason, message: '后端模式提示-' + reason } } })
@@ -1516,14 +1552,14 @@ test('development options: disabled mode displays backend reason and current ser
     assert.equal(page.data.phoneBackend, 'https://xt.allms.cn'); assert.equal(page.data.phoneOptionsError, '')
   }
 })
-test('development options: explicit refresh picks up changed server mode while retaining entered phone', async () => {
+commonTest('development options: explicit refresh picks up changed server mode while retaining entered phone', async () => {
   const env = environment(); let enabled = false
   const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneBindingOptions() { return { developmentBypass: enabled } } })
   manualFill(page); assert.equal(page.data.phoneDevelopment, false); enabled = true; await page.loadPhoneOptions()
   assert.equal(page.data.phoneDevelopment, true); assert.equal(page.data.manualMobile, '13800138000'); assert.equal(page.data.phoneModeMessage, '')
   enabled = false; await page.loadPhoneOptions(); assert.equal(page.data.phoneDevelopment, false); assert.ok(page.data.phoneModeMessage)
 })
-test('development options: failed or missing backend endpoint gives actionable error with bypass disabled', async () => {
+commonTest('development options: failed or missing backend endpoint gives actionable error with bypass disabled', async () => {
   const env = environment()
   const page = await readyManualPhone(env, { async me() { return profileValue() }, async phoneBindingOptions() { throw Object.assign(new Error('not found'), { status: 404 }) } })
   assert.equal(page.data.phoneDevelopment, false); assert.ok(page.data.phoneOptionsError.includes('更新后端'))
@@ -1543,7 +1579,7 @@ async function customCreate(env, api = {}) {
 }
 function tagEvent(id) { return { currentTarget: { dataset: { id } } } }
 function okRequest(req, value) { req.success({ statusCode: 200, data: { code: 0, data: value } }) }
-test('custom task API: exact service body and price-only quote never include nested order or delivery fields', async () => {
+userTest('custom task API: exact service body and price-only quote never include nested order or delivery fields', async () => {
   const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
   for (const type of ['CUSTOM', 'SEND']) {
     const quoting = api.quote({ orderType: type, taskPriceFen: 650, distanceM: 2500, weightKg: 2 }); const req = env.calls.requests.at(-1)
@@ -1568,7 +1604,7 @@ test('custom task API: exact service body and price-only quote never include nes
     assert.equal(env.calls.requests.length, count)
   }
 })
-test('custom task API: authenticated tag, task metadata and complaint reads retain session scope', async () => {
+userTest('custom task API: authenticated tag, task metadata and complaint reads retain session scope', async () => {
   const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
   for (const [method, url] of [['taskTags', '/task-tags'], ['customTask', '/orders/77/custom-task'], ['orderComplaints', '/orders/77/complaints']]) {
     const pending = api[method](77); const req = env.calls.requests.at(-1)
@@ -1577,15 +1613,15 @@ test('custom task API: authenticated tag, task metadata and complaint reads reta
   const session = env.load(path.join(native, 'utils/session.js')); const bound = api.forSession(session.revision()); session.clear()
   const count = env.calls.requests.length; await assert.rejects(bound.taskTags()); assert.equal(env.calls.requests.length, count)
 })
-test('custom task home: exactly two independent services are available to users and riders without duplicate shortcuts', () => {
+userTest('custom task home: three independent services are available to users and riders without duplicate shortcuts', () => {
   for (const role of ['USER', 'RIDER']) {
     const env = environment(); env.authenticated(role); const page = env.page('pages/index/index', {}); page.onLoad({}); page.onShow()
-    assert.deepEqual(Array.from(page.data.types, t => t.code), ['SEND', 'CUSTOM'])
+    assert.deepEqual(Array.from(page.data.types, t => t.code), ['SEND', 'TRANSPORT', 'CUSTOM'])
     page.create({ currentTarget: { dataset: { type: 'CUSTOM' } } }); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=CUSTOM')
     for (const name of ['orders', 'address', 'settings']) assert.equal(page[name], undefined)
   }
 })
-test('custom task form: title/content boundaries, optional tags and canonical string IDs without route constraints', async () => {
+userTest('custom task form: title/content boundaries, optional tags and canonical string IDs without route constraints', async () => {
   const env = environment(); const page = await customCreate(env)
   let payload = page.buildPayload(); assert.equal(payload.taskTitle, '自定义标题'); assert.equal(payload.taskContent, '完整任务要求'); assert.equal(payload.goodsDesc, undefined); assert.equal(payload.taskTagIds, '')
   for (const [field, max] of [['taskTitle', 64], ['taskContent', 1000]]) {
@@ -1600,7 +1636,7 @@ test('custom task form: title/content boundaries, optional tags and canonical st
   page.data.distanceKm = ''; page.data.weightKg = 'not-a-weight'; assert.doesNotThrow(() => page.buildPayload())
   for (const key of ['distanceM', 'weightKg', 'fromAddress', 'toAddress', 'goodsDesc']) assert.equal(key in page.buildPayload(), false)
 })
-test('custom task tags: errors are visible and retryable with no fabricated options, disabled tags stay excluded', async () => {
+userTest('custom task tags: errors are visible and retryable with no fabricated options, disabled tags stay excluded', async () => {
   const env = environment(); let fail = true
   const page = await customCreate(env, { async taskTags() { if (fail) throw new Error('标签服务不可用'); return taskTagRows().concat([{ id: 99, name: '停用', enabled: false }]) } })
   assert.equal(page.data.tagsLoaded, false); assert.equal(page.data.taskTags.length, 0); assert.equal(page.data.tagsError, '标签服务不可用')
@@ -1609,7 +1645,7 @@ test('custom task tags: errors are visible and retryable with no fabricated opti
   page.tagChoice(tagEvent(1)); await page.next(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
   const count = page.data.taskTags.length; assert.equal(count, 7)
 })
-test('custom task drafts: partial editing persists; restored title/content/tags do not replace uncertain order identity', async () => {
+userTest('custom task drafts: partial editing persists; restored title/content/tags do not replace uncertain order identity', async () => {
   const env = environment(); const page = await customCreate(env); page.tagChoice(tagEvent(2)); await page.next()
   const saved = env.storage.get('native_draft'); assert.equal(saved.payload.taskTagIds, '2')
   const restored = env.page('pages/order/create', { async addressList() { return [] }, async taskTags() { return taskTagRows() } }); restored.onLoad({ type: 'CUSTOM' }); await restored.onShow()
@@ -1620,14 +1656,14 @@ test('custom task drafts: partial editing persists; restored title/content/tags 
   const other = environment(); const partial = await customCreate(other); partial.data.distanceKm = ''; partial.input(event('taskContent', '未填完也保存'))
   const again = other.page('pages/order/create', {}); again.onLoad({ type: 'CUSTOM' }); assert.equal(again.data.form.taskContent, '未填完也保存'); assert.equal(again.data.taskPrice, '6.50')
 })
-test('custom task tags: stale account responses cannot replace new account form or tags', async () => {
+userTest('custom task tags: stale account responses cannot replace new account form or tags', async () => {
   const env = environment(); env.authenticated(); let respond
   const page = env.page('pages/order/create', { async addressList() { return [] }, taskTags() { return new Promise(r => { respond = r }) } }); page.onLoad({ type: 'CUSTOM' }); const loading = page.onShow(); await flush()
   env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' }); const showing = page.onShow(); await showing
   respond(taskTagRows()); await loading; assert.equal(page.data.taskTags.length, 0); assert.equal(page.data.form.taskTitle || '', '')
   assert.equal(env.storage.has('native_draft'), false)
 })
-test('custom task publishing: same confirmation creates once, MOCK pays returned OrderVO ID and retains uncertain failure', async () => {
+userTest('custom task publishing: same confirmation creates once, MOCK pays returned OrderVO ID and retains uncertain failure', async () => {
   const env = environment(); const create = await customCreate(env); await create.next(); let creates = 0; let pays = 0
   const page = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async createOrder(data) { creates++; assert.equal(data.orderType, 'CUSTOM'); assert.equal(data.taskTitle, '自定义标题'); return { id: 80 } }, async payOrder(id) { pays++; assert.equal(id, 80) } })
   page.onLoad({}); page.onShow(); await page.submit(); assert.equal(creates, 1); assert.equal(pays, 1); assert.equal(env.storage.has('native_draft'), false)
@@ -1641,21 +1677,21 @@ async function detailPage(env, api = {}, patch = {}, role = 'USER') {
   env.authenticated(role)
   const page = env.page('pages/order/detail', Object.assign({ async orderDetail() { return orderValue(patch) }, async orderComplaints() { return [] } }, api)); page.onLoad({ id: '90' }); await page.onShow(); return page
 }
-test('task details: only CUSTOM requests metadata; details display title/content/tags and redact identity extras', async () => {
+userTest('task details: only CUSTOM requests metadata; details display title/content/tags and redact identity extras', async () => {
   const env = environment(); let reads = 0
   const page = await detailPage(env, { async customTask() { reads++; return { id: 4, userId: 1, title: '标题', content: '内容', tags: [{ id: 1, name: '后台标签' }], createdBy: 999, publishSource: 'MINIAPP' } } }, { orderType: 'CUSTOM' })
   assert.equal(reads, 1); assert.equal(page.data.task.title, '标题'); assert.equal(page.data.task.tags[0].name, '后台标签'); assert.equal('userId' in page.data.task, false); assert.equal('createdBy' in page.data.task, false)
   const ordinary = await detailPage(environment(), { async customTask() { assert.fail('ordinary order must not read custom metadata') } }); assert.equal(ordinary.data.task, null)
   const missing = await detailPage(environment(), { async customTask() { return null } }, { orderType: 'CUSTOM' }); assert.equal(missing.data.task, null); assert.equal(missing.data.taskError, '')
 })
-test('task details: metadata load errors remain visible, retry works, list uses existing title and CUSTOM type', async () => {
+userTest('task details: metadata load errors remain visible, retry works, list uses existing title and CUSTOM type', async () => {
   let fail = true; const env = environment()
   const page = await detailPage(env, { async customTask() { if (fail) throw new Error('任务读取失败'); return { title: '任务标题', content: '要求', tags: [] } } }, { orderType: 'CUSTOM' })
   assert.equal(page.data.taskError, '任务读取失败'); assert.equal(page.data.task, null); fail = false; await page.loadTask(); assert.equal(page.data.task.title, '任务标题')
   const list = env.page('pages/order/list', { async myOrders() { return { content: [orderValue({ orderType: 'CUSTOM', goodsDesc: '列表任务标题' })], last: true } } }); list.onLoad({}); await list.onShow()
   assert.equal(list.data.list[0].typeText, '自定义任务'); assert.equal(list.data.list[0].goodsDesc, '列表任务标题')
 })
-test('complaints: accepted through finished can submit, owner gates include rider publishers but never carrier', async () => {
+userTest('complaints: accepted through finished can submit, owner gates include rider publishers but never carrier', async () => {
   for (const status of ['WAIT_PAY', 'WAIT_GRAB', 'ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED', 'CANCELED']) {
     const page = await detailPage(environment(), {}, { status }); assert.equal(page.data.complaintAllowed, ['ACCEPTED', 'PICKING', 'DELIVERING', 'DELIVERED', 'FINISHED'].includes(status))
   }
@@ -1664,7 +1700,7 @@ test('complaints: accepted through finished can submit, owner gates include ride
   const legacyUser = await detailPage(environment(), {}, { owner: undefined }); assert.equal(legacyUser.data.complaintAllowed, true)
   const customRider = await detailPage(environment(), { async customTask() { return { userId: 1, title: '自己发布', content: '要求', tags: [] } } }, { orderType: 'CUSTOM', owner: undefined }, 'RIDER'); assert.equal(customRider.data.complaintAllowed, true)
 })
-test('complaints: server OPEN/PROCESSING suppress duplicates, terminal states allow new issues and format MOCK compensation', async () => {
+userTest('complaints: server OPEN/PROCESSING suppress duplicates, terminal states allow new issues and format MOCK compensation', async () => {
   for (const status of ['OPEN', 'PROCESSING', 'APPROVED', 'REJECTED', 'DONE', 'UNKNOWN']) {
     const page = await detailPage(environment(), { async orderComplaints() { return [complaintValue({ status, result: '处理原因', compensationFen: 1234, riderId: 20, handledBy: 30, actions: [{ operatorId: 30, detail: '内部说明' }] })] } })
     const active = ['OPEN', 'PROCESSING', 'UNKNOWN'].includes(status); assert.equal(page.data.activeComplaint, active); assert.equal(page.data.complaintAllowed, !active)
@@ -1672,21 +1708,21 @@ test('complaints: server OPEN/PROCESSING suppress duplicates, terminal states al
     for (const field of ['riderId', 'userId', 'handledBy', 'actions', 'deductedFen']) assert.equal(field in page.data.complaints[0], false)
   }
 })
-test('complaints: failed reads never pretend empty or enable form; retry and refresh use service state and preserve draft', async () => {
+userTest('complaints: failed reads never pretend empty or enable form; retry and refresh use service state and preserve draft', async () => {
   let mode = 'failure'; const env = environment()
   const page = await detailPage(env, { async orderComplaints() { if (mode === 'failure') throw new Error('投诉查询失败'); return mode === 'active' ? [complaintValue()] : [complaintValue({ status: 'APPROVED', result: '已赔付', compensationFen: 500 })] } })
   page.input(event('complaintDescription', '保留诉求')); assert.equal(page.data.complaintsLoaded, false); assert.equal(page.data.complaintAllowed, false); assert.equal(page.data.complaintsError, '投诉查询失败')
   mode = 'active'; await page.loadComplaints(); assert.equal(page.data.complaintsError, ''); assert.equal(page.data.activeComplaint, true)
   mode = 'done'; await page.loadComplaints(); assert.equal(page.data.complaintAllowed, true); assert.equal(page.data.complaints[0].compensationText, '5.00'); assert.equal(page.data.complaintDescription, '保留诉求')
 })
-test('complaints: description 1..255, successful submit refreshes history and blocks another active ticket', async () => {
+userTest('complaints: description 1..255, successful submit refreshes history and blocks another active ticket', async () => {
   let submitted; let reads = 0; const env = environment()
   const page = await detailPage(env, { async orderComplaints() { reads++; return submitted ? [complaintValue({ description: submitted.description })] : [] }, async complaint(data) { submitted = data; return { ticketId: 8, sla: '请等待处理' } } })
   for (const value of ['', '  ', '字'.repeat(256)]) { page.input(event('complaintDescription', value)); await page.complaint(); assert.equal(submitted, undefined) }
   page.input(event('complaintDescription', ' ' + '字'.repeat(255) + ' ')); await page.complaint()
   assert.equal(submitted.description.length, 255); assert.equal(submitted.orderId, 90); assert.equal(reads, 2); assert.equal(page.data.complaintAllowed, false); assert.equal(page.data.complaintDescription, '')
 })
-test('complaints: 403 and uncertain submission preserve description, require refresh, and never invent successful ticket', async () => {
+userTest('complaints: 403 and uncertain submission preserve description, require refresh, and never invent successful ticket', async () => {
   for (const code of [403, 500]) {
     const page = await detailPage(environment(), { async complaint() { throw Object.assign(new Error('服务端拒绝或待核实'), { code }) } })
     page.input(event('complaintDescription', '保留本单诉求')); await page.complaint()
@@ -1694,7 +1730,7 @@ test('complaints: 403 and uncertain submission preserve description, require ref
     assert.ok(page.data.complaintsError); await page.loadComplaints(); assert.equal(page.data.complaintAllowed, code !== 403)
   }
 })
-test('complaints: slow list and submit responses cannot expose old account history or clear another account input', async () => {
+userTest('complaints: slow list and submit responses cannot expose old account history or clear another account input', async () => {
   for (const operation of ['read', 'submit']) {
     const env = environment(); let respond; let defer = false
     const page = await detailPage(env, { orderComplaints() { if (defer) return new Promise(r => { respond = r }); return Promise.resolve([]) }, complaint() { return new Promise(r => { respond = r }) } })
@@ -1704,14 +1740,14 @@ test('complaints: slow list and submit responses cannot expose old account histo
     assert.equal(page.data.complaints.length, 0); assert.equal(page.data.ticket, ''); assert.equal(page.data.complaintDescription, '新账号输入')
   }
 })
-test('custom page phases: switching accounts during address load never starts a new-session tag request', async () => {
+userTest('custom page phases: switching accounts during address load never starts a new-session tag request', async () => {
   const env = environment(); env.authenticated(); let respond; let tags = 0
   const page = env.page('pages/order/create', { addressList() { return new Promise(r => { respond = r }) }, async taskTags() { tags++; return taskTagRows() } })
   page.onLoad({ type: 'CUSTOM' }); const pending = page.onShow(); await flush()
   env.load(path.join(native, 'utils/session.js')).save({ token: 'B', userId: 2, role: 'USER', nickname: 'B' }); respond([]); await pending
   assert.equal(tags, 0); assert.equal(page.data.taskTags.length, 0)
 })
-test('task details phases: stale metadata never renders or continues into a switched-account complaint request', async () => {
+userTest('task details phases: stale metadata never renders or continues into a switched-account complaint request', async () => {
   const env = environment(); env.authenticated(); let respond; let reads = 0
   const page = env.page('pages/order/detail', { async orderDetail() { return orderValue({ orderType: 'CUSTOM' }) }, customTask() { return new Promise(r => { respond = r }) }, async orderComplaints() { reads++; return [] } })
   page.onLoad({ id: '90' }); const pending = page.onShow(); await flush()
@@ -1719,11 +1755,11 @@ test('task details phases: stale metadata never renders or continues into a swit
   respond({ title: '旧账号隐私', content: '旧账号内容', userId: 1, tags: [] }); await pending
   assert.equal(page.data.task, null); assert.equal(page.data.complaints.length, 0); assert.equal(reads, 0)
 })
-test('complaint missing mock endpoint is an explicit failure, never a fabricated no-complaints success', async () => {
+userTest('complaint missing mock endpoint is an explicit failure, never a fabricated no-complaints success', async () => {
   const env = environment(); env.authenticated(); const page = env.page('pages/order/detail', { async orderDetail() { return orderValue() } })
   page.onLoad({ id: '90' }); await page.onShow(); assert.equal(page.data.complaintsLoaded, false); assert.equal(page.data.complaintAllowed, false); assert.ok(page.data.complaintsError)
 })
-test('custom and complaint disclosure: templates and legal copy retain limits, retries, necessary fields and MOCK-only refunds', () => {
+userTest('custom and complaint disclosure: templates and legal copy retain limits, retries, necessary fields and MOCK-only refunds', () => {
   const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8'); const detail = fs.readFileSync(path.join(native, 'pages/order/detail.wxml'), 'utf8')
   for (const text of ['maxlength="64"', 'maxlength="1000"', 'loadTaskTags', 'selectedTagCount']) assert.ok(create.includes(text))
   for (const text of ['maxlength="255"', 'loadComplaints', 'complaintsError', 'complaintAllowed', '未真实退款或转账', 'item.result', 'item.compensationText']) assert.ok(detail.includes(text))
@@ -1754,7 +1790,7 @@ async function walletPage(env, overrides) {
   page.onLoad({}); await page.onShow()
   return page
 }
-test('wallet API: all four endpoints use JWT, page0 default, no userId or role and scoped calls', async () => {
+commonTest('wallet API: all four endpoints use JWT, page0 default, no userId or role and scoped calls', async () => {
   const env = environment(); env.authenticated('RIDER')
   const api = env.load(path.join(native, 'utils/api.js'))
   const pending = [api.wallet(), api.walletEntries(), api.withdrawals(2), api.requestWithdrawal({ amountFen: 1, requestId: 'request-001', userId: 999, role: 'ADMIN' })]
@@ -1773,7 +1809,7 @@ test('wallet API: all four endpoints use JWT, page0 default, no userId or role a
   await assert.rejects(bound.withdrawals(0), /账户状态/); await assert.rejects(bound.requestWithdrawal({ amountFen: 1, requestId: 'request-002' }), /账户状态/)
   assert.equal(env.calls.requests.length, 4)
 })
-test('wallet amount: exact decimal string to integer fen boundaries, no float rounding or invalid input', async () => {
+commonTest('wallet amount: exact decimal string to integer fen boundaries, no float rounding or invalid input', async () => {
   const env = environment(); const wallet = env.load(path.join(native, 'utils/wallet.js'))
   for (const [text, fen] of [['0.01', 1], ['0.29', 29], ['1', 100], ['1.1', 110], ['12.34', 1234], ['999999.99', 99999999], ['1000000', 100000000], ['1000000.00', 100000000]]) {
     assert.equal(wallet.amountFen(text), fen); assert.equal(wallet.fenText(fen), text.includes('.') && text.split('.')[1].length === 2 ? text : fen === 110 ? '1.10' : fen === 100 ? '1.00' : '1000000.00')
@@ -1787,7 +1823,7 @@ test('wallet amount: exact decimal string to integer fen boundaries, no float ro
   for (const requestId of ['', '1234567', 'x'.repeat(65), 12345678]) await assert.rejects(api.requestWithdrawal({ amountFen: 1, requestId }))
   assert.equal(env.calls.requests.length, 0)
 })
-test('wallet request IDs: wx random UUID once; unsupported or failed platform has bounded idempotency fallback', async () => {
+commonTest('wallet request IDs: wx random UUID once; unsupported or failed platform has bounded idempotency fallback', async () => {
   let randomCalls = 0
   const env = environment({ getRandomValues(options) { randomCalls++; assert.equal(options.length, 16); options.success({ randomValues: new Uint8Array(Array.from({ length: 16 }, (_, i) => i)).buffer }) } })
   const wallet = env.load(path.join(native, 'utils/wallet.js'))
@@ -1798,7 +1834,7 @@ test('wallet request IDs: wx random UUID once; unsupported or failed platform ha
     assert.match(one, /^wd-/); assert.ok(one.length >= 8 && one.length <= 64); assert.notEqual(one, two)
   }
 })
-test('wallet loading: enter and reenter read live wallet/phone/records, My only links with no extra me request', async () => {
+commonTest('wallet loading: enter and reenter read live wallet/phone/records, My only links with no extra me request', async () => {
   const env = environment(); let loads = 0
   const page = await walletPage(env, { async wallet() { return walletValue({ availableFen: ++loads * 100 }) } })
   assert.equal(page.data.wallet.availableText, '1.00'); assert.equal(page.data.mobileBound, true)
@@ -1808,7 +1844,7 @@ test('wallet loading: enter and reenter read live wallet/phone/records, My only 
   my.wallet(); assert.equal(env.calls.navigation.at(-1).url, '/pages/wallet/wallet'); assert.equal(env.calls.requests.length, count)
   env.load(path.join(native, 'utils/session.js')).clear(); my.wallet(); assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
 })
-test('wallet errors: failed or invalid wallet never fabricates zero; retry loads truth and failures clear stale amount', async () => {
+commonTest('wallet errors: failed or invalid wallet never fabricates zero; retry loads truth and failures clear stale amount', async () => {
   const env = environment(); let fail = true
   const page = await walletPage(env, { async wallet() { if (fail) throw new Error('网络断开'); return walletValue() } })
   assert.equal(page.data.wallet, null); assert.match(page.data.error, /网络断开/)
@@ -1818,7 +1854,7 @@ test('wallet errors: failed or invalid wallet never fabricates zero; retry loads
   const wallet = env.load(path.join(native, 'utils/wallet.js'))
   for (const bad of [null, walletValue({ userId: 2 }), walletValue({ availableFen: '0' }), walletValue({ debtFen: -1 }), walletValue({ frozenFen: NaN }), walletValue({ channel: 'WX' }), walletValue({ withdrawAllowed: undefined }), walletValue({ totalIncomeFen: undefined })]) assert.throws(() => wallet.walletView(bad, 1))
 })
-test('wallet eligibility: balance, debt, withdrawAllowed and phone status all gate NEW requests; server may still deny', async () => {
+commonTest('wallet eligibility: balance, debt, withdrawAllowed and phone status all gate NEW requests; server may still deny', async () => {
   for (const patch of [{ availableFen: 0 }, { availableFen: 99 }, { debtFen: 1 }, { withdrawAllowed: false }]) {
     const env = environment(); let posted = 0
     const page = await walletPage(env, { async wallet() { return walletValue(patch) }, async requestWithdrawal() { posted++ } })
@@ -1833,7 +1869,7 @@ test('wallet eligibility: balance, debt, withdrawAllowed and phone status all ga
   page.input(event('amount', '1')); assert.equal(page.data.canSubmit, true); await page.submit()
   assert.match(page.data.submitError, /服务端拒绝/); assert.equal(page.data.wallet.availableText, '50.00'); assert.ok(env.storage.get('native_pending_withdrawal'))
 })
-test('wallet server 403: refresh me to expose phone guidance without guessing a business code or treating every denial as unbound', async () => {
+commonTest('wallet server 403: refresh me to expose phone guidance without guessing a business code or treating every denial as unbound', async () => {
   for (const mobileBound of [false, true]) {
     const env = environment(); let meCalls = 0; let posts = 0
     const page = await walletPage(env, { async me() { meCalls++; return { userId: 1, mobileBound: meCalls === 1 || mobileBound } },
@@ -1844,7 +1880,7 @@ test('wallet server 403: refresh me to expose phone guidance without guessing a 
     if (!mobileBound) { page.profile(); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?from=wallet&mode=phone') }
   }
 })
-test('wallet submit: modal states exact frozen amount and MOCK boundary, duplicate clicks freeze once and refresh live', async () => {
+commonTest('wallet submit: modal states exact frozen amount and MOCK boundary, duplicate clicks freeze once and refresh live', async () => {
   let modal; let randomCalls = 0; let resolvePost; let posts = 0; let loads = 0; let entriesLoads = 0; let recordLoads = 0
   const env = environment({ showModal(options) { modal = options; options.success({ confirm: true }) }, getRandomValues(options) { randomCalls++; options.success({ randomValues: new Uint8Array(16).buffer }) } })
   const page = await walletPage(env, {
@@ -1861,7 +1897,7 @@ test('wallet submit: modal states exact frozen amount and MOCK boundary, duplica
   assert.equal(loads, 2); assert.equal(entriesLoads, 2); assert.equal(recordLoads, 2); assert.equal(page.data.busy, false)
   assert.equal([...env.storage.keys()].some(k => /balance/i.test(k)), false)
 })
-test('wallet uncertain network retry: same key and amount survive page recreation, no duplicate mock freeze even with debt', async () => {
+commonTest('wallet uncertain network retry: same key and amount survive page recreation, no duplicate mock freeze even with debt', async () => {
   const env = environment(); const seen = new Map(); const posted = []; let freezeCount = 0; let availableFen = 5000
   const mock = walletApi({
     async wallet() { return walletValue({ availableFen, frozenFen: freezeCount * 1234, debtFen: freezeCount ? 50 : 0, withdrawAllowed: !freezeCount }) },
@@ -1881,21 +1917,21 @@ test('wallet uncertain network retry: same key and amount survive page recreatio
   assert.equal(freezeCount, 1); assert.equal(availableFen, 3766); assert.equal(env.storage.has('native_pending_withdrawal'), false)
   assert.equal(page.data.wallet.availableText, '37.66'); assert.equal(page.data.wallet.debtText, '0.50')
 })
-test('wallet cancellation or failed pending persistence never sends a withdrawal', async () => {
+commonTest('wallet cancellation or failed pending persistence never sends a withdrawal', async () => {
   const env = environment({ showModal(options) { options.success({ confirm: false }) } }); let posted = 0
   const page = await walletPage(env, { async requestWithdrawal() { posted++ } }); page.input(event('amount', '1'))
   await page.submit(); assert.equal(posted, 0); assert.equal(env.storage.has('native_pending_withdrawal'), false)
   env.wx.showModal = options => options.success({ confirm: true })
   env.wx.setStorageSync = () => { throw new Error('存储空间不足') }; await page.submit(); assert.equal(posted, 0); assert.match(page.data.submitError, /存储空间不足/)
 })
-test('wallet response errors retain exact pending ID and never assume funds or clear mismatched result', async () => {
+commonTest('wallet response errors retain exact pending ID and never assume funds or clear mismatched result', async () => {
   for (const patch of [null, { userId: 2 }, { amountFen: 999 }, { requestId: 'wrong-request' }, { status: 'UNKNOWN' }, { channel: 'WX' }]) {
     const env = environment(); const page = await walletPage(env, { async requestWithdrawal(value) { return patch === null ? null : withdrawalValue(Object.assign({}, value, patch)) } })
     page.input(event('amount', '1')); await page.submit()
     assert.ok(env.storage.get('native_pending_withdrawal')); assert.ok(page.data.pending); assert.ok(page.data.submitError); assert.equal(page.data.wallet.availableText, '50.00')
   }
 })
-test('wallet records: independent Page15 pagination, repeat clicks, failure retry same page and terminal labels', async () => {
+commonTest('wallet records: independent Page15 pagination, repeat clicks, failure retry same page and terminal labels', async () => {
   const env = environment(); const entriesCalls = []; const withdrawalsCalls = []; let resolveEntries; let failWithdrawals = true
   const page = await walletPage(env, {
     walletEntries(page) {
@@ -1919,7 +1955,7 @@ test('wallet records: independent Page15 pagination, repeat clicks, failure retr
   assert.equal(page.data.withdrawals[2].reason, '资料需核实'); assert.equal(page.data.withdrawals[1].reviewedText, '2026-11-15 11:00:00')
   for (const row of page.data.withdrawals) { assert.equal('reviewedBy' in row, false); assert.equal('userId' in row, false) }
 })
-test('wallet records: initial failure not empty success, invalid page/foreign withdrawals fail closed, dedup overlapping pages', async () => {
+commonTest('wallet records: initial failure not empty success, invalid page/foreign withdrawals fail closed, dedup overlapping pages', async () => {
   const env = environment(); let mode = 'error'
   const page = await walletPage(env, { async walletEntries(page) {
     if (mode === 'error') throw new Error('明细查询失败')
@@ -1933,14 +1969,14 @@ test('wallet records: initial failure not empty success, invalid page/foreign wi
   assert.throws(() => wallet.pageRows({ number: 2, content: [], last: true }, 0, wallet.entryView))
   assert.throws(() => wallet.pageRows({ content: Array.from({ length: 16 }, () => walletEntry()), last: false }, 0, wallet.entryView))
 })
-test('wallet successful response followed by failed refresh never substitutes cached or optimistic funds', async () => {
+commonTest('wallet successful response followed by failed refresh never substitutes cached or optimistic funds', async () => {
   const env = environment(); let loads = 0
   const page = await walletPage(env, { async wallet() { if (++loads > 1) throw new Error('刷新钱包失败'); return walletValue() } })
   page.input(event('amount', '1')); await page.submit()
   assert.equal(env.storage.has('native_pending_withdrawal'), false); assert.equal(page.data.pending, null)
   assert.equal(page.data.wallet, null); assert.match(page.data.error, /刷新钱包失败/); assert.equal(page.data.canSubmit, false)
 })
-test('wallet account isolation: stale wallet, me and pagination never expose previous account after a failed replacement', async () => {
+commonTest('wallet account isolation: stale wallet, me and pagination never expose previous account after a failed replacement', async () => {
   const env = environment(); let resolveWallet; let resolveMe; let resolveEntries
   const page = await walletPage(env)
   page.input(event('amount', '1')); assert.equal(page.data.canSubmit, true)
@@ -1959,7 +1995,7 @@ test('wallet account isolation: stale wallet, me and pagination never expose pre
   resolveWallet(walletValue()); resolveMe({ userId: 1, mobileBound: true }); resolveEntries({ number: 0, content: [walletEntry()], last: true }); await refreshing
   assert.equal(page.data.wallet, null); assert.equal(page.data.entries.length, 0); assert.match(page.data.error, /B钱包失败/); assert.equal(page.data.mobileBound, null)
 })
-test('wallet lifecycle: old modal/random callbacks cannot send, save or navigate after hide/unload/switch', async () => {
+commonTest('wallet lifecycle: old modal/random callbacks cannot send, save or navigate after hide/unload/switch', async () => {
   for (const phase of ['modal', 'random']) for (const change of ['hide', 'unload', 'switch']) {
     let callback; let posted = 0
     const env = environment({ showModal(options) { if (phase === 'modal') callback = () => options.success({ confirm: true }); else options.success({ confirm: true }) },
@@ -1974,7 +2010,7 @@ test('wallet lifecycle: old modal/random callbacks cannot send, save or navigate
     assert.equal(posted, 0); assert.equal(env.storage.get('native_pending_withdrawal'), other)
   }
 })
-test('wallet lifecycle: in-flight submit response after hide/unload/switch never clears pending or other owner storage', async () => {
+commonTest('wallet lifecycle: in-flight submit response after hide/unload/switch never clears pending or other owner storage', async () => {
   for (const change of ['hide', 'unload', 'switch']) {
     let reply; let sent
     const env = environment(); const page = await walletPage(env, { requestWithdrawal(value) { sent = value; return new Promise(resolve => { reply = resolve }) } })
@@ -1987,7 +2023,7 @@ test('wallet lifecycle: in-flight submit response after hide/unload/switch never
     assert.equal(env.storage.get('native_pending_withdrawal'), other); assert.equal(JSON.stringify(page.data), data); assert.equal(env.timers.size, 0)
   }
 })
-test('wallet pagination: stale page1 after hide and reenter cannot append or advance the new list cursor', async () => {
+commonTest('wallet pagination: stale page1 after hide and reenter cannot append or advance the new list cursor', async () => {
   const env = environment(); let resolveOld; let requests = 0
   const page = await walletPage(env, { async walletEntries(page) {
     requests++
@@ -2000,7 +2036,7 @@ test('wallet pagination: stale page1 after hide and reenter cannot append or adv
   assert.equal(page.data.entries.length, 1); assert.equal(page.data.entriesMore, true)
   await page.more(); assert.equal(page.data.entries[1].id, 101)
 })
-test('wallet refresh generations: newer same-account loads supersede old wallet and page requests', async () => {
+commonTest('wallet refresh generations: newer same-account loads supersede old wallet and page requests', async () => {
   const env = environment(); let walletCalls = 0; let listCalls = 0; let resolveWallet; let resolveList
   const page = await walletPage(env, { wallet() { if (++walletCalls === 2) return new Promise(resolve => { resolveWallet = resolve }); return Promise.resolve(walletValue({ availableFen: walletCalls * 100 })) },
     walletEntries(page) { if (++listCalls === 2) return new Promise(resolve => { resolveList = resolve }); return Promise.resolve({ number: page, content: [walletEntry({ id: listCalls })], last: true }) } })
@@ -2011,7 +2047,7 @@ test('wallet refresh generations: newer same-account loads supersede old wallet 
   resolveWallet(walletValue({ availableFen: 99999 })); resolveList({ number: 0, content: [walletEntry({ id: 999 })], last: false }); await oldWallet; await oldList
   assert.equal(page.data.wallet.availableText, '3.00'); assert.equal(page.data.entries[0].id, 3); assert.equal(page.data.entriesMore, false)
 })
-test('wallet multi-instance protection: pending created during confirmation cannot be overwritten by another key', async () => {
+commonTest('wallet multi-instance protection: pending created during confirmation cannot be overwritten by another key', async () => {
   const env = environment(); let finishModal; let posted = 0
   env.wx.showModal = options => { finishModal = () => options.success({ confirm: true }) }
   const page = await walletPage(env, { async requestWithdrawal() { posted++ } }); page.input(event('amount', '1'))
@@ -2019,7 +2055,7 @@ test('wallet multi-instance protection: pending created during confirmation cann
   env.storage.set('native_pending_withdrawal', other); finishModal(); await submitting
   assert.equal(posted, 0); assert.equal(env.storage.get('native_pending_withdrawal'), other); assert.equal(page.data.amount, '2.00'); assert.ok(page.data.pending)
 })
-test('wallet hidden and stale events cannot refresh, bind or submit for a replacement account', async () => {
+commonTest('wallet hidden and stale events cannot refresh, bind or submit for a replacement account', async () => {
   const env = environment(); let loads = 0; let posts = 0
   const page = await walletPage(env, { async wallet() { loads++; return walletValue() }, async requestWithdrawal() { posts++ } })
   page.input(event('amount', '1')); page.onHide(); await page.refresh(); page.profile(); await page.submit()
@@ -2028,7 +2064,7 @@ test('wallet hidden and stale events cannot refresh, bind or submit for a replac
   await page.refresh(); page.profile(); await page.submit(); page.input(event('amount', '2'))
   assert.equal(loads, 2); assert.equal(posts, 0); assert.equal(env.calls.navigation.length, 0); assert.equal(env.storage.has('native_pending_withdrawal'), false)
 })
-test('wallet storage: owner/revision isolation, logout cleanup and corrupted pending fail closed', async () => {
+commonTest('wallet storage: owner/revision isolation, logout cleanup and corrupted pending fail closed', async () => {
   const env = environment(); env.authenticated(); const wallet = env.load(path.join(native, 'utils/wallet.js')); const session = env.load(path.join(native, 'utils/session.js'))
   const saved = { owner: '1', amountFen: 1, requestId: 'stable-key-001' }; wallet.savePending(saved, '1', session.revision())
   assert.equal(wallet.pending('2'), null)
@@ -2041,18 +2077,20 @@ test('wallet storage: owner/revision isolation, logout cleanup and corrupted pen
   const page = await walletPage(env); env.storage.set('native_pending_withdrawal', { owner: '1', amountFen: NaN, requestId: 'broken-key' }); await page.onShow()
   assert.ok(page.data.pendingError); page.input(event('amount', '1')); assert.equal(page.data.canSubmit, false)
 })
-test('wallet disclosure: native form not KPI/chart, safe records, debt/refund rules and no real payment or transfer API', () => {
+commonTest('wallet disclosure: native form not KPI/chart, safe records, debt/refund rules and no real payment or transfer API', () => {
   const app = JSON.parse(fs.readFileSync(path.join(native, 'app.json'), 'utf8')); assert.ok(app.pages.includes('pages/wallet/wallet'))
   const template = fs.readFileSync(path.join(native, 'pages/wallet/wallet.wxml'), 'utf8')
   for (const text of ['待抵扣欠款', '全流程为模拟记账', '不代表真钱到账', '驳回', '先抵扣欠款', '重试原申请', '收支明细', '提现记录', 'disabled="{{!canSubmit || busy}}"']) assert.ok(template.includes(text), text)
   for (const text of ['reviewedBy', 'item.userId', 'canvas', 'chart', 'KPI', 'totalIncome', 'totalWithdrawn']) assert.equal(template.includes(text), false)
   const my = fs.readFileSync(path.join(native, 'pages/my/my.wxml'), 'utf8'); assert.ok(my.includes('bindtap="wallet"')); assert.equal(/availableFen|totalIncome|totalWithdrawn/.test(my), false)
-  const detail = fs.readFileSync(path.join(native, 'pages/order/detail.wxml'), 'utf8'); assert.ok(detail.includes('历史订单是否已入账')); assert.ok(detail.includes('模拟记入订单发布者钱包'))
+  const detail = fs.readFileSync(path.join(native, 'pages/order/detail.wxml'), 'utf8')
+  if (client === 'USER') { assert.ok(detail.includes('历史订单是否已入账')); assert.ok(detail.includes('模拟记入订单发布者钱包')) }
+  else { assert.equal(/bindtap="(?:pay|cancel|confirm|review|complaint|track)"/.test(detail), false); assert.ok(detail.includes('只读')) }
   const env = environment(); const legal = env.page('pages/legal/legal'); legal.onLoad({ kind: 'privacy' }); const privacy = legal.data.sections.map(s => s.text).join(' ')
   for (const text of ['钱包', '冻结', '欠款', '原申请金额', '幂等编号', 'MOCK', '不代表真钱到账']) assert.ok(privacy.includes(text), text)
   for (const file of ['pages/wallet/wallet.js', 'utils/wallet.js', 'utils/api.js']) assert.equal(/wx\.(?:requestPayment|requestMerchantTransfer|requestTransfer)\s*\(/.test(fs.readFileSync(path.join(native, file), 'utf8')), false)
 })
-test('service price: custom form shares exact decimal wallet parsing and inclusive boundaries', async () => {
+userTest('service price: custom form shares exact decimal wallet parsing and inclusive boundaries', async () => {
   const page = await customCreate(environment())
   for (const [text, fen] of [['0.01', 1], ['0.29', 29], ['1', 100], ['1.1', 110], ['1000000', 100000000], ['1000000.00', 100000000]]) {
     page.number(event('taskPrice', text)); const payload = page.buildPayload()
@@ -2062,7 +2100,7 @@ test('service price: custom form shares exact decimal wallet parsing and inclusi
     page.number(event('taskPrice', text)); assert.throws(() => page.buildPayload(), /金额/)
   }
 })
-test('service scenes: ONLINE no address, ONSITE single saved address, PART_TIME location plus required human time', async () => {
+userTest('service scenes: ONLINE no address, ONSITE single saved address, PART_TIME location plus required human time', async () => {
   const env = environment(); const page = await customCreate(env)
   assert.equal(page.data.form.taskMode, 'ONSITE')
   page.data.form.locationAddress = ''; assert.throws(() => page.buildPayload(), /地点/)
@@ -2084,7 +2122,7 @@ test('service scenes: ONLINE no address, ONSITE single saved address, PART_TIME 
   page.data.form.serviceTime += '字'; assert.throws(() => page.buildPayload(), /100/)
   await page.sceneChoice({ currentTarget: { dataset: { mode: 'ONSITE' } } }); assert.equal(page.data.form.serviceTime, ''); assert.equal(page.data.form.locationAddress, '')
 })
-test('service address: refresh invalidates edited or removed selection and ONLINE never restores saved location', async () => {
+userTest('service address: refresh invalidates edited or removed selection and ONLINE never restores saved location', async () => {
   const env = environment(); let rows = [regionAddress()]
   const page = await customCreate(env, { async addressList() { return rows } })
   page.addressChange({ currentTarget: { dataset: { side: 'location' } }, detail: { value: 0 } })
@@ -2094,11 +2132,11 @@ test('service address: refresh invalidates edited or removed selection and ONLIN
   rows = []; await page.loadAddresses(); assert.equal(page.data.form.locationAddress, ''); assert.equal(page.data.locationAddressId, null)
   await page.sceneChoice({ currentTarget: { dataset: { mode: 'ONLINE' } } }); page.applyAddress('location', regionAddress()); assert.equal(page.data.form.locationAddress, '')
 })
-test('delivery tabs: shared home defaults SEND, old BUY/ERRAND deep links and clean type switching preserve pending identity', async () => {
+userTest('delivery tabs: shared home defaults SEND, old BUY/ERRAND deep links and clean type switching preserve pending identity', async () => {
   const env = environment(); env.authenticated()
   const home = env.page('pages/index/index', {}); home.onLoad({}); home.onShow()
   for (const type of ['SEND', 'CUSTOM']) { home.create({ currentTarget: { dataset: { type } } }); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=' + type) }
-  for (const type of ['BUY', 'ERRAND']) { const deep = env.page('pages/order/create', {}); deep.onLoad({ type }); assert.equal(deep.data.form.orderType, type) }
+  for (const type of ['BUY', 'ERRAND']) { const deep = env.page('pages/order/create', {}); deep.onLoad({ type }); assert.equal(deep.data.form.orderType, type === 'ERRAND' ? 'SEND' : type) }
   const page = env.page('pages/order/create', { async addressList() { return [] } }); page.onLoad({}); page._visible = true; fillCreate(page)
   page.data.quote = { totalText: '5.00' }; page.data.fromAddressId = 12
   const saved = { owner: 1, savedAt: 888, payload: { orderType: 'SEND' }, quote: {} }; env.storage.set('native_draft', saved)
@@ -2108,7 +2146,7 @@ test('delivery tabs: shared home defaults SEND, old BUY/ERRAND deep links and cl
   await page.next(); assert.equal(env.storage.get('native_draft'), saved); assert.equal(env.storage.get('native_pending_order').savedAt, 888)
   assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
 })
-test('service quote: total and both shares must come from backend and match without hardcoded percentage', async () => {
+userTest('service quote: total and both shares must come from backend and match without hardcoded percentage', async () => {
   for (const bad of [{ totalFen: 650, items: [] }, { totalFen: 650, riderShareFen: 455, items: [] },
     { totalFen: 651, riderShareFen: 456, platformShareFen: 195, items: [] }, { totalFen: 650, riderShareFen: -1, platformShareFen: 651, items: [] },
     { totalFen: 650, riderShareFen: 454, platformShareFen: 195, items: [] }, { totalFen: 650, riderShareFen: '455', platformShareFen: 195, items: [] }]) {
@@ -2124,14 +2162,14 @@ test('service quote: total and both shares must come from backend and match with
   const quote = env.storage.get('native_draft').quote; assert.equal(quote.riderShareText, '5.00'); assert.equal(quote.platformShareText, '1.50')
   const confirm = env.page('pages/order/confirm', {}); confirm.onLoad({}); assert.equal(confirm.data.isService, true); assert.equal(confirm.data.quote.totalText, '6.50'); assert.equal(confirm.data.invalid, false)
 })
-test('service draft: amount and scene restore, unchanged payload stable, new scene invalidates quote', async () => {
+userTest('service draft: amount and scene restore, unchanged payload stable, new scene invalidates quote', async () => {
   const env = environment(); const page = await customCreate(env); await page.sceneChoice({ currentTarget: { dataset: { mode: 'ONLINE' } } })
   page.number(event('taskPrice', '0.29')); page.input(event('serviceTime', '今天下午'))
   const again = env.page('pages/order/create', { async addressList() { return [] }, async taskTags() { return taskTagRows() } }); again.onLoad({ type: 'CUSTOM' }); await again.onShow()
   assert.equal(again.data.taskPrice, '0.29'); assert.equal(again.data.form.taskMode, 'ONLINE'); assert.equal(again.data.form.serviceTime, '')
   const a = again.buildPayload(); assert.equal(env.load(path.join(native, 'utils/draft.js')).samePayload(a, again.buildPayload()), true)
 })
-test('legacy CUSTOM drafts: uncreated requires rewrite, known ID retries old order, unknown result never recreates', async () => {
+userTest('legacy CUSTOM drafts: uncreated requires rewrite, known ID retries old order, unknown result never recreates', async () => {
   for (const pending of [null, { id: 77 }, { uncertain: true }]) {
     const env = environment(); env.authenticated(); let creates = 0; let pays = 0
     const saved = { owner: 1, savedAt: 876, payload: { orderType: 'CUSTOM', taskTitle: '旧配送', fromAddress: 'A', toAddress: 'B', distanceM: 2000, weightKg: 1 }, quote: { totalText: '6.50', items: [] } }
@@ -2148,13 +2186,13 @@ test('legacy CUSTOM drafts: uncreated requires rewrite, known ID retries old ord
     if (!pending) { form.input(event('taskTitle', '重新填写')); assert.equal(env.storage.get('native_draft').payload.taskMode, 'ONSITE'); assert.equal(env.storage.get('native_draft').payload.fromAddress, undefined) }
   }
 })
-test('service confirmation: corrupted or incomplete shares cannot create a new order', async () => {
+userTest('service confirmation: corrupted or incomplete shares cannot create a new order', async () => {
   const env = environment(); const page = await customCreate(env); await page.next()
   env.storage.get('native_draft').quote.riderShareFen = undefined
   let creates = 0; const confirm = env.page('pages/order/confirm', { async createOrder() { creates++ } }); confirm.onLoad({}); confirm.onShow(); await confirm.submit()
   assert.equal(confirm.data.invalid, true); assert.equal(creates, 0)
 })
-test('service API: start and complete POST empty body to exact endpoints with session binding', async () => {
+riderTest('service API: start and complete POST empty body to exact endpoints with session binding', async () => {
   const env = environment(); env.authenticated('RIDER'); const api = env.load(path.join(native, 'utils/api.js'))
   for (const [name, suffix] of [['serviceStart', 'service-start'], ['serviceComplete', 'service-complete']]) {
     const pending = api[name](81); const req = env.calls.requests.at(-1)
@@ -2166,10 +2204,10 @@ test('service API: start and complete POST empty body to exact endpoints with se
 })
 async function riderPage(env, patch = {}) {
   env.authenticated('RIDER')
-  const page = env.page('pages/rider/workbench', Object.assign({ async riderMe() { return { onlineStatus: 1 } }, async grabList() { return [] }, async riderOrders() { return { content: [], last: true } } }, patch))
+  const page = env.page('pages/rider/workbench', Object.assign({ async riderMe() { return { riderId: 11, onlineStatus: 1 } }, async grabList() { return [] }, async riderOrders() { return { content: [], last: true } } }, patch))
   page.onLoad({}); await page.onShow(); return page
 }
-test('rider service workflow: accepted start, PICKING complete, DELIVERED waits owner with no delivery or location calls', async () => {
+riderTest('rider service workflow: accepted start, PICKING complete, DELIVERED waits owner with no delivery or location calls', async () => {
   const env = environment(); let statusCode = 'ACCEPTED'; const calls = []
   const page = await riderPage(env, {
     async riderOrders() { return { content: [{ id: 81, orderType: 'CUSTOM', taskMode: 'ONLINE', title: '设计资料', statusCode, status: statusCode, rewardFen: 700 }], last: true } },
@@ -2184,7 +2222,7 @@ test('rider service workflow: accepted start, PICKING complete, DELIVERED waits 
   await page.serviceComplete(tap); row = page.data.orders[0]; assert.equal(row.statusText, '待用户确认完成'); assert.equal(row.canServiceStart, false); assert.equal(row.canServiceComplete, false)
   assert.deepEqual(calls, [['start', 81], ['complete', 81]]); assert.equal(env.calls.locations, 0)
 })
-test('rider legacy DELIVERY workflow: pickup, depart, deliver remain available and never service actions', async () => {
+riderTest('rider legacy DELIVERY workflow: pickup, depart, deliver remain available and never service actions', async () => {
   for (const orderType of ['SEND', 'CUSTOM']) {
     const env = environment(); let statusCode = 'ACCEPTED'; const calls = []
     const page = await riderPage(env, { async riderOrders() { return { content: [{ id: 82, orderType, taskMode: 'DELIVERY', status: statusCode, statusCode, rewardFen: 455 }], last: true } },
@@ -2195,8 +2233,8 @@ test('rider legacy DELIVERY workflow: pickup, depart, deliver remain available a
     assert.deepEqual(calls, [['pickup', 82, '012345'], ['depart', 82], ['deliver', 82]])
   }
 })
-test('rider service grab: missing pickup code is normal and never exposes code prompt or undefined text', async () => {
-  for (const taskMode of ['ONLINE', 'ONSITE', 'PART_TIME']) {
+riderTest('rider service grab: missing pickup code is normal and never exposes code prompt or undefined text', async () => {
+  for (const taskMode of ['ONLINE', 'ONSITE', 'PART_TIME', 'RIDE', 'DRIVING']) {
     const env = environment(); const modals = []; env.wx.showModal = options => { modals.push(options); options.success({ confirm: true }) }
     const page = await riderPage(env, { async grabList() { return [{ orderId: 81, orderType: 'CUSTOM', taskMode, title: '服务任务', locationAddress: '地点', serviceTime: '明天', rewardFen: 500 }] }, async grab() { return { orderId: 81, pickupCode: null } } })
     assert.equal(page.data.halls[0].isService, true); assert.equal(page.data.halls[0].rewardText, '5.00')
@@ -2204,7 +2242,7 @@ test('rider service grab: missing pickup code is normal and never exposes code p
     assert.ok(modals[0].content.includes('开始服务')); assert.equal(/核对.*取件码|undefined|null/.test(modals[0].content), false); assert.equal(env.calls.locations, 0)
   }
 })
-test('rider service actions: canceled, failed, duplicate and stale-session operations do not advance service', async () => {
+riderTest('rider service actions: canceled, failed, duplicate and stale-session operations do not advance service', async () => {
   const env = environment(); let starts = 0; let resolve
   const page = await riderPage(env, { async riderOrders() { return { content: [{ id: 81, orderType: 'CUSTOM', taskMode: 'ONSITE', statusCode: 'ACCEPTED' }], last: true } }, serviceStart() { starts++; return new Promise(r => { resolve = r }) } })
   const tap = { currentTarget: { dataset: { id: 81 } } }
@@ -2213,7 +2251,7 @@ test('rider service actions: canceled, failed, duplicate and stale-session opera
   let finishModal; env.wx.showModal = options => { finishModal = options.success }; const stale = page.serviceStart(tap); await flush()
   env.load(path.join(native, 'utils/session.js')).save({ token: 'new-rider', userId: 2, role: 'RIDER' }); finishModal({ confirm: true }); await stale; assert.equal(starts, 1)
 })
-test('rider service failures: failed start or completion retains service state and allows refresh retry', async () => {
+riderTest('rider service failures: failed start or completion retains service state and allows refresh retry', async () => {
   for (const [action, statusCode] of [['serviceStart', 'ACCEPTED'], ['serviceComplete', 'PICKING']]) {
     const env = environment(); let attempts = 0
     const page = await riderPage(env, { async riderOrders() { return { content: [{ id: 81, orderType: 'CUSTOM', taskMode: 'ONSITE', statusCode }], last: true } }, async [action]() { attempts++; throw new Error('服务接口暂不可用') } })
@@ -2221,10 +2259,10 @@ test('rider service failures: failed start or completion retains service state a
     await page.load(); await page[action]({ currentTarget: { dataset: { id: 81 } } }); assert.equal(attempts, 2)
   }
 })
-test('service display: mode/status classification retains historical DELIVERY and hides owner-only carrier actions', async () => {
+userTest('service display: mode/status classification retains historical DELIVERY and hides owner-only carrier actions', async () => {
   const env = environment(); const fmt = env.load(path.join(native, 'utils/format.js'))
   for (const taskMode of [undefined, 'DELIVERY']) assert.equal(fmt.order({ orderType: 'CUSTOM', taskMode, status: 'PICKING' }).isService, false)
-  for (const taskMode of ['ONLINE', 'ONSITE', 'PART_TIME']) {
+  for (const taskMode of ['ONLINE', 'ONSITE', 'PART_TIME', 'RIDE', 'DRIVING']) {
     const row = fmt.order({ orderType: 'CUSTOM', taskMode, status: 'PICKING' }); assert.equal(row.isService, true); assert.equal(row.statusText, '服务中')
     assert.equal(fmt.order({ orderType: 'CUSTOM', taskMode, status: 'DELIVERED' }).statusText, '待确认完成')
   }
@@ -2236,22 +2274,21 @@ test('service display: mode/status classification retains historical DELIVERY an
   assert.equal(page.data.task.modeText, '上门服务'); assert.equal(page.data.task.priceText, '10.00'); assert.equal(page.data.task.riderShareText, '8.00'); assert.equal(page.data.task.hasShares, true); assert.equal(page.data.task.phone, '13800000000'); assert.equal('createdBy' in page.data.task, false)
   page.track(); assert.equal(env.calls.navigation.length, 0); await page.pay(); await page.confirm(); await page.cancel(); await page.review()
 })
-test('service detail: owner confirms service completion and missing shares are not invented', async () => {
+userTest('service detail: owner confirms service completion and missing shares are not invented', async () => {
   const env = environment(); const modals = []; env.wx.showModal = options => { modals.push(options); options.success({ confirm: true }) }
   const page = await detailPage(env, { async customTask() { return { title: '线上整理', content: '整理资料', tags: [], taskMode: 'ONLINE', priceFen: 1000, contact: '甲', phone: '13800000000' } }, async confirmOrder() { return orderValue({ orderType: 'CUSTOM', taskMode: 'ONLINE', status: 'FINISHED' }) } }, { orderType: 'CUSTOM', taskMode: 'ONLINE', status: 'DELIVERED' })
   assert.equal(page.data.task.hasShares, false); await page.confirm(); assert.equal(modals[0].title, '确认服务完成'); assert.equal(page.data.order.status, 'FINISHED')
 })
-test('service disclosure: scene examples, single address selector, precise total/shares, rider-only actions and privacy stay explicit', () => {
+userTest('service disclosure: scene examples, single address selector, precise total/shares, rider-only actions and privacy stay explicit', () => {
   const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8'); const createJS = fs.readFileSync(path.join(native, 'pages/order/create.js'), 'utf8')
   for (const text of ['data-side="location"', 'form.taskMode !== \'ONLINE\'', 'taskPrice', 'serviceTime', 'maxlength="100"', '不是骑手实拿', '70%', '30%']) assert.ok(create.includes(text), text)
   for (const text of ['日常清洁', '物品整理', '搬运协助', '临时帮手', '资料整理', '信息录入']) assert.ok(createJS.includes(text), text)
   const confirm = fs.readFileSync(path.join(native, 'pages/order/confirm.wxml'), 'utf8'); for (const text of ['发布任务总价', '骑手预计所得', '平台分成', 'quote.riderShareText', 'quote.platformShareText']) assert.ok(confirm.includes(text))
   const detail = fs.readFileSync(path.join(native, 'pages/order/detail.wxml'), 'utf8'); assert.ok(detail.includes('wx:if="{{!order.isService}}"')); assert.ok(detail.includes('task.serviceTime')); assert.ok(detail.includes('task.phone'))
-  const rider = fs.readFileSync(path.join(native, 'pages/rider/workbench.wxml'), 'utf8'); for (const text of ['canServiceStart', 'canServiceComplete', 'bindtap="detail"', '查看任务详情', '骑手预计所得']) assert.ok(rider.includes(text))
   const env = environment(); const legal = env.page('pages/legal/legal'); legal.onLoad({ kind: 'privacy' }); const privacy = legal.data.sections.map(s => s.text).join(' ')
   for (const text of ['ONLINE', 'PART_TIME', '单服务地点', '总价', '联系方式', '仅由有权访问', '无取件码']) assert.ok(privacy.includes(text), text)
 })
-test('phone change API: all four protected change endpoints keep first-bind routes separate', async () => {
+commonTest('phone change API: all four protected change endpoints keep first-bind routes separate', async () => {
   const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
   for (const [method, args, suffix, keys] of [
     ['changeWechatPhone', ['new-wechat-code'], '/user/wechat-phone/change', ['code']],
@@ -2272,7 +2309,7 @@ async function changingPhone(env, api = {}, manual = false, development = false)
   if (manual) await page.togglePhoneMethod()
   return page
 }
-test('phone change WeChat: explicit new-code confirmation preserves session, wallet/order markers and draft nickname', async () => {
+commonTest('phone change WeChat: explicit new-code confirmation preserves session, wallet/order markers and draft nickname', async () => {
   const env = environment(); const calls = []; const modals = []
   env.wx.showModal = options => { modals.push(options); options.success({ confirm: true }) }
   const page = await changingPhone(env, { async bindWechatPhone() { assert.fail('must not call initial bind') }, async changeWechatPhone(code) { calls.push(code); return profileValue({ mobileBound: true, mobile: '139****9000' }) } })
@@ -2284,7 +2321,7 @@ test('phone change WeChat: explicit new-code confirmation preserves session, wal
   assert.equal(env.storage.get('native_draft').keep, true); assert.equal(env.storage.get('native_pending_order').id, 88); assert.equal(env.storage.get('native_pending_withdrawal').requestId, 'original')
   assert.ok(env.calls.toast.includes('手机号已更换')); assert.equal([...env.storage.values()].includes('13900139000'), false)
 })
-test('phone change: cancel change and cancel confirmation retain old masked number and never fall back to bind', async () => {
+commonTest('phone change: cancel change and cancel confirmation retain old masked number and never fall back to bind', async () => {
   const env = environment(); let changes = 0
   const page = await changingPhone(env, { async changeWechatPhone() { changes++ } })
   page.preparePhone(); page.cancelPhoneChange(); await page.bindPhone(phoneEvent('revoked-intent')); assert.equal(changes, 0)
@@ -2292,7 +2329,7 @@ test('phone change: cancel change and cancel confirmation retain old masked numb
   assert.equal(changes, 0); assert.equal(page.data.changingPhone, true); assert.equal(page.data.mobile, '138****8000')
   page.data.manualMobile = '13900139000'; page.data.manualCode = '123456'; page.cancelPhoneChange(); assert.equal(page.data.manualMobile, ''); assert.equal(page.data.manualCode, ''); assert.equal(page.data.changingPhone, false)
 })
-test('phone change SMS: uses change-purpose code, validates new number, and mock never claims real verification', async () => {
+commonTest('phone change SMS: uses change-purpose code, validates new number, and mock never claims real verification', async () => {
   const env = environment(); const calls = []
   const page = await changingPhone(env, {
     async phoneSmsCode() { assert.fail('initial SMS must not run') }, async bindPhone() { assert.fail('initial bind must not run') },
@@ -2304,14 +2341,14 @@ test('phone change SMS: uses change-purpose code, validates new number, and mock
   assert.deepEqual(calls, [['sms', '13900139000'], ['change', '13900139000', '234567']]); assert.equal(page.data.changingPhone, false); assert.equal(page.data.phoneDemoCode, ''); assert.equal(page.data.manualMobile, '')
   assert.ok(env.calls.toast.some(text => text.includes('未真实验证'))); assert.equal(env.calls.toast.some(text => text.includes('已验证')), false)
 })
-test('phone change development: only backend options unlock dedicated change path with unverified copy', async () => {
+commonTest('phone change development: only backend options unlock dedicated change path with unverified copy', async () => {
   const env = environment(); let changes = 0
   const page = await changingPhone(env, { async changeDevelopmentPhone(mobile) { changes++; assert.equal(mobile, '13900139000'); return profileValue({ mobileBound: true, mobile: '139****9000' }) }, async bindDevelopmentPhone() { assert.fail('not initial bind') } }, true, true)
   page.manualPhoneInput(event('manualMobile', '13900139000')); await page.bindManualPhone(); assert.equal(changes, 1); assert.ok(env.calls.toast.at(-1).includes('未验证归属'))
   const locked = await changingPhone(environment(), { async phoneBindingOptions() { throw new Error('配置不可用') }, async changeDevelopmentPhone() { assert.fail('fail closed') } }, true)
   assert.equal(locked.data.phoneDevelopment, false); locked.manualPhoneInput(event('manualMobile', '13900139000')); await locked.bindManualPhone(); assert.equal(locked.data.mobile, '138****8000')
 })
-test('phone change: conflicts, SMS503, code expiry and unconfirmed results preserve old number without false success', async () => {
+commonTest('phone change: conflicts, SMS503, code expiry and unconfirmed results preserve old number without false success', async () => {
   for (const result of ['conflict', 'unconfirmed', 'expiry', 'sms503', 'development403']) {
     const env = environment()
     const page = await changingPhone(env, { async changePhoneSmsCode() { if (result === 'sms503') throw Object.assign(new Error('未配置真实短信'), { code: 503 }); return { retryAfterSeconds: 60, mock: false } },
@@ -2323,7 +2360,7 @@ test('phone change: conflicts, SMS503, code expiry and unconfirmed results prese
     assert.equal(page.data.mobile, '138****8000'); assert.equal(page.data.changingPhone, true); assert.ok(page.data.phoneError); assert.equal(env.storage.get('feilv_token'), 'token-1'); assert.equal(env.calls.toast.some(text => text.includes('已更换')), false)
   }
 })
-test('phone change: hide/reentry and account switch discard old options, SMS and change responses', async () => {
+commonTest('phone change: hide/reentry and account switch discard old options, SMS and change responses', async () => {
   for (const operation of ['options', 'sms', 'wechat', 'manual']) {
     for (const lifecycle of ['hide-reentry', 'switch']) {
       const env = environment(); let respond
@@ -2359,7 +2396,7 @@ async function transferPage(env, patch = {}, orderId = 0) {
   page.onLoad({ orderId: String(orderId) }); await page.onShow(); return page
 }
 function transferTap(id, action) { return { currentTarget: { dataset: { id, action } } } }
-test('transfer API: exact protected endpoints, no user identity or target lookup, and payload validation', async () => {
+riderTest('transfer API: exact protected endpoints, no user identity or target lookup, and payload validation', async () => {
   const env = environment(); env.authenticated('RIDER'); const api = env.load(path.join(native, 'utils/api.js'))
   for (const [method, args, verb, suffix, expected] of [
     ['requestOrderTransfer', [81, { targetRiderId: 22, reason: ' 原因 ' }], 'POST', '/rider/orders/81/transfers', { targetRiderId: 22, reason: '原因' }],
@@ -2376,7 +2413,7 @@ test('transfer API: exact protected endpoints, no user identity or target lookup
   for (const reason of ['', ' ', 'a'.repeat(256)]) await assert.rejects(api.requestOrderTransfer(81, { targetRiderId: 22, reason }))
   await assert.rejects(api.respondOrderTransfer(201, { decision: 'PENDING' })); await assert.rejects(api.riderTransfers(0, 'ALL')); assert.equal(env.calls.requests.length, count)
 })
-test('transfers: rider-only gate, identity failures and switched account clear prior lists and order draft', async () => {
+riderTest('transfers: rider-only gate, identity failures and switched account clear prior lists and order draft', async () => {
   for (const role of ['USER', 'ADMIN']) {
     const env = environment(); env.authenticated(role); let calls = 0
     const page = env.page('pages/rider/transfers', { async riderMe() { calls++ } }); page.onLoad({ orderId: '81' }); await page.onShow(); assert.equal(calls, 0); assert.equal(page.data.allowed, false)
@@ -2386,7 +2423,7 @@ test('transfers: rider-only gate, identity failures and switched account clear p
   page.input(event('reason', '旧账号原因')); fail = true; env.load(path.join(native, 'utils/session.js')).save({ token: 'other', userId: 2, role: 'RIDER' }); await page.onShow()
   assert.equal(page.data.incoming.length + page.data.outgoing.length, 0); assert.equal(page.data.orderId, 0); assert.equal(page.data.reason, ''); assert.ok(page.data.identityError)
 })
-test('transfers: Page15 directions paginate independently, retry same failed page, dedupe, terminal and malformed response', async () => {
+riderTest('transfers: Page15 directions paginate independently, retry same failed page, dedupe, terminal and malformed response', async () => {
   const env = environment(); const calls = []; let fail = true
   const page = await transferPage(env, { async riderTransfers(number, direction) {
     calls.push([number, direction]); if (direction === 'INCOMING') return transferPageValue([], number)
@@ -2398,7 +2435,7 @@ test('transfers: Page15 directions paginate independently, retry same failed pag
   const count = calls.length; await page.more(); assert.equal(calls.length, count); assert.deepEqual(calls.filter(row => row[0] === 1), [[1, 'OUTGOING'], [1, 'OUTGOING']])
   const bad = await transferPage(environment(), { async riderTransfers() { return transferPageValue([transferValue()], 4) } }); assert.ok(bad.data.outgoingError); assert.equal(bad.data.outgoingLoaded, false)
 })
-test('transfers: request validates positive riderId and trimmed 1..255 reason, confirms responsibility and reloads server history', async () => {
+riderTest('transfers: request validates positive riderId and trimmed 1..255 reason, confirms responsibility and reloads server history', async () => {
   const env = environment(); const requests = []; const modals = []; let history = []
   env.wx.showModal = options => { modals.push(options); options.success({ confirm: true }) }
   const page = await transferPage(env, { async requestOrderTransfer(orderId, data) { requests.push({ orderId, ...data }); history = [transferValue({ reason: data.reason })]; return history[0] }, async orderTransfers() { return history } }, 81)
@@ -2409,7 +2446,7 @@ test('transfers: request validates positive riderId and trimmed 1..255 reason, c
   for (const text of ['对方接受前仍由您负责', '投诉', '私有详情权限']) assert.ok(modals.at(-1).content.includes(text))
   await page.submit(); assert.equal(requests.length, 1); assert.equal(env.calls.requests.length, 0)
 })
-test('transfers: request cancellation, busy lock and unknown result query server instead of showing fake success', async () => {
+riderTest('transfers: request cancellation, busy lock and unknown result query server instead of showing fake success', async () => {
   const env = environment(); let submitCount = 0; let finish; let histories = 0; let failHistory = false
   const page = await transferPage(env, { requestOrderTransfer() { submitCount++; return new Promise(resolve => { finish = resolve }) }, async orderTransfers() { histories++; if (failHistory) throw new Error('历史不可用'); return [] } }, 81)
   page.input(event('targetRiderId', '22')); page.input(event('reason', '原因')); env.wx.showModal = options => options.success({ confirm: false }); await page.submit(); assert.equal(submitCount, 0)
@@ -2417,7 +2454,7 @@ test('transfers: request cancellation, busy lock and unknown result query server
   failHistory = true; finish({}); await pending; assert.ok(page.data.submitError); assert.ok(page.data.historyError); assert.equal(page.data.requestUncertain, true); assert.equal(page.data.busy, false); assert.ok(histories > 1)
   assert.equal(env.calls.toast.some(text => text.includes('已确认')), false); await page.submit(); assert.equal(submitCount, 1)
 })
-test('transfers: PENDING incoming accept/reject and outgoing cancel require confirmation and server-confirmed status', async () => {
+riderTest('transfers: PENDING incoming accept/reject and outgoing cancel require confirmation and server-confirmed status', async () => {
   for (const action of ['ACCEPTED', 'REJECTED', 'CANCELED']) {
     const env = environment(); const calls = []; let row = transferValue(action === 'CANCELED' ? {} : { fromRiderId: 22, toRiderId: 11 })
     const page = await transferPage(env, {
@@ -2431,24 +2468,24 @@ test('transfers: PENDING incoming accept/reject and outgoing cancel require conf
     await page.handle(transferTap(201, action)); assert.equal(calls.length, 1)
   }
 })
-test('transfers: offline acceptance requires workbench online and reject remains available', async () => {
+riderTest('transfers: offline acceptance requires workbench online and reject remains available', async () => {
   const env = environment(); let responses = 0
   const page = await transferPage(env, { async riderMe() { return { riderId: 11, onlineStatus: 0 } }, async riderTransfers(p, direction) { return transferPageValue(direction === 'INCOMING' ? [transferValue({ fromRiderId: 22, toRiderId: 11 })] : [], p) }, async respondOrderTransfer() { responses++; return transferValue({ fromRiderId: 22, toRiderId: 11, status: 'REJECTED' }) } })
   await page.handle(transferTap(201, 'ACCEPTED')); assert.equal(responses, 0); assert.ok(env.calls.toast.at(-1).includes('工作台上线'))
   await page.handle(transferTap(201, 'REJECTED')); assert.equal(responses, 1)
 })
-test('transfers: server failure/autoexpiry refreshes lists, no optimistic acceptance or false status', async () => {
+riderTest('transfers: server failure/autoexpiry refreshes lists, no optimistic acceptance or false status', async () => {
   const env = environment(); let status = 'PENDING'; let reads = 0
   const page = await transferPage(env, { async riderTransfers(p, direction) { reads++; return transferPageValue(direction === 'INCOMING' ? [transferValue({ fromRiderId: 22, toRiderId: 11, status })] : [], p) }, async respondOrderTransfer() { status = 'EXPIRED'; throw Object.assign(new Error('已开始履约，转派过期'), { status: 409 }) } })
   await page.handle(transferTap(201, 'ACCEPTED')); assert.ok(reads >= 4); assert.equal(page.data.incoming[0].status, 'EXPIRED'); assert.equal(page.data.incoming[0].canRespond, false); assert.ok(page.data.submitError); assert.equal(env.calls.toast.some(text => text.includes('已确认')), false)
 })
-test('transfers: wrong to/from identities fail closed and sender records never expose telephone/private detail links', async () => {
+riderTest('transfers: wrong to/from identities fail closed and sender records never expose telephone/private detail links', async () => {
   const env = environment(); const page = await transferPage(env, { async riderTransfers(p, direction) { return transferPageValue([transferValue({ phone: '13800138000', userId: 999 })], p) } })
   assert.ok(page.data.incomingError); assert.equal(page.data.incoming.length, 0); assert.equal(page.data.outgoing[0].title, '设计任务'); assert.equal('phone' in page.data.outgoing[0], false); assert.equal('userId' in page.data.outgoing[0], false)
   await page.handle(transferTap(201, 'ACCEPTED')); assert.equal(env.calls.navigation.length, 0)
   const wxml = fs.readFileSync(path.join(native, 'pages/rider/transfers.wxml'), 'utf8'); assert.equal(/item\.(?:phone|mobile)|bindtap="detail"/.test(wxml), false)
 })
-test('transfers: hidden/reentered and switched late list/history responses do not append or unlock other account', async () => {
+riderTest('transfers: hidden/reentered and switched late list/history responses do not append or unlock other account', async () => {
   for (const lifecycle of ['hide', 'switch', 'unload']) {
     const env = environment(); let respondList; let respondHistory; let delay = false
     const page = await transferPage(env, { riderTransfers(p, direction) { if (delay && direction === 'OUTGOING') return new Promise(resolve => { respondList = resolve }); return Promise.resolve(transferPageValue([], p)) }, orderTransfers() { if (delay) return new Promise(resolve => { respondHistory = resolve }); return Promise.resolve([]) } }, 81)
@@ -2460,7 +2497,7 @@ test('transfers: hidden/reentered and switched late list/history responses do no
     assert.equal(page.data.outgoing.length, 0); assert.equal(page.data.history.length, 0); if (lifecycle === 'switch') assert.equal(page.data.orderId, 0)
   }
 })
-test('transfers: late modal and accepted-response cannot act or toast after hide/switch; duplicate handle is locked', async () => {
+riderTest('transfers: late modal and accepted-response cannot act or toast after hide/switch; duplicate handle is locked', async () => {
   const env = environment(); let modalDone; let respond; let calls = 0
   const page = await transferPage(env, { async riderTransfers(p, direction) { return transferPageValue(direction === 'INCOMING' ? [transferValue({ fromRiderId: 22, toRiderId: 11 })] : [], p) }, respondOrderTransfer() { calls++; return new Promise(resolve => { respond = resolve }) } })
   env.wx.showModal = options => { modalDone = options.success }; const stale = page.handle(transferTap(201, 'ACCEPTED')); await flush(); page.onHide(); modalDone({ confirm: true }); await stale; assert.equal(calls, 0)
@@ -2468,7 +2505,7 @@ test('transfers: late modal and accepted-response cannot act or toast after hide
   env.load(path.join(native, 'utils/session.js')).save({ token: 'other', userId: 2, role: 'USER' }); await page.onShow(); respond(transferValue({ fromRiderId: 22, toRiderId: 11, status: 'ACCEPTED' })); await pending
   assert.equal(page.data.allowed, false); assert.equal(page.data.incoming.length, 0); assert.equal(env.calls.toast.some(text => text.includes('已确认')), false)
 })
-test('transfer workbench: only ACCEPTED entry, shared riderId, return refresh removes transferred order and 403 never advances', async () => {
+riderTest('transfer workbench: only ACCEPTED entry, shared riderId, return refresh removes transferred order and 403 never advances', async () => {
   for (const taskMode of ['DELIVERY', 'ONLINE', 'ONSITE', 'PART_TIME']) {
     const env = environment(); let owned = true; let attempts = 0
     const page = await riderPage(env, { async riderMe() { return { riderId: 11, onlineStatus: 1 } }, async riderOrders() { return { content: owned ? [{ id: 81, taskMode, orderType: taskMode === 'DELIVERY' ? 'SEND' : 'CUSTOM', statusCode: 'ACCEPTED' }] : [], last: true } }, async pickup() { attempts++; owned = false; throw Object.assign(new Error('不再是当前骑手'), { status: 403 }) }, async serviceStart() { attempts++; owned = false; throw Object.assign(new Error('不再是当前骑手'), { status: 403 }) } })
@@ -2479,14 +2516,14 @@ test('transfer workbench: only ACCEPTED entry, shared riderId, return refresh re
   }
   const env = environment(); const page = await riderPage(env, { async riderOrders() { return { content: ['PICKING', 'DELIVERING', 'FINISHED'].map((statusCode, i) => ({ id: i + 1, statusCode })), last: true } } }); assert.ok(page.data.orders.every(row => row.canTransfer === false))
 })
-test('new UI disclosures: bound change button, cancel, phoneOnly, transfer role/ID/online rules and privacy remain explicit', () => {
+riderTest('new UI disclosures: bound change button, cancel, phoneOnly, transfer role/ID/online rules and privacy remain explicit', () => {
   const profile = fs.readFileSync(path.join(native, 'pages/profile/profile.wxml'), 'utf8')
   for (const text of ['更换手机号', 'changingPhone', '取消修改', '验证新手机号', '用户ID、钱包、订单与角色不变']) assert.ok(profile.includes(text), text)
   const my = fs.readFileSync(path.join(native, 'pages/my/my.wxml'), 'utf8'); assert.ok(my.includes('更换手机号'))
   const transfers = fs.readFileSync(path.join(native, 'pages/rider/transfers.wxml'), 'utf8'); for (const text of ['不是用户ID', '每页15条', '私有详情权限', '上线', '只读转派历史', '不读取订单联系人']) assert.ok(transfers.includes(text), text)
   const app = JSON.parse(fs.readFileSync(path.join(native, 'app.json'))); assert.ok(app.pages.includes('pages/rider/transfers'))
 })
-test('BUY budget: separate exact decimal input requires integer fen boundaries and clears on other types', async () => {
+userTest('BUY budget: separate exact decimal input requires integer fen boundaries and clears on other types', async () => {
   const env = environment(); env.authenticated()
   const page = env.page('pages/order/create', { async addressList() { return [] } }); page.onLoad({ type: 'BUY' }); fillCreate(page)
   for (const [text, fen] of [['0.01', 1], ['0.29', 29], ['1', 100], ['12.34', 1234], ['999999.99', 99999999], ['1000000.00', 100000000]]) {
@@ -2502,7 +2539,7 @@ test('BUY budget: separate exact decimal input requires integer fen boundaries a
   const custom = await customCreate(environment()); custom.data.goodsBudget = '99.99'; custom.data.form.goodsBudgetFen = 9999
   assert.equal('goodsBudgetFen' in custom.buildPayload(), false)
 })
-test('BUY budget API: only valid BUY creation receives budget; quote, other types, pay and shares stay independent', async () => {
+userTest('BUY budget API: only valid BUY creation receives budget; quote, other types, pay and shares stay independent', async () => {
   const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
   for (const goodsBudgetFen of [undefined, null, 0, -1, 1.5, '100', NaN, Infinity, 100000001]) {
     await assert.rejects(api.createOrder({ orderType: 'BUY', goodsBudgetFen }), /商品总价/)
@@ -2526,7 +2563,7 @@ test('BUY budget API: only valid BUY creation receives budget; quote, other type
   const creating = api.createOrder(custom); assert.equal('goodsBudgetFen' in env.calls.requests.at(-1).data, false); okRequest(env.calls.requests.at(-1), { id: 90 }); await creating
   const paying = api.payOrder(88); const req = env.calls.requests.at(-1); assert.ok(req.url.endsWith('/orders/88/pay')); assert.equal(Object.keys(req.data).length, 0); okRequest(req, {}); await paying
 })
-test('BUY budget flow: draft restore, unchanged reuse and confirmation preserve budget without increasing running fee', async () => {
+userTest('BUY budget flow: draft restore, unchanged reuse and confirmation preserve budget without increasing running fee', async () => {
   const env = environment(); env.authenticated(); let creates = 0; let pays = 0
   const api = { async me() { return profileValue({ mobileBound: true }) }, async quote(value) { assert.equal('goodsBudgetFen' in value, false); return { totalFen: 500, items: [] } },
     async addressList() { return [] }, async createOrder(value) { creates++; assert.equal(value.goodsBudgetFen, 29); return { id: 88 } }, async payOrder(id) { pays++; assert.equal(id, 88) } }
@@ -2539,7 +2576,7 @@ test('BUY budget flow: draft restore, unchanged reuse and confirmation preserve 
   assert.equal(confirm.data.draft.goodsBudgetFen, 29); assert.equal(confirm.data.goodsBudgetText, '¥0.29'); assert.equal(confirm.data.quote.totalText, '5.00')
   await confirm.submit(); assert.equal(creates, 1); assert.equal(pays, 1)
 })
-test('BUY old drafts: missing or invalid budget requires refill only before creation; pending identity always wins', async () => {
+userTest('BUY old drafts: missing or invalid budget requires refill only before creation; pending identity always wins', async () => {
   for (const goodsBudgetFen of [undefined, null, 0, '29', 1.5, 100000001]) for (const pendingFields of [null, { id: 77 }, { uncertain: true }]) {
     const env = environment(); env.authenticated(); let pays = 0
     const saved = { owner: 1, savedAt: 876, payload: { orderType: 'BUY', goodsBudgetFen, fromAddress: 'A', toAddress: 'B', goodsDesc: '旧商品', distanceM: 2000, weightKg: 1 }, quote: pendingFields ? null : { totalText: '5.00' } }
@@ -2558,7 +2595,7 @@ test('BUY old drafts: missing or invalid budget requires refill only before crea
     if (!pendingFields || pendingFields.uncertain) { assert.equal(env.storage.get('native_draft'), saved); if (pending) assert.equal(env.storage.get('native_pending_order'), pending) }
   }
 })
-test('BUY old pending order: already paid finishes without creating or paying; unrelated markers do not bypass budget', async () => {
+userTest('BUY old pending order: already paid finishes without creating or paying; unrelated markers do not bypass budget', async () => {
   const env = environment(); env.authenticated()
   const saved = { owner: 1, savedAt: 123, payload: { orderType: 'BUY' }, quote: null }; env.storage.set('native_draft', saved)
   env.storage.set('native_pending_order', { owner: 1, savedAt: 122, id: 77 })
@@ -2568,7 +2605,7 @@ test('BUY old pending order: already paid finishes without creating or paying; u
   const retry = env.page('pages/order/confirm', api); retry.onLoad({}); retry.onShow(); await retry.submit()
   assert.equal(env.storage.has('native_pending_order'), false); assert.equal(env.storage.has('native_draft'), false); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/detail?id=77')
 })
-test('BUY confirm: another instance pending marker appearing during profile check prevents duplicate creation', async () => {
+userTest('BUY confirm: another instance pending marker appearing during profile check prevents duplicate creation', async () => {
   for (const fields of [{ uncertain: true }, { id: 88 }]) {
     const env = environment(); env.authenticated(); let respond; let pays = 0
     env.storage.set('native_draft', { owner: 1, savedAt: 123, payload: { orderType: 'BUY', goodsBudgetFen: 29 }, quote: {} })
@@ -2578,13 +2615,9 @@ test('BUY confirm: another instance pending marker appearing during profile chec
     assert.equal(pays, fields.id ? 1 : 0); if (fields.uncertain) assert.equal(page.data.uncertain, true)
   }
 })
-test('BUY displays: details, rider hall and accepted pagination retain budget and historical null never becomes zero', async () => {
+userTest('BUY displays: details, rider hall and accepted pagination retain budget and historical null never becomes zero', async () => {
   for (const [goodsBudgetFen, expected] of [[null, '未记录'], [undefined, '未记录'], [0, '未记录'], ['29', '未记录'], [29, '¥0.29'], [100000000, '¥1000000.00']]) {
     const page = await detailPage(environment(), {}, { orderType: 'BUY', goodsBudgetFen, realFeeFen: 500 }); assert.equal(page.data.order.goodsBudgetText, expected); assert.equal(page.data.order.feeText, '5.00')
-    const row = { id: 81, orderId: 81, orderType: 'BUY', goodsBudgetFen, statusCode: 'ACCEPTED', rewardFen: 350 }
-    const rider = await riderPage(environment(), { async grabList() { return [row] }, async riderOrders(page) { return { content: [Object.assign({}, row, { id: 81 + page })], last: page > 0 } } })
-    assert.equal(rider.data.halls[0].goodsBudgetText, expected); assert.equal(rider.data.orders[0].goodsBudgetText, expected); assert.equal(rider.data.halls[0].rewardText, '3.50')
-    await rider.more(); assert.equal(rider.data.orders[1].goodsBudgetText, expected)
   }
   const fmt = environment().load(path.join(native, 'utils/format.js')); assert.equal(fmt.order({ orderType: 'SEND', goodsBudgetFen: 29 }).goodsBudgetText, '')
 })
@@ -2596,7 +2629,7 @@ const classifiedTags = () => [
   { id: 9, name: '混入未知', enabled: true, taskModes: ['ONSITE', 'UNKNOWN'] }, { id: 10, name: '字符串分类', enabled: true, taskModes: 'ONSITE' },
   { id: 11, name: '重复分类', enabled: true, taskModes: ['ONSITE', 'ONSITE'] }, { id: 12, name: '超过三项', enabled: true, taskModes: ['ONSITE', 'ONLINE', 'PART_TIME', 'ONSITE'] }
 ]
-test('taskModes tags: explicit enabled scene classification only, multiselect and switch preserve only shared tags', async () => {
+userTest('taskModes tags: explicit enabled scene classification only, multiselect and switch preserve only shared tags', async () => {
   const env = environment(); const page = await customCreate(env, { async taskTags() { return classifiedTags() } })
   assert.deepEqual(Array.from(page.data.taskTags, t => t.id), [1, 3]); page.tagChoice(tagEvent(1)); page.tagChoice(tagEvent(3)); assert.equal(page.buildPayload().taskTagIds, '1,3')
   page.tagChoice(tagEvent(5)); assert.equal(page.data.form.taskTagIds, '1,3')
@@ -2606,7 +2639,7 @@ test('taskModes tags: explicit enabled scene classification only, multiselect an
   assert.equal(env.storage.get('native_draft').payload.taskTagIds, '3'); assert.equal(env.storage.get('native_draft').quote, null)
   page.data.form.taskTagIds = '2'; assert.throws(() => page.buildPayload(), /任务标签已变化/)
 })
-test('taskModes tags: restore and refresh remove reclassified, disabled and missing choices without replacing pending identity', async () => {
+userTest('taskModes tags: restore and refresh remove reclassified, disabled and missing choices without replacing pending identity', async () => {
   for (const pendingFields of [null, { id: 77 }, { uncertain: true }]) {
     const env = environment(); let list = classifiedTags(); const page = await customCreate(env, { async taskTags() { return list } }); page.tagChoice(tagEvent(1)); page.tagChoice(tagEvent(3)); await page.next()
     const saved = env.storage.get('native_draft'); if (pendingFields) env.storage.set('native_pending_order', Object.assign({ owner: 1, savedAt: saved.savedAt }, pendingFields))
@@ -2620,7 +2653,7 @@ test('taskModes tags: restore and refresh remove reclassified, disabled and miss
     if (pendingFields) { await restored.next(); assert.equal(env.storage.get('native_draft'), saved); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm') }
   }
 })
-test('taskModes tags: unclassified old API never guesses names or offers labels; switching during load does not paint another scene', async () => {
+userTest('taskModes tags: unclassified old API never guesses names or offers labels; switching during load does not paint another scene', async () => {
   const env = environment(); let respond
   const page = await customCreate(env, { async taskTags() { return [{ id: 1, name: '上门清洁', enabled: true }, { id: 2, name: '线上资料', enabled: true, taskModes: [] }] } })
   assert.equal(page.data.tagsLoaded, true); assert.equal(page.data.taskTags.length, 0); assert.doesNotThrow(() => page.buildPayload())
@@ -2629,21 +2662,351 @@ test('taskModes tags: unclassified old API never guesses names or offers labels;
   respond(classifiedTags()); await loading; assert.deepEqual(Array.from(page.data.taskTags, t => t.id), [1, 3])
   await page.sceneChoice({ currentTarget: { dataset: { mode: 'ONLINE' } } }); assert.deepEqual(Array.from(page.data.taskTags, t => t.id), [2, 3])
 })
-test('new service and BUY UI: clear examples, independent settlement and budget missing state are disclosed on all required surfaces', () => {
+userTest('new service and BUY UI: clear examples, independent settlement and budget missing state are disclosed on all required surfaces', () => {
   const home = fs.readFileSync(path.join(native, 'pages/index/index.js'), 'utf8') + fs.readFileSync(path.join(native, 'pages/index/index.wxml'), 'utf8')
   for (const text of ['上门清洁', '兼职搬运', '线上资料整理', '自填需求与服务总价', '不承诺专业资质']) assert.ok(home.includes(text), text)
-  for (const name of ['pages/order/create.wxml', 'pages/order/confirm.wxml', 'pages/order/detail.wxml', 'pages/rider/workbench.wxml']) {
+  for (const name of ['pages/order/create.wxml', 'pages/order/confirm.wxml', 'pages/order/detail.wxml']) {
     const text = fs.readFileSync(path.join(native, name), 'utf8'); for (const required of ['预计商品总价', '双方另行结算', '不计入跑腿费', '分账']) assert.ok(text.includes(required), name + ': ' + required)
   }
   const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8'); assert.ok(create.includes('id="goods-budget"')); assert.ok(create.includes('data-field="goodsBudget"')); assert.ok(create.includes('当前场景标签'))
   const confirm = fs.readFileSync(path.join(native, 'pages/order/confirm.wxml'), 'utf8'); assert.ok(confirm.includes('budgetRequired')); assert.ok(confirm.includes('尚未创建订单'))
 })
+async function transportCreate(env, patch = {}, mode = 'RIDE') {
+  env.authenticated()
+  const page = env.page('pages/order/create', Object.assign({
+    async addressList() { return [regionAddress({ isDefault: 0 })] },
+    async taskTags() { assert.fail('transport must not depend on task tags') },
+    async me() { return profileValue({ mobileBound: true }) },
+    async quote(data) { return { totalFen: data.taskPriceFen, riderShareFen: data.taskPriceFen - 1, platformShareFen: 1, items: [] } }
+  }, patch))
+  page.onLoad({ type: 'CUSTOM', service: 'transport' }); await page.onShow()
+  if (mode !== 'RIDE') await page.sceneChoice({ currentTarget: { dataset: { mode } } })
+  page.addressChange({ currentTarget: { dataset: { side: 'location' } }, detail: { value: 0 } })
+  page.input(event('serviceTime', '今天18:30')); page.number(event('taskPrice', '0.29'))
+  return page
+}
+userTest('transport entry: three routes, login continuation and strict scene group separation', async () => {
+  const env = environment(); const home = env.page('pages/index/index', {}); home.onLoad({}); home.onShow()
+  home.create({ currentTarget: { dataset: { type: 'TRANSPORT' } } }); assert.equal(env.calls.navigation.at(-1).url, '/pages/login/login')
+  env.authenticated(); home.onShow(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=CUSTOM&service=transport')
+  assert.deepEqual(Array.from(home.data.types, row => row.label), ['飞毛腿', '滴滴接送', '自定义任务'])
+  const page = await transportCreate(env)
+  assert.deepEqual(Array.from(page.data.sceneOptions, row => row.code), ['RIDE', 'DRIVING'])
+  await page.sceneChoice({ currentTarget: { dataset: { mode: 'ONLINE' } } }); assert.equal(page.data.form.taskMode, 'RIDE')
+  const ordinary = await customCreate(environment()); await ordinary.sceneChoice({ currentTarget: { dataset: { mode: 'RIDE' } } })
+  assert.equal(ordinary.data.form.taskMode, 'ONSITE'); assert.deepEqual(Array.from(ordinary.data.sceneOptions, row => row.code), ['ONSITE', 'PART_TIME', 'ONLINE'])
+  const alias = env.page('pages/order/create', {}); alias.onLoad({ type: 'TRANSPORT' }); assert.equal(alias.data.form.orderType, 'SEND')
+})
+userTest('transport form: single origin, contact autofill and edits, blank title/tags/content and required time', async () => {
+  for (const mode of ['RIDE', 'DRIVING']) {
+    const page = await transportCreate(environment(), {}, mode)
+    assert.equal(page.data.tagsLoaded, false); assert.equal(page.data.form.contact, regionAddress().contact)
+    assert.equal(page.data.form.phone, regionAddress().phone); assert.ok(page.data.form.locationAddress.includes('德江'))
+    page.input(event('contact', '本次联系人')); page.input(event('phone', '13900000000'))
+    Object.assign(page.data.form, { taskTitle: '不应用此标题分类', taskTagIds: '无效旧标签', fromAddress: '旧取件', toAddress: '旧终点', distanceM: 123, weightKg: 5 })
+    const payload = page.buildPayload()
+    assert.equal(payload.orderType, 'CUSTOM'); assert.equal(payload.taskMode, mode); assert.equal(payload.taskTitle, '')
+    assert.equal(payload.taskContent, ''); assert.equal(payload.taskTagIds, ''); assert.equal(payload.taskPriceFen, 29)
+    assert.equal(payload.contact, '本次联系人'); assert.equal(payload.phone, '13900000000')
+    for (const field of ['fromAddress', 'toAddress', 'distanceM', 'weightKg', 'goodsDesc']) assert.equal(field in payload, false)
+    for (const text of ['', ' ', '字'.repeat(101)]) { page.data.form.serviceTime = text; assert.throws(() => page.buildPayload(), /时间/) }
+    page.data.form.serviceTime = '字'.repeat(100); assert.doesNotThrow(() => page.buildPayload())
+    page.input(event('taskContent', '字'.repeat(1000))); assert.equal(page.buildPayload().taskContent.length, 1000)
+    page.input(event('taskContent', '字'.repeat(1001))); assert.throws(() => page.buildPayload(), /备注/)
+  }
+})
+userTest('transport validation: exact money boundaries and invalid location/contact/phone never quote', async () => {
+  const page = await transportCreate(environment())
+  for (const [price, fen] of [['0.01', 1], ['0.29', 29], ['1000000.00', 100000000]]) { page.number(event('taskPrice', price)); assert.equal(page.buildPayload().taskPriceFen, fen) }
+  for (const price of ['', '0', '-1', '1.001', '1e2', '1000000.01']) { page.number(event('taskPrice', price)); assert.throws(() => page.buildPayload(), /金额/) }
+  page.number(event('taskPrice', '1'))
+  for (const [field, value] of [['locationAddress', ''], ['locationAddress', '字'.repeat(256)], ['contact', ''], ['contact', '字'.repeat(31)], ['phone', '123']]) {
+    const previous = page.data.form[field]; page.data.form[field] = value; assert.throws(() => page.buildPayload()); page.data.form[field] = previous
+  }
+})
+userTest('transport API: empty title/content accepted, fixed title delegated to server, tagIds empty and delivery fields excluded', async () => {
+  const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
+  for (const mode of ['RIDE', 'DRIVING']) {
+    const input = { orderType: 'CUSTOM', taskMode: mode, taskPriceFen: 29, contact: ' 甲 ', phone: '13800000000', locationAddress: ' 起点 ', serviceTime: ' 今天18:30 ', taskTagIds: 'bad', taskTitle: '用户伪造标题', taskContent: null, toAddress: '不得发送', weightKg: 2, distanceM: 500 }
+    const pending = api.createOrder(input); const req = env.calls.requests.at(-1)
+    assert.ok(req.url.endsWith('/custom-tasks')); assert.equal(req.data.title, ''); assert.equal(req.data.content, '')
+    assert.deepEqual(Array.from(req.data.tagIds), []); assert.equal(req.data.locationAddress, '起点'); assert.equal(req.data.serviceTime, '今天18:30')
+    assert.deepEqual(Object.keys(req.data).sort(), ['contact', 'content', 'locationAddress', 'phone', 'priceFen', 'serviceTime', 'tagIds', 'taskMode', 'title'].sort())
+    okRequest(req, { id: 9 }); await pending
+    input.taskContent = ' 需要儿童座椅 '; const noted = api.createOrder(input); assert.equal(env.calls.requests.at(-1).data.content, '需要儿童座椅'); okRequest(env.calls.requests.at(-1), { id: 10 }); await noted
+    for (const patch of [{ serviceTime: '' }, { serviceTime: '字'.repeat(101) }, { locationAddress: '' }, { phone: '123' }, { taskPriceFen: 1.5 }, { taskContent: '字'.repeat(1001) }]) {
+      const count = env.calls.requests.length; await assert.rejects(api.createOrder(Object.assign({}, input, patch))); assert.equal(env.calls.requests.length, count)
+    }
+  }
+  for (const taskMode of ['ONSITE', 'PART_TIME', 'ONLINE']) await assert.rejects(api.createOrder({ orderType: 'CUSTOM', taskMode, taskPriceFen: 29 }), /标题|内容/)
+})
+userTest('transport quote: all edits and mode switch invalidate quote, server total/shares are mandatory', async () => {
+  const env = environment(); let bad = false
+  const page = await transportCreate(env, { async quote(data) { return bad ? { totalFen: 29, items: [] } : { totalFen: data.taskPriceFen, riderShareFen: 20, platformShareFen: 9, items: [] } } })
+  await page.next(); assert.equal(page.data.quote.riderShareText, '0.20'); assert.equal(page.data.quote.platformShareText, '0.09')
+  const savedAt = env.storage.get('native_draft').savedAt; await page.next(); assert.equal(env.storage.get('native_draft').savedAt, savedAt)
+  for (const [field, value] of [['contact', '新联系人'], ['phone', '13900000000'], ['serviceTime', '明天18:30'], ['taskContent', '补充说明']]) {
+    page.data.quote = {}; page.input(event(field, value)); assert.equal(page.data.quote, null); assert.equal(env.storage.get('native_draft').quote, null)
+  }
+  page.data.quote = {}; page.number(event('taskPrice', '0.29')); assert.equal(page.data.quote, null)
+  page.data.quote = {}; page.applyAddress('location', regionAddress({ detailAddress: '新起点' })); assert.equal(page.data.quote, null)
+  page.data.quote = {}; await page.sceneChoice({ currentTarget: { dataset: { mode: 'DRIVING' } } }); assert.equal(page.data.quote, null)
+  bad = true; const count = env.calls.navigation.length; await page.next(); assert.equal(env.calls.navigation.length, count); assert.equal(env.storage.get('native_draft').quote, null)
+})
+userTest('transport address: saved origin edit/delete invalidates quote without overwriting modified contacts', async () => {
+  const env = environment(); let rows = [regionAddress()]
+  const page = await transportCreate(env, { async addressList() { return rows } }); page.input(event('contact', '本单联系人'))
+  rows = [regionAddress({ detailAddress: '新门牌' })]; page.data.quote = {}; await page.loadAddresses()
+  assert.ok(page.data.form.locationAddress.includes('新门牌')); assert.equal(page.data.form.contact, '本单联系人'); assert.equal(page.data.quote, null)
+  rows = []; page.data.quote = {}; await page.loadAddresses(); assert.equal(page.data.form.locationAddress, ''); assert.equal(page.data.locationAddressId, null); assert.equal(page.data.quote, null)
+})
+userTest('draft groups: runner/custom/transport isolate edits, preserve driving subtype and clear on account change', async () => {
+  const env = environment(); const transport = await transportCreate(env, {}, 'DRIVING'); transport.input(event('taskContent', '代驾备注')); transport.number(event('taskPrice', '12.34'))
+  const custom = await customCreate(env); custom.input(event('taskTitle', '原普通任务'))
+  const runner = env.page('pages/order/create', { async addressList() { return [] } }); runner.onLoad({}); runner.input(event('goodsDesc', '送文件'))
+  const drafts = env.load(path.join(native, 'utils/draft.js'))
+  assert.equal(drafts.read(1, 'TRANSPORT').payload.taskMode, 'DRIVING'); assert.equal(drafts.read(1, 'CUSTOM').payload.taskTitle, '原普通任务')
+  assert.equal(drafts.read(1, 'RUNNER').payload.goodsDesc, '送文件')
+  const reopened = env.page('pages/order/create', { async addressList() { return [regionAddress()] } }); reopened.onLoad({ type: 'CUSTOM', service: 'transport' }); await reopened.onShow()
+  assert.equal(reopened.data.form.taskMode, 'DRIVING'); assert.equal(reopened.data.form.taskContent, '代驾备注'); assert.equal(reopened.data.taskPrice, '12.34'); assert.equal(reopened.data.restored, true)
+  assert.equal(drafts.read(2, 'TRANSPORT'), undefined)
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'other', userId: 2, role: 'USER' }); assert.equal(env.storage.has('native_draft_groups'), false)
+  await reopened.onShow(); assert.equal(reopened.data.form.taskContent, ''); assert.equal(reopened.data.form.taskMode, 'RIDE')
+})
+userTest('transport confirmation: retries existing order only and successful payment clears only matching group draft', async () => {
+  for (const mode of ['RIDE', 'DRIVING']) {
+    const env = environment(); const create = await transportCreate(env, {}, mode); await create.next(); let creates = 0; let pays = 0
+    const saved = env.storage.get('native_draft'); const drafts = env.load(path.join(native, 'utils/draft.js'))
+    drafts.save({ owner: 1, savedAt: 101, payload: { orderType: 'CUSTOM', taskMode: 'ONLINE', taskTitle: '保留普通组' } }, false)
+    const page = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async createOrder(payload) { creates++; assert.equal(payload.taskMode, mode); assert.equal(payload.taskTitle, ''); return { id: 88 } }, async orderDetail() { return { id: 88, status: 'WAIT_PAY' } }, async payOrder(id) { assert.equal(id, 88); if (++pays === 1) throw new Error('支付失败') } })
+    page.onLoad({}); page.onShow(); assert.equal(page.data.transport, true); assert.equal(page.data.typeText, mode === 'RIDE' ? '接送' : '代驾')
+    await page.submit(); await page.submit(); assert.equal(creates, 1); assert.equal(pays, 2); assert.equal(env.storage.has('native_pending_order'), false)
+    assert.equal(drafts.read(1, 'TRANSPORT'), undefined); assert.equal(drafts.read(1, 'CUSTOM').payload.taskTitle, '保留普通组')
+    assert.equal(saved.payload.taskMode, mode)
+  }
+})
+userTest('pending compatibility: historical ERRAND/CUSTOM and new transport known/unknown results dominate every entrance', async () => {
+  for (const payload of [{ orderType: 'ERRAND', fromAddress: '旧起点' }, { orderType: 'CUSTOM', taskMode: 'DELIVERY' }, { orderType: 'CUSTOM', taskMode: 'DRIVING' }]) {
+    for (const pendingFields of [{ id: 77 }, { uncertain: true }]) {
+      const env = environment(); env.authenticated(); let creates = 0; let pays = 0
+      const saved = { owner: 1, savedAt: 876, payload, quote: null }; env.storage.set('native_draft', saved)
+      const pending = Object.assign({ owner: 1, savedAt: 876 }, pendingFields); env.storage.set('native_pending_order', pending)
+      for (const query of [{ type: 'ERRAND' }, { type: 'CUSTOM' }, { type: 'CUSTOM', service: 'transport' }]) {
+        const form = env.page('pages/order/create', {}); form.onLoad(query); form.input(event('taskContent', '不能覆盖'))
+        await form.next(); assert.equal(env.storage.get('native_draft'), saved); assert.equal(env.storage.get('native_pending_order'), pending); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
+      }
+      const confirm = env.page('pages/order/confirm', { async me() { return profileValue({ mobileBound: true }) }, async createOrder() { creates++; return { id: 99 } }, async orderDetail() { return { id: 77, status: 'WAIT_PAY' } }, async payOrder(id) { assert.equal(id, 77); pays++ } })
+      confirm.onLoad({}); confirm.onShow(); await confirm.submit(); assert.equal(creates, 0); assert.equal(pays, pendingFields.id ? 1 : 0)
+      if (pendingFields.uncertain) assert.equal(confirm.data.uncertain, true)
+    }
+  }
+})
+userTest('ERRAND compatibility: uncreated old draft restores into SEND but new body never rewrites pending order', async () => {
+  const env = environment(); env.authenticated(); const seed = env.page('pages/order/create', {}); seed.onLoad({}); fillCreate(seed)
+  env.storage.set('native_draft', { owner: 1, savedAt: 9, payload: Object.assign({}, seed.buildPayload(), { orderType: 'ERRAND' }) })
+  const page = env.page('pages/order/create', {}); page.onLoad({ type: 'ERRAND' }); assert.equal(page.data.restored, true)
+  assert.equal(page.data.form.orderType, 'SEND'); assert.equal(page.buildPayload().orderType, 'SEND'); assert.equal(page.data.deliveryOptions.length, 2)
+})
+userTest('transport detail/list classification and rider workflow use service actions with no track or pickup', async () => {
+  for (const taskMode of ['RIDE', 'DRIVING']) {
+    const env = environment(); const page = await detailPage(env, { async customTask() { return { title: taskMode === 'RIDE' ? '接送服务' : '代驾服务', content: '', tags: [], taskMode, locationAddress: '真实起点', serviceTime: '今天18:30', contact: '甲', phone: '13800000000' } } }, { orderType: 'CUSTOM', taskMode, status: 'PICKING' })
+    assert.equal(page.data.order.isService, true); assert.equal(page.data.order.isTransport, true); assert.equal(page.data.order.typeText, taskMode === 'RIDE' ? '接送' : '代驾')
+    assert.equal(page.data.task.locationAddress, '真实起点'); assert.equal(page.data.task.serviceTime, '今天18:30'); page.track(); assert.equal(env.calls.navigation.length, 0)
+  }
+})
+userTest('transport track deep links refuse service map/polling; old CUSTOM delivery retains actual track', async () => {
+  for (const taskMode of ['RIDE', 'DRIVING', 'DELIVERY', undefined]) {
+    const env = environment(); env.authenticated(); let reads = 0
+    const page = env.page('pages/order/track', { async orderDetail() { return { id: 81, orderType: 'CUSTOM', taskMode } }, async orderTrack() { reads++; return [] } })
+    page.onLoad({ id: '81' }); await page.onShow()
+    const transport = ['RIDE', 'DRIVING'].includes(taskMode); assert.equal(reads, transport ? 0 : 1); assert.equal(env.timers.size, transport ? 0 : 1)
+    if (transport) assert.equal(env.calls.navigation.at(-1).url, '/pages/order/detail?id=81')
+    page.onUnload(); assert.equal(env.timers.size, 0)
+  }
+})
+riderTest('transport transfers: stable mode identification preserves existing TransferVO privacy whitelist', async () => {
+  for (const taskMode of ['RIDE', 'DRIVING']) {
+    const env = environment(); const row = transferValue({ taskMode, phone: '13800000000', contact: '秘密联系人', locationAddress: '秘密起点', serviceTime: '秘密时间', content: '秘密备注' })
+    const page = await transferPage(env, { async riderTransfers(page, direction) { return transferPageValue(direction === 'OUTGOING' ? [row] : [], page) } })
+    assert.equal(page.data.outgoing[0].isTransport, true); assert.equal(page.data.outgoing[0].modeText, taskMode === 'RIDE' ? '接送' : '代驾')
+    for (const text of ['13800000000', '秘密联系人', '秘密起点', '秘密时间', '秘密备注']) assert.equal(JSON.stringify(page.data).includes(text), false)
+  }
+})
+userTest('task tag classification: expanded five-mode whitelist still filters current ordinary scene only', async () => {
+  const env = environment(); const page = await customCreate(env, { async taskTags() { return [{ id: 1, name: '多场景', enabled: true, taskModes: ['ONSITE', 'ONLINE', 'PART_TIME', 'RIDE', 'DRIVING'] }, { id: 2, name: '仅接送', enabled: true, taskModes: ['RIDE'] }] } })
+  assert.deepEqual(Array.from(page.data.taskTags, row => row.id), [1]); page.tagChoice(tagEvent(1)); assert.equal(page.buildPayload().taskTagIds, '1')
+})
+riderTest('transport capability failures: server 403 cannot advance service or transferred invitation state', async () => {
+  for (const taskMode of ['RIDE', 'DRIVING']) {
+    const env = environment(); let attempts = 0
+    const page = await riderPage(env, { async riderOrders() { return { content: [{ id: 81, orderType: 'CUSTOM', taskMode, statusCode: 'ACCEPTED' }], last: true } }, async serviceStart() { attempts++; throw Object.assign(new Error('服务权限已撤销'), { code: 403, status: 403 }) } })
+    await page.serviceStart(transferTap(81)); assert.equal(attempts, 1); assert.equal(page.data.orders[0].statusCode, 'ACCEPTED'); assert.equal(page.data.orders[0].canServiceComplete, false)
+    assert.ok(env.calls.toast.includes('服务权限已撤销'))
+    const row = transferValue({ taskMode, toRiderId: 11, fromRiderId: 22 }); let handled = 0
+    const transfers = await transferPage(environment(), { async riderTransfers(page, direction) { return transferPageValue(direction === 'INCOMING' ? [row] : [], page) }, async respondOrderTransfer() { handled++; throw Object.assign(new Error('无对应服务接单权限'), { code: 403, status: 403 }) } })
+    await transfers.handle(transferTap(201, 'ACCEPTED')); assert.equal(handled, 1); assert.equal(transfers.data.incoming[0].status, 'PENDING')
+  }
+})
+userTest('transport user list: maps existing OrderVO modes and origin without per-row metadata requests or invented time', async () => {
+  const env = environment(); env.authenticated(); let detailReads = 0
+  const page = env.page('pages/order/list', { async myOrders() { return { content: ['RIDE', 'DRIVING', 'DELIVERY'].map((taskMode, i) => ({ id: i + 1, orderType: 'CUSTOM', taskMode, status: 'WAIT_GRAB', fromAddress: '公开摘要起点', goodsDesc: '服务标题', realFeeFen: null, estimateFeeFen: 29 })), last: true } }, async customTask() { detailReads++; assert.fail('list must not read every task') } })
+  page.onLoad({}); await page.onShow(); assert.equal(detailReads, 0)
+  assert.deepEqual(Array.from(page.data.list, row => row.typeText), ['接送', '代驾', '自定义任务']); assert.equal(page.data.list[0].feeText, '0.29')
+  assert.equal(page.data.list[0].serviceTime, undefined); assert.equal(page.data.list[2].isService, false)
+})
+userTest('transport UI and disclosure: no title/tag burden, real time, origin and platform capability boundaries', () => {
+  const create = fs.readFileSync(path.join(native, 'pages/order/create.wxml'), 'utf8')
+  for (const text of ['wx:if="{{!transport}}"', '起始地址', '服务时间（必填）', '备注（选填）', 'service-remark', '不是驾驶资质审核', '!transport && !tagsLoaded']) assert.ok(create.includes(text), text)
+  const confirm = fs.readFileSync(path.join(native, 'pages/order/confirm.wxml'), 'utf8'); assert.ok(confirm.includes("draft.orderType === 'CUSTOM' && !transport")); assert.ok(confirm.includes('transport ? \'备注\''))
+  const env = environment(); const legal = env.page('pages/legal/legal'); legal.onLoad({ kind: 'privacy' }); const text = legal.data.sections.map(s => s.text).join(' ')
+  for (const required of ['RIDE', 'DRIVING', '必填服务时间', '选填备注', '平台授权不是驾驶资质审核', '未接第三方滴滴', '分组隔离']) assert.ok(text.includes(required), required)
+})
+function draftRunnerPage(env, type = 'SEND') {
+  const page = env.page('pages/order/create', { async addressList() { return [] }, async me() { return profileValue({ mobileBound: true }) }, async quote() { return { totalFen: 500, items: [] } } })
+  page.onLoad({ type }); page._visible = true
+  return page
+}
+const chooseRunner = (page, type) => page.typeChoice({ currentTarget: { dataset: { type } } })
+userTest('runner subdrafts: BUY survives home SEND entry then explicit BUY selection with budget and requirements intact', async () => {
+  for (const source of ['active', 'legacy RUNNER']) {
+    const env = environment(); env.authenticated()
+    const original = draftRunnerPage(env, 'BUY'); fillCreate(original)
+    original.input(event('goodsDesc', '代买三瓶水')); original.number(event('goodsBudget', '12.34'))
+    const saved = env.storage.get('native_draft')
+    if (source === 'legacy RUNNER') {
+      env.storage.delete('native_draft'); env.storage.set('native_draft_groups', { owner: 1, drafts: { RUNNER: saved } })
+    }
+    const home = env.page('pages/index/index', {}); home.onLoad({}); home.create({ currentTarget: { dataset: { type: 'SEND' } } })
+    assert.equal(env.calls.navigation.at(-1).url, '/pages/order/create?type=SEND')
+    const reopened = draftRunnerPage(env); assert.equal(reopened.data.form.orderType, 'SEND'); assert.equal(reopened.data.form.goodsDesc, '')
+    await chooseRunner(reopened, 'BUY')
+    assert.equal(reopened.data.form.goodsDesc, '代买三瓶水'); assert.equal(reopened.data.goodsBudget, '12.34'); assert.equal(reopened.data.form.fromAddress, 'A')
+    assert.equal(reopened.data.form.toAddress, 'B'); assert.equal(reopened.data.distanceKm, '2'); assert.equal(reopened.data.weightKg, '5')
+  }
+})
+userTest('runner subdrafts: repeated SEND BUY switches and page reentry preserve both unpublished forms', async () => {
+  const env = environment(); env.authenticated(); const page = draftRunnerPage(env)
+  fillCreate(page); page.input(event('goodsDesc', '送件原需求')); page.input(event('remark', '送件备注'))
+  await chooseRunner(page, 'BUY'); fillCreate(page); page.input(event('goodsDesc', '代买原需求')); page.input(event('remark', '代买备注')); page.number(event('goodsBudget', '0.29'))
+  for (let i = 0; i < 3; i++) {
+    await chooseRunner(page, 'SEND'); assert.equal(page.data.form.goodsDesc, '送件原需求'); assert.equal(page.data.form.remark, '送件备注'); assert.equal(page.data.goodsBudget, '')
+    await chooseRunner(page, 'BUY'); assert.equal(page.data.form.goodsDesc, '代买原需求'); assert.equal(page.data.form.remark, '代买备注'); assert.equal(page.data.goodsBudget, '0.29')
+  }
+  const reopened = draftRunnerPage(env); assert.equal(reopened.data.form.goodsDesc, '送件原需求')
+  await chooseRunner(reopened, 'BUY'); assert.equal(reopened.data.form.goodsDesc, '代买原需求'); assert.equal(reopened.data.goodsBudget, '0.29')
+  const drafts = env.load(path.join(native, 'utils/draft.js'))
+  assert.equal(drafts.read(1, 'RUNNER', 'SEND').payload.goodsDesc, '送件原需求'); assert.equal(drafts.read(1, 'RUNNER', 'BUY').payload.goodsDesc, '代买原需求')
+})
+userTest('runner subdrafts: legacy RUNNER ERRAND migrates into SEND without touching original payload', async () => {
+  const env = environment(); env.authenticated()
+  const saved = { owner: 1, savedAt: 12, payload: { orderType: 'ERRAND', goodsDesc: '历史代办事项' } }
+  env.storage.set('native_draft_groups', { owner: 1, drafts: { RUNNER: saved } })
+  const page = draftRunnerPage(env, 'BUY'); page.input(event('goodsDesc', '代买草稿')); page.number(event('goodsBudget', '3.29'))
+  await chooseRunner(page, 'SEND'); assert.equal(page.data.form.goodsDesc, '历史代办事项'); assert.equal(page.data.form.orderType, 'SEND')
+  assert.equal(saved.payload.orderType, 'ERRAND')
+  const groups = env.storage.get('native_draft_groups').drafts; assert.equal(groups.RUNNER, undefined); assert.equal(groups.RUNNER_SEND.payload.orderType, 'ERRAND')
+  await chooseRunner(page, 'BUY'); assert.equal(page.data.form.goodsDesc, '代买草稿'); assert.equal(page.data.goodsBudget, '3.29')
+})
+userTest('pending cross-group edits: known and unknown order retain identity while transport restores edits and next resumes pending', async () => {
+  for (const pendingFields of [{ id: 77 }, { uncertain: true }]) {
+    for (const orderType of ['BUY', 'CUSTOM']) {
+      const env = environment(); env.authenticated()
+      const saved = { owner: 1, savedAt: 876, payload: { orderType, taskMode: orderType === 'CUSTOM' ? 'ONSITE' : undefined }, quote: null }
+      const pending = Object.assign({ owner: 1, savedAt: saved.savedAt }, pendingFields)
+      env.storage.set('native_draft', saved); env.storage.set('native_pending_order', pending)
+      const transport = await transportCreate(env, {}, 'DRIVING'); transport.input(event('taskContent', '待支付期间编辑')); transport.number(event('taskPrice', '12.34'))
+      const reopened = env.page('pages/order/create', { async addressList() { return [regionAddress()] } }); reopened.onLoad({ type: 'CUSTOM', service: 'transport' }); await reopened.onShow()
+      assert.equal(reopened.data.form.taskMode, 'DRIVING'); assert.equal(reopened.data.form.taskContent, '待支付期间编辑'); assert.equal(reopened.data.taskPrice, '12.34')
+      assert.equal(reopened.data.form.serviceTime, '今天18:30'); assert.ok(reopened.data.form.locationAddress.includes('德江'))
+      assert.equal(env.storage.get('native_draft'), saved); assert.equal(env.storage.get('native_pending_order'), pending)
+      assert.equal(saved.savedAt, 876); await reopened.next(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm')
+      assert.equal(env.storage.get('native_draft'), saved); assert.equal(env.storage.get('native_pending_order'), pending)
+    }
+  }
+})
+userTest('pending runner subtypes: other SEND BUY slot saves and restores without overwriting known or unknown pending', async () => {
+  for (const pendingFields of [{ id: 77 }, { uncertain: true }]) {
+    for (const orderType of ['SEND', 'BUY', 'ERRAND']) {
+      const env = environment(); env.authenticated(); const type = orderType === 'ERRAND' ? 'SEND' : orderType; const other = type === 'BUY' ? 'SEND' : 'BUY'
+      const saved = { owner: 1, savedAt: 999, payload: { orderType, goodsDesc: '必须保留的待办' }, quote: null }
+      const pending = Object.assign({ owner: 1, savedAt: 999 }, pendingFields); env.storage.set('native_draft', saved); env.storage.set('native_pending_order', pending)
+      const page = draftRunnerPage(env, type); page.input(event('goodsDesc', '不得改写待办'))
+      await chooseRunner(page, other); page.input(event('goodsDesc', '另一个子类的新需求')); if (other === 'BUY') page.number(event('goodsBudget', '0.29'))
+      await chooseRunner(page, type); assert.equal(page.data.form.goodsDesc, '必须保留的待办')
+      await chooseRunner(page, other); assert.equal(page.data.form.goodsDesc, '另一个子类的新需求'); if (other === 'BUY') assert.equal(page.data.goodsBudget, '0.29')
+      const reopened = draftRunnerPage(env, other); assert.equal(reopened.data.form.goodsDesc, '另一个子类的新需求')
+      assert.equal(env.storage.get('native_draft'), saved); assert.equal(env.storage.get('native_pending_order'), pending); assert.equal(saved.payload.goodsDesc, '必须保留的待办')
+      await reopened.next(); assert.equal(env.calls.navigation.at(-1).url, '/pages/order/confirm'); assert.equal(env.storage.get('native_draft'), saved); assert.equal(env.storage.get('native_pending_order'), pending)
+    }
+  }
+})
+userTest('draft save: remembering stale active cannot replace newer inactive groups or runner subtypes', () => {
+  const env = environment(); env.authenticated(); const drafts = env.load(path.join(native, 'utils/draft.js'))
+  for (const payload of [{ orderType: 'SEND' }, { orderType: 'CUSTOM', taskMode: 'ONSITE' }, { orderType: 'CUSTOM', taskMode: 'RIDE' }]) {
+    const previous = { owner: 1, savedAt: 10, payload }; const newer = { owner: 1, savedAt: 20, payload: Object.assign({}, payload, { taskContent: '较新编辑' }) }
+    env.storage.set('native_draft', previous); drafts.save(newer, false)
+    drafts.save({ owner: 1, savedAt: 30, payload: { orderType: 'BUY', goodsDesc: '代买' } }, false)
+    const stored = env.storage.get('native_draft_groups').drafts; assert.equal(stored[drafts.slot(payload)], newer); assert.equal(env.storage.get('native_draft'), previous)
+  }
+})
+userTest('runner completion: only matching owner savedAt subdraft is removed and switch clears all subslots', () => {
+  const env = environment(); env.authenticated(); const drafts = env.load(path.join(native, 'utils/draft.js'))
+  const send = { owner: 1, savedAt: 10, payload: { orderType: 'SEND', goodsDesc: '送件' } }; const buy = { owner: 1, savedAt: 20, payload: { orderType: 'BUY', goodsDesc: '代买' } }
+  const custom = { owner: 1, savedAt: 30, payload: { orderType: 'CUSTOM', taskMode: 'ONLINE' } }
+  drafts.save(send); drafts.save(buy); drafts.save(custom, false)
+  env.storage.set('native_pending_order', { owner: 1, savedAt: 20, id: 77 }); drafts.complete(1, 10, 66)
+  assert.equal(drafts.read(1, 'RUNNER', 'SEND'), undefined); assert.equal(drafts.read(1, 'RUNNER', 'BUY'), buy); assert.equal(env.storage.get('native_pending_order').id, 77)
+  // 旧完成回调不得删除同子类的新编辑草稿。
+  const newerSend = { owner: 1, savedAt: 40, payload: { orderType: 'ERRAND', goodsDesc: '新的合并送办' } }; drafts.save(newerSend, false); drafts.complete(1, 10, 66)
+  assert.equal(drafts.read(1, 'RUNNER', 'SEND'), newerSend)
+  drafts.complete(1, 20, 77); assert.equal(env.storage.has('native_draft'), false); assert.equal(env.storage.has('native_pending_order'), false)
+  assert.equal(drafts.read(1, 'RUNNER', 'BUY'), undefined); assert.equal(drafts.read(1, 'RUNNER', 'SEND'), newerSend); assert.equal(drafts.read(1, 'CUSTOM'), custom)
+  drafts.complete(2, 40, 77); assert.equal(drafts.read(1, 'RUNNER', 'SEND'), newerSend)
+  env.load(path.join(native, 'utils/session.js')).save({ token: 'other', userId: 2, role: 'USER' })
+  assert.equal(env.storage.has('native_draft_groups'), false); assert.equal(drafts.read(2, 'RUNNER', 'SEND'), undefined); assert.equal(drafts.read(2, 'RUNNER', 'BUY'), undefined)
+})
+riderTest('BUY rider displays: hall and accepted pagination retain budget and historical null never becomes zero', async () => {
+  for (const [goodsBudgetFen, expected] of [[null, '未记录'], [undefined, '未记录'], [0, '未记录'], ['29', '未记录'], [29, '¥0.29'], [100000000, '¥1000000.00']]) {
+    const row = { id: 81, orderId: 81, orderType: 'BUY', goodsBudgetFen, statusCode: 'ACCEPTED', rewardFen: 350 }
+    const rider = await riderPage(environment(), { async grabList() { return [row] }, async riderOrders(page) { return { content: [Object.assign({}, row, { id: 81 + page })], last: page > 0 } } })
+    assert.equal(rider.data.halls[0].goodsBudgetText, expected); assert.equal(rider.data.orders[0].goodsBudgetText, expected); assert.equal(rider.data.halls[0].rewardText, '3.50')
+    await rider.more(); assert.equal(rider.data.orders[1].goodsBudgetText, expected)
+  }
+})
+
+riderTest('transport rider workflow: both transport modes use service actions with no track or pickup', async () => {
+  for (const taskMode of ['RIDE', 'DRIVING']) {
+    let statusCode = 'ACCEPTED'; const calls = []
+    const rider = await riderPage(environment(), { async riderOrders() { return { content: [{ id: 81, orderType: 'CUSTOM', taskMode, statusCode, rewardFen: 20 }], last: true } }, async serviceStart() { calls.push('start'); statusCode = 'PICKING' }, async serviceComplete() { calls.push('complete'); statusCode = 'DELIVERED' }, async pickup() { assert.fail('no pickup') }, async reportTrack() { assert.fail('no location') } })
+    const tap = transferTap(81); assert.equal(rider.data.orders[0].isTransport, true); assert.equal(rider.data.orders[0].canPickup, false)
+    await rider.pickup(tap); await rider.report(tap); await rider.serviceStart(tap); await rider.serviceComplete(tap); assert.deepEqual(calls, ['start', 'complete'])
+  }
+})
+
+riderTest('service disclosure rider: service actions and BUY settlement remain explicit after migration', () => {
+  const rider = fs.readFileSync(path.join(native, 'pages/rider/workbench.wxml'), 'utf8')
+  for (const text of ['canServiceStart', 'canServiceComplete', 'bindtap="detail"', '查看任务详情', '骑手预计所得', '预计商品总价', '双方另行结算', '不计入跑腿费', '分账']) assert.ok(rider.includes(text), text)
+})
+
+require('./test-dual-miniapps.cjs')({ assert, fs, path, native, client, expectedPages, expectedTabs, environment, commonTest, userTest, riderTest, flush, event, phoneEvent, profileValue, walletPage, withdrawalValue, okRequest })
+
 ;(async () => {
+  if (flags.has('--list')) {
+    console.log(JSON.stringify({ client, root: native, total: tests.length, inventory }, null, 2))
+    return
+  }
   let failures = 0
   for (const { name, fn } of tests) {
-    try { await fn(); console.log('PASS ' + name) }
-    catch (e) { failures++; console.error('FAIL ' + name + '\n' + e.stack) }
+    activeEnvironments = []
+    let watchdog
+    try {
+      await Promise.race([fn(), new Promise((_, reject) => { watchdog = setTimeout(() => reject(new Error('Unresolved test promise (5s); no response may be silently omitted')), 5000) })])
+      for (const calls of activeEnvironments) assert.deepEqual(calls.navigationErrors, [], 'Invalid navigation may not be swallowed by page error handlers')
+      console.log('PASS ' + client + ' ' + name)
+    }
+    catch (e) { failures++; console.error('FAIL ' + client + ' ' + name + '\n' + e.stack) }
+    finally { clearTimeout(watchdog) }
   }
-  console.log((tests.length - failures) + '/' + tests.length + ' native wx-mock behavior tests passed')
+  console.log((tests.length - failures) + '/' + tests.length + ' ' + client + ' native wx-mock behavior tests passed; ' + inventory.length + ' registered cases, common suite executes independently in both roots')
   if (failures) process.exitCode = 1
-})()
+})().catch(error => { console.error(error); process.exitCode = 1 })

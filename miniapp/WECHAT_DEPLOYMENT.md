@@ -1,5 +1,13 @@
 # 微信原生小程序部署到 xt.allms.cn
 
+## 双原生根拆分更新（2026-11-17）
+
+本目录只发布 USER 十三页，保留原AppID与首页/订单/我的三tabs，无设备定位申请；完整骑手工作流迁入独立 `rider-miniapp` 十页、两tabs。骑手工程未配置真实AppID，发布检查必须阻止；不得借用用户AppID。用户个人private config域名校验关闭仍为已知发布阻塞，不在本次擅改。
+
+新版使用 `/api/v1/auth/miniapps/USER/login` 及明确的ticket关联/创建协议，手机号归属只能本次真实微信授权验证；受保护关联码通过“我的”确认、新wx.login签发，另一端明确确认后关联，不传跨端token。短信能力不可用默认隐藏。已入驻骑手读取档案，新入驻在骑手端为当前主体提交fresh phoneCode，不再使用公开手机号注册。
+
+401或40101隔离同owner同后端业务标记，同userId重新登录恢复原orderID与提现requestId，不另建；显式退出/异账号/换服务完整清除。普通403不退出。下文历史部署记录中原统一工程、旧登录接口、骑手页面及401删除pending的描述已由本节替代。双端完整人工检查、AppID/隐私/旧账号恢复/JWT维护窗口/隔离MySQL发布阻塞见 `../rider-miniapp/WECHAT_DEPLOYMENT.md`。本轮只离线验证，不执行下文历史部署示例命令，不启动默认/local后端、不上线。
+
 ## 已固定的项目配置
 
 - 微信开发者工具直接导入本目录 `miniapp`，`miniprogramRoot` 为 `./`，根目录直接包含 `app.json`。不再使用框架源码、native子目录或dist。
@@ -75,12 +83,21 @@ docker compose up -d --build --force-recreate backend
 
 ### 自定义任务及投诉联调
 
-- 首页仅跑腿服务与自定义任务两入口，跑腿发布页SEND/BUY/ERRAND切换且旧深链可用。后端须同时提供 `GET /api/v1/task-tags`、`POST /api/v1/custom-tasks/quote {priceFen}`、平铺 `POST /api/v1/custom-tasks {title,content,tagIds,taskMode,priceFen,contact,phone,locationAddress,serviceTime}`、`GET /api/v1/orders/{id}/custom-task`、`GET /api/v1/orders/{id}/complaints`、`POST /orders/{id}/service-start`及`service-complete`，并保留现有投诉提交与订单支付接口。详细请求契约见本目录README。发布返回必须是含订单ID的 `OrderVO`，不能返回仅有任务ID的TaskVO。
-- 标签来自后台启用记录，最多5个、可不选；失败必须可重试，不能用固定标签或假空列表替代。自定义任务标题1–64字、内容1–1000字，订单列表使用标题与CUSTOM类型，详情读取完整资料。
+- 首页为飞毛腿、滴滴接送、自定义任务三入口。飞毛腿合并送件/代办，新单统一 SEND，保留 BUY 切换；ERRAND 深链进入合并表单，历史 ERRAND 及 CUSTOM/DELIVERY 订单保留原配送和支付流程。接送入口为 `pages/order/create?type=CUSTOM&service=transport`，只选 RIDE/DRIVING；原自定义入口仍只有 ONSITE/PART_TIME/ONLINE。后端须同时提供 `GET /api/v1/task-tags`、`POST /api/v1/custom-tasks/quote {priceFen}`、平铺 `POST /api/v1/custom-tasks {title,content,tagIds,taskMode,priceFen,contact,phone,locationAddress,serviceTime}`、`GET /api/v1/orders/{id}/custom-task`、`GET /api/v1/orders/{id}/complaints`、`POST /orders/{id}/service-start`及`service-complete`，并保留现有投诉提交与订单支付接口。详细请求契约见本目录README。发布返回必须是含订单ID的 `OrderVO`，不能返回仅有任务ID的TaskVO。
+- 普通自定义标签来自后台启用记录，最多5个、可不选；taskModes 白名单扩大至五场景且仅展示适用于当前普通场景的标签，旧空分类不猜测。读取失败必须可重试，不能用固定标签或假空列表替代。普通三场景标题1–64字、内容1–1000字保持必填；接送/代驾不请求标签接口，提交空 tagIds、空 title 与可空 content（选填备注），固定标题和空备注默认说明由服务端按稳定 taskMode 生成，不依赖客户端标题分类。详情读取完整资料。
 - `OrderVO.owner` 是当前登录人是否发布者的布尔值，不是角色或公开用户编号；骑手发布自己的任务也应返回true，承运他人订单应返回false。旧接口无owner时仅有限兼容，所有提交与查询最终由服务端判权。自定义任务的userId只用于页面私有内存兼容判断，不额外展示身份。
 - 投诉描述1–255字，从已接单起至已完成可申请。活动仅 `OPEN/PROCESSING`，有活动单不能重复提交；`APPROVED/REJECTED/DONE` 终结后可申请不同问题，但累计赔付受本单骑手分账上限约束。详情按服务端记录展示状态、问题、结果与赔付；查询失败不得冒充暂无记录，提交失败保留描述并先刷新核实。
 - 审核赔付目前 **MOCK，仅记账，未真实退款或转账**。前端不计算扣分账或自行修改审核状态，不展示经办人/骑手内部ID、扣减审计字段和内部操作明细。真实结算需要另行实现与验收。
 - 真机/联调覆盖 USER和RIDER各自发布、0.01/0.29/1000000元精确总价及超限、多位小数/科学计数拒绝、服务端分成展示且缺失不推算、三场景与示例、ONLINE无地址和时间但要联系人电话、ONSITE一个下拉地址/自动联系人可改、PART_TIME一个工作地址+必填时间、切换清理、普通/自定义报价无串路、空标签/5标签/停用变更、标签/资料/投诉加载重试、草稿恢复与切号旧响应隔离、旧DELIVERY草稿提示/原pending保护、旧订单原取件配送、service开始/提交完成/用户确认无定位无取件码、承接骑手详情可看联系方式、owner:false不显示发布者动作、接单后投诉、重复工单、审核通过/驳回/结案后刷新、新问题累计限额及MOCK提示。小程序本地测试不请求外部接口，不证明后端已部署或资金已到账。
+
+### 接送/代驾专项联调与发布边界
+
+- 新模式复用 CUSTOM 报价、发布、MOCK 支付、分账与服务完成链路。接送/代驾只收一个起始地址、可修改联系人/电话、精确总价、必填时间说明（1–100字）、选填备注（最多1000字）；无目的地、取件配送参数、标题和标签操作。起点变更/删除、价格、时间、备注、联系人或分类变化必须重新报价，确认页总额和分账只取服务端响应。
+- 发布前由后端部署负责人核实 RIDE/DRIVING 白名单、按模式条件校验、固定标题及骑手两项默认关闭能力和相应幂等迁移已在获准的隔离环境验证；小程序构建不执行 SQL、不自动迁移/部署，不启动默认/local 后端连接真实库。接送与代驾须分别授权，普通 RIDER 或车辆类型不等于有权。大厅、直接抢单、转派接受、首次开始的拒绝均由服务端兜底，不在客户端假开通；撤权后不可新增接单或首次开始，已开始本人仍可完成。
+- 保持 C 端 OrderVO 19字段及 TransferVO 原公开字段契约。用户列表无真实时间摘要时引导详情；有权详情展示 custom-task 真实起点/时间，骑手大厅不展示联系人电话或完整备注，转派记录不扩展私有地址/时间。新服务仅调用 service-start/service-complete 再由发布者确认，无取件码、配送地图或定位；轨迹深链也返回详情。旧 DELIVERY/缺模式仍按配送回退。
+- 草稿按 owner 及 RUNNER/CUSTOM/TRANSPORT 三组隔离，RUNNER 使用 `RUNNER_SEND` / `RUNNER_BUY` 子槽独立保存需求和 BUY 商品预算，历史 ERRAND 归 SEND，兼容原 RUNNER 单槽及旧 `native_draft`；接送组保留接送/代驾子类。`native_draft` 与匹配 owner+savedAt 的 pending 仍是创建/支付续办依据。已知或结果未知 pending 只锁所属子槽，其他组或 SEND/BUY 另一子槽可保存、重入恢复编辑，但不得改变原活动草稿、pending 对象及 savedAt；旧活动草稿也不得覆盖较新的分组编辑。任何入口遇到已创建或结果未知记录先续办/核实，不允许合并 ERRAND、切换分组/子类或缺字段时重复创建/支付。相同 payload 复用身份，完成只清匹配 owner+savedAt 的子草稿，旧异步结果不清新草稿，退出/切号清全部组和子槽。
+- 微信开发者工具及隔离账号联调至少覆盖：三个入口与登录回跳、飞毛腿/BUY 切换及旧 ERRAND 深链、接送/代驾切换、一个起点及自动联系人可修改、空时间/超100字/金额边界/选填空备注、标签接口故障不影响新两类、分账核对、三组及 SEND/BUY 子槽草稿往返恢复/切号、BUY→首页 SEND→BUY 保留需求/预算、已知待支付与创建未知时其他组/子槽保存恢复但仍优先续办、完成仅清匹配子草稿、旧CUSTOM配送、普通/仅接送/仅代驾/两项授权骑手交叉抢单、转派邀请后撤权、未开始撤权403和已开始撤权后完成、发布者确认、投诉和钱包原账务链路。离线 mock 只验证客户端行为，不证明后端权限并发、账本或真实资金安全。
+- “滴滴接送”为本平台入口名称，未接第三方滴滴接口；平台接单授权不是驾驶资质审核。无自动预约派单、时间冲突调度或真实支付，不把普通骑手身份宣传为驾驶资格。正式运营所需类目、许可、安全责任及法律文本需由运营方审核。
 
 ### 钱包与模拟提现联调
 

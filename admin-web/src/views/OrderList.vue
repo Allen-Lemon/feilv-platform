@@ -28,9 +28,9 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="orderType" label="类型" width="120"><template #default="{ row }"><div>{{ typeLabel(row.orderType) }}</div><el-tag v-if="isServiceTask(row)" size="small">{{ taskModeLabel(row.taskMode) }}</el-tag></template></el-table-column>
+        <el-table-column prop="orderType" label="类型" width="120"><template #default="{ row }"><div>{{ orderTypeLabel(row) }}</div><el-tag v-if="isServiceTask(row) && !isTransportTask(row)" size="small">{{ taskModeLabel(row.taskMode) }}</el-tag></template></el-table-column>
         <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="tagType(row.status)">{{ row.statusLabel || statusLabel(row.status) }}</el-tag></template></el-table-column>
-        <el-table-column label="取件地址 / 服务地点" min-width="180" show-overflow-tooltip>
+        <el-table-column label="取件地址 / 服务地点 / 起始地址" min-width="200" show-overflow-tooltip>
           <template #default="{ row }"><div>{{ orderLocation(row) }}</div><small v-if="orderContact(row)" class="text-muted">{{ isServiceTask(row) ? '任务联系人' : '寄件联系人' }}：{{ orderContact(row) }}</small></template>
         </el-table-column>
         <el-table-column label="送达地址 / 服务时间" min-width="180" show-overflow-tooltip>
@@ -123,10 +123,12 @@ function closeTransfers() { ++transferRequest; transfersOpen.value = false; tran
 
 const goodsBudgetText = row => row.goodsBudgetFen == null ? '未记录' : Number.isSafeInteger(row.goodsBudgetFen) && row.goodsBudgetFen >= 1 && row.goodsBudgetFen <= 100000000 ? Math.floor(row.goodsBudgetFen / 100) + '.' + String(row.goodsBudgetFen % 100).padStart(2, '0') : '数据异常'
 const typeLabel = type => ({ SEND: '跑腿送', BUY: '跑腿买', ERRAND: '跑腿办', CUSTOM: '自定义任务' }[type] || type)
-const taskModeLabel = mode => ({ ONLINE: '线上任务', ONSITE: '上门服务', PART_TIME: '兼职劳务' }[mode] || mode)
-const isServiceTask = row => row.orderType === 'CUSTOM' && ['ONLINE', 'ONSITE', 'PART_TIME'].includes(row.taskMode)
-// 旧后台订单视图可能只补充 taskMode；上门/兼职的兼容地址仍是单一服务地点，线上绝不读取占位地址。
-const orderLocation = row => !isServiceTask(row) ? row.fromAddress || '—' : row.taskMode === 'ONLINE' ? '线上任务（无需地址）' : `${row.taskMode === 'PART_TIME' ? '工作地点' : '服务地点'}：${row.locationAddress || row.fromAddress || '—'}`
+const taskModeLabel = mode => ({ ONLINE: '线上任务', ONSITE: '上门服务', PART_TIME: '兼职劳务', RIDE: '接送', DRIVING: '代驾' }[mode] || mode)
+const isServiceTask = row => row.orderType === 'CUSTOM' && ['ONLINE', 'ONSITE', 'PART_TIME', 'RIDE', 'DRIVING'].includes(row.taskMode)
+const isTransportTask = row => isServiceTask(row) && ['RIDE', 'DRIVING'].includes(row.taskMode)
+const orderTypeLabel = row => isTransportTask(row) ? taskModeLabel(row.taskMode) : typeLabel(row.orderType)
+// 旧上门/兼职视图兼容 fromAddress；新接送/代驾只读取明确的起点摘要，避免显示旧配送占位地址。
+const orderLocation = row => !isServiceTask(row) ? row.fromAddress || '—' : row.taskMode === 'ONLINE' ? '线上任务（无需地址）' : isTransportTask(row) ? `起始地址：${row.locationAddress || '—'}` : `${row.taskMode === 'PART_TIME' ? '工作地点' : '服务地点'}：${row.locationAddress || row.fromAddress || '—'}`
 const orderDestination = row => !isServiceTask(row) ? row.toAddress || '—' : row.taskMode === 'ONLINE' ? '—' : `${row.taskMode === 'PART_TIME' ? '工作时间' : '服务时间'}：${row.serviceTime || '—'}`
 const orderContact = row => isServiceTask(row) ? row.contact : row.fromContact
 const statusLabel = status => statuses.find(item => item.code === status)?.label || status

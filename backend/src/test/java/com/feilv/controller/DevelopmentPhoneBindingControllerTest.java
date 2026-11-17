@@ -28,7 +28,7 @@ class DevelopmentPhoneBindingControllerTest {
         var binding = new DevelopmentPhoneBindingService(users, manager, env, true);
         var mvc = MockMvcBuilders.standaloneSetup(new DevelopmentPhoneBindingController(binding))
                 .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(TestAuth.interceptor()).build();
-        String token = "Bearer " + JwtUtil.create(42L, "USER");
+        String token = "Bearer " + TestAuth.userToken(42L, "USER");
         mvc.perform(get("/api/v1/user/phone/options")).andExpect(status().isUnauthorized());
         mvc.perform(post("/api/v1/user/phone/development").contentType(MediaType.APPLICATION_JSON).content("{\"mobile\":\"13800138000\"}"))
                 .andExpect(status().isUnauthorized());

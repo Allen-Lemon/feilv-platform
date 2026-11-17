@@ -16,29 +16,29 @@
     <div class="panel settings-panel" v-loading="loading">
       <div class="security-note"><AppIcon name="shield" :size="18" /><p>仅超级管理员（SUPER_ADMIN）或获授「微信配置」菜单的管理员可操作。机密只供本次提交，切换标签、提交成功或离开页面会清空所有机密输入及清除勾选；不会存储到本地。</p></div>
       <el-tabs v-model="tab" :before-leave="canLeaveTab">
-        <el-tab-pane label="微信登录" name="LOGIN">
-          <div class="panel-heading"><div><h2>小程序登录参数</h2><p>同一小程序的 AppID 与 AppSecret 必须配套，保存到后端后生效。</p></div><el-tag :type="loginSaved?.enabled ? 'success' : 'info'">{{ loginSaved ? (loginSaved.enabled ? '已保存 · 启用' : '已保存 · 关闭') : '尚未加载' }}</el-tag></div>
-          <div v-if="loginSaved" class="config-meta">
-            <span>配置来源 <el-tag size="small" effect="plain">{{ loginSaved.source === 'DATABASE' ? '数据库 · DATABASE' : '环境变量 · ENVIRONMENT' }}</el-tag></span>
-            <span>版本 {{ versionText(loginSaved.version) }}</span><span>更新时间 {{ loginSaved.updatedTime || '未记录' }}</span>
+        <el-tab-pane v-for="loginTab in loginTabs" :key="loginTab.section" :label="loginTab.label" :name="loginTab.section">
+          <div class="panel-heading"><div><h2>{{ loginTab.label }}参数</h2><p>两端必须使用不同 AppID；每端 AppID 与 AppSecret 必须配套。骑手端未配置不会借用用户端凭据。</p></div><el-tag :type="savedFor(loginTab.section)?.enabled ? 'success' : 'info'">{{ savedFor(loginTab.section) ? (savedFor(loginTab.section).enabled ? '已保存 · 启用' : '已保存 · 关闭') : '尚未加载' }}</el-tag></div>
+          <div v-if="savedFor(loginTab.section)" class="config-meta">
+            <span>配置来源 <el-tag size="small" effect="plain">{{ savedFor(loginTab.section).source === 'DATABASE' ? '数据库 · DATABASE' : '环境变量 · ENVIRONMENT' }}</el-tag></span>
+            <span>版本 {{ versionText(savedFor(loginTab.section).version) }}</span><span>更新时间 {{ savedFor(loginTab.section).updatedTime || '未记录' }}</span>
           </div>
-          <el-alert title="修改 AppID 不会自动合并原有账号；关闭微信登录会影响用户通过微信新登录。修改 AppID 时须同时提供新 AppSecret 或明确清除旧值。请先确认小程序端 AppID 与后端配置一致。" type="info" show-icon :closable="false" class="notice" />
-          <el-alert v-if="loginSaved?.source === 'ENVIRONMENT'" title="当前使用环境变量。首次保存会建立数据库配置；AppID 不变且密钥留空时，后端会保留环境 AppSecret 并加密迁入数据库。修改 AppID 时请同时输入新的配套 AppSecret。" type="info" show-icon :closable="false" class="notice" />
-          <el-form ref="loginFormRef" :model="loginForm" :rules="loginRules" label-position="top" :disabled="fieldsDisabled" @submit.prevent>
-            <el-form-item label="启用微信登录" prop="enabled"><el-switch v-model="loginForm.enabled" active-text="启用" inactive-text="关闭" /></el-form-item>
+          <el-alert title="原用户端 AppID 应保持不变。修改 AppID 不会自动合并原有账号；关闭仅影响该端新登录。修改 AppID 时须同时提供新 AppSecret 或明确清除旧值。" type="info" show-icon :closable="false" class="notice" />
+          <el-alert v-if="savedFor(loginTab.section)?.source === 'ENVIRONMENT'" title="当前使用该端环境变量。首次保存会建立独立数据库配置；同端 AppID 不变且密钥留空时，后端会保留该端环境 AppSecret 并加密迁入数据库。" type="info" show-icon :closable="false" class="notice" />
+          <el-form :ref="element => setLoginFormRef(loginTab.section, element)" :model="formFor(loginTab.section)" :rules="rulesFor(loginTab.section)" label-position="top" :disabled="fieldsDisabled" @submit.prevent>
+            <el-form-item label="启用该端微信登录" prop="enabled"><el-switch v-model="formFor(loginTab.section).enabled" active-text="启用" inactive-text="关闭" /></el-form-item>
             <div class="form-grid">
-              <el-form-item label="小程序 AppID" prop="appId"><el-input v-model="loginForm.appId" placeholder="wx 开头的 16 位十六进制标识" maxlength="18" autocomplete="off" spellcheck="false" /></el-form-item>
+              <el-form-item label="小程序 AppID" prop="appId"><el-input v-model="formFor(loginTab.section).appId" placeholder="wx 开头的 16 位十六进制标识" maxlength="18" autocomplete="off" spellcheck="false" /></el-form-item>
               <el-form-item prop="appSecret">
-                <template #label><span class="secret-label">AppSecret <el-tag size="small" :type="loginSaved?.appSecretConfigured ? 'success' : 'info'">{{ configuredText(loginSaved?.appSecretConfigured) }}</el-tag></span></template>
-                <el-input v-model="loginForm.appSecret" type="password" show-password autocomplete="new-password" :disabled="loginForm.clearAppSecret" :placeholder="secretPlaceholder(loginSaved?.appSecretConfigured) + '，新值须为 32 位十六进制'" spellcheck="false" />
-                <el-checkbox v-model="loginForm.clearAppSecret" class="clear-secret" @change="clearMarkedSecret('LOGIN', 'appSecret', $event)">明确清除已保存的 AppSecret</el-checkbox>
+                <template #label><span class="secret-label">AppSecret <el-tag size="small" :type="savedFor(loginTab.section)?.appSecretConfigured ? 'success' : 'info'">{{ configuredText(savedFor(loginTab.section)?.appSecretConfigured) }}</el-tag></span></template>
+                <el-input v-model="formFor(loginTab.section).appSecret" type="password" show-password autocomplete="new-password" :disabled="formFor(loginTab.section).clearAppSecret" :placeholder="secretPlaceholder(savedFor(loginTab.section)?.appSecretConfigured) + '，新值须为 32 位十六进制'" spellcheck="false" />
+                <el-checkbox v-model="formFor(loginTab.section).clearAppSecret" class="clear-secret" @change="clearMarkedSecret(loginTab.section, 'appSecret', $event)">明确清除该端已保存的 AppSecret</el-checkbox>
               </el-form-item>
             </div>
             <p class="field-help">机密输入始终不回显原值。留空（包括纯空白）保存会保留原密钥；输入新值会替换。请勿填写 **** 等掩码。</p>
           </el-form>
-          <div class="form-actions"><span>保存需要二次确认，后端执行最终校验。</span><div><el-button :loading="validating === 'LOGIN'" :disabled="!canValidate" @click="validateSaved('LOGIN')">校验已保存配置</el-button><el-button type="primary" :disabled="!canSave" :loading="saving === 'LOGIN'" @click="saveSection('LOGIN')">保存登录配置</el-button></div></div>
-          <div v-if="actionErrors.LOGIN" class="action-error" role="alert">{{ actionErrors.LOGIN }}</div>
-          <ValidationResult :result="validationResults.LOGIN" />
+          <div class="form-actions"><span>保存需要二次确认，后端执行最终校验。</span><div><el-button :loading="validating === loginTab.section" :disabled="!canValidate" @click="validateSaved(loginTab.section)">校验已保存配置</el-button><el-button type="primary" :disabled="!canSave" :loading="saving === loginTab.section" @click="saveSection(loginTab.section)">保存该端登录配置</el-button></div></div>
+          <div v-if="actionErrors[loginTab.section]" class="action-error" role="alert">{{ actionErrors[loginTab.section] }}</div>
+          <ValidationResult :result="validationResults[loginTab.section]" />
         </el-tab-pane>
 
         <el-tab-pane label="微信支付" name="PAYMENT">
@@ -97,16 +97,20 @@ const tab = ref('LOGIN')
 const loading = ref(false), confirming = ref(false), saving = ref(''), validating = ref('')
 const ready = ref(false), authorized = ref(false), encryptionReady = ref(false), needsReload = ref(false)
 const pageError = ref('')
-const actionErrors = reactive({ LOGIN: '', PAYMENT: '' })
-const validationResults = reactive({ LOGIN: null, PAYMENT: null })
-const loginSaved = ref(null), paymentSaved = ref(null)
-const loginFormRef = ref(), paymentFormRef = ref()
+const loginTabs = [{ section: 'LOGIN', clientType: 'USER', label: '用户端微信登录' }, { section: 'LOGIN_RIDER', clientType: 'RIDER', label: '骑手端微信登录' }]
+const sections = ['LOGIN', 'LOGIN_RIDER', 'PAYMENT']
+const actionErrors = reactive({ LOGIN: '', LOGIN_RIDER: '', PAYMENT: '' })
+const validationResults = reactive({ LOGIN: null, LOGIN_RIDER: null, PAYMENT: null })
+const loginSaved = ref(null), riderLoginSaved = ref(null), paymentSaved = ref(null)
+const loginFormRef = ref(), riderLoginFormRef = ref(), paymentFormRef = ref()
 const loginForm = reactive({ enabled: false, appId: '', appSecret: '', clearAppSecret: false })
+const riderLoginForm = reactive({ enabled: false, appId: '', appSecret: '', clearAppSecret: false })
 const paymentForm = reactive({ enabled: false, appId: '', mchId: '', merchantSerialNo: '', notifyUrl: '', refundNotifyUrl: '', platformPublicKeyId: '', apiV3Key: '', merchantPrivateKey: '', platformPublicKey: '', clearApiV3Key: false, clearMerchantPrivateKey: false, clearPlatformPublicKey: false })
 const pemVisible = reactive({ merchantPrivateKey: false, platformPublicKey: false })
 const paymentTextFields = ['appId', 'mchId', 'merchantSerialNo', 'notifyUrl', 'refundNotifyUrl', 'platformPublicKeyId']
 const secretFields = {
   LOGIN: [{ key: 'appSecret', clear: 'clearAppSecret', configured: 'appSecretConfigured', label: 'AppSecret' }],
+  LOGIN_RIDER: [{ key: 'appSecret', clear: 'clearAppSecret', configured: 'appSecretConfigured', label: 'AppSecret' }],
   PAYMENT: [
     { key: 'apiV3Key', clear: 'clearApiV3Key', configured: 'apiV3KeyConfigured', label: 'API v3 密钥' },
     { key: 'merchantPrivateKey', clear: 'clearMerchantPrivateKey', configured: 'merchantPrivateKeyConfigured', label: '商户私钥' },
@@ -126,27 +130,31 @@ const canLeaveTab = () => !busy.value
 const configuredText = (configured) => !ready.value ? '尚未加载' : configured ? '已配置' : '未配置'
 const secretPlaceholder = (configured) => configured ? '已配置，留空保留原值' : '未配置，请按需输入'
 const versionText = (version) => version === null ? '无数据库版本' : String(version)
-const formFor = (section) => section === 'LOGIN' ? loginForm : paymentForm
-const savedFor = (section) => section === 'LOGIN' ? loginSaved.value : paymentSaved.value
+function requireSection(section) { if (!sections.includes(section)) throw new Error('INVALID_SECTION'); return section }
+const formFor = (section) => ({ LOGIN: loginForm, LOGIN_RIDER: riderLoginForm, PAYMENT: paymentForm })[requireSection(section)]
+const savedRefFor = (section) => ({ LOGIN: loginSaved, LOGIN_RIDER: riderLoginSaved, PAYMENT: paymentSaved })[requireSection(section)]
+const savedFor = (section) => savedRefFor(section).value
+const formRefFor = (section) => ({ LOGIN: loginFormRef, LOGIN_RIDER: riderLoginFormRef, PAYMENT: paymentFormRef })[requireSection(section)]
+const clientFor = (section) => loginTabs.find(item => item.section === requireSection(section))?.clientType
+function setLoginFormRef(section, element) { formRefFor(section).value = element }
 const hasValue = (value) => typeof value === 'string' && value.trim().length > 0
 const isMask = (value) => /^[*＊•●·]+$/.test(value.trim())
 
 function clearAllSecrets() {
-  for (const section of ['LOGIN', 'PAYMENT']) {
+  for (const section of sections) {
     const form = formFor(section)
     for (const field of secretFields[section]) { form[field.key] = ''; form[field.clear] = false }
   }
   pemVisible.merchantPrivateKey = false
   pemVisible.platformPublicKey = false
-  loginFormRef.value?.clearValidate()
-  paymentFormRef.value?.clearValidate()
+  for (const section of sections) formRefFor(section).value?.clearValidate()
 }
 function clearMarkedSecret(section, key, checked) {
   if (checked) {
     formFor(section)[key] = ''
     if (key in pemVisible) pemVisible[key] = false
   }
-  const formRef = section === 'LOGIN' ? loginFormRef : paymentFormRef
+  const formRef = formRefFor(section)
   formRef.value?.clearValidate(key)
 }
 watch(tab, clearAllSecrets, { flush: 'sync' })
@@ -195,6 +203,11 @@ const loginRules = {
   appId: textRule(loginForm, 'AppID', isAppId, 'AppID 须为 wx + 16 位十六进制字符'),
   appSecret: secretRule('LOGIN', 'appSecret', value => /^[0-9a-fA-F]{32}$/.test(value), 'AppSecret 新值须为 32 位十六进制字符')
 }
+const riderLoginRules = {
+  appId: textRule(riderLoginForm, '骑手端AppID', isAppId, 'AppID 须为 wx + 16 位十六进制字符'),
+  appSecret: secretRule('LOGIN_RIDER', 'appSecret', value => /^[0-9a-fA-F]{32}$/.test(value), 'AppSecret 新值须为 32 位十六进制字符')
+}
+const rulesFor = section => ({ LOGIN: loginRules, LOGIN_RIDER: riderLoginRules, PAYMENT: paymentRules })[requireSection(section)]
 const paymentRules = {
   appId: textRule(paymentForm, 'AppID', isAppId, 'AppID 须为 wx + 16 位十六进制字符'),
   mchId: textRule(paymentForm, '商户号', value => /^\d{8,32}$/.test(value), '商户号须为 8–32 位数字'),
@@ -209,10 +222,11 @@ const paymentRules = {
 
 // 严格读取脱敏字段：即便服务端意外添加机密字段，也不回填表单或缓存原响应。
 function readSection(data, section) {
+  requireSection(section)
   const versionValid = data?.version === null || (Number.isSafeInteger(data?.version) && data.version >= 0) || (typeof data?.version === 'string' && /^\d+$/.test(data.version))
   if (!data || typeof data.enabled !== 'boolean' || typeof data.appId !== 'string' || !versionValid || !(data.updatedTime === null || typeof data.updatedTime === 'string')) throw new Error('INVALID_RESPONSE')
   const result = { enabled: data.enabled, appId: data.appId, version: data.version, updatedTime: data.updatedTime }
-  if (section === 'LOGIN') {
+  if (section !== 'PAYMENT') {
     if (typeof data.appSecretConfigured !== 'boolean' || !['DATABASE', 'ENVIRONMENT'].includes(data.source)) throw new Error('INVALID_RESPONSE')
     return { ...result, appSecretConfigured: data.appSecretConfigured, source: data.source }
   }
@@ -231,11 +245,8 @@ function applySection(data, section) {
   const form = formFor(section)
   form.enabled = data.enabled
   form.appId = data.appId
-  if (section === 'LOGIN') loginSaved.value = data
-  else {
-    for (const key of paymentTextFields) form[key] = data[key]
-    paymentSaved.value = data
-  }
+  if (section === 'PAYMENT') for (const key of paymentTextFields) form[key] = data[key]
+  savedRefFor(section).value = data
 }
 function errorInfo(error) {
   const body = error?.response?.data || error
@@ -284,14 +295,14 @@ async function loadSettings() {
     const data = await adminApi.wechatSettings()
     if (disposed) return
     if (typeof data?.encryptionReady !== 'boolean' || data.paymentRuntime !== 'MOCK') throw new Error('INVALID_RESPONSE')
-    const login = readSection(data.login, 'LOGIN'), payment = readSection(data.payment, 'PAYMENT')
+    const login = readSection(data.login, 'LOGIN'), riderLogin = readSection(data.riderLogin, 'LOGIN_RIDER'), payment = readSection(data.payment, 'PAYMENT')
     clearAllSecrets()
     applySection(login, 'LOGIN')
+    applySection(riderLogin, 'LOGIN_RIDER')
     applySection(payment, 'PAYMENT')
     encryptionReady.value = data.encryptionReady
     needsReload.value = false
-    actionErrors.LOGIN = ''; actionErrors.PAYMENT = ''
-    validationResults.LOGIN = null; validationResults.PAYMENT = null
+    for (const section of sections) { actionErrors[section] = ''; validationResults[section] = null }
     ready.value = true
   } catch (error) {
     if (disposed) return
@@ -303,7 +314,7 @@ async function loadSettings() {
 }
 async function reloadSettings() {
   if (disposed || busy.value) return
-  const hasSecrets = ['LOGIN', 'PAYMENT'].some(section => secretFields[section].some(field => hasValue(formFor(section)[field.key]) || formFor(section)[field.clear]))
+  const hasSecrets = sections.some(section => secretFields[section].some(field => hasValue(formFor(section)[field.key]) || formFor(section)[field.clear]))
   if (ready.value || needsReload.value || hasSecrets) {
     confirming.value = true
     try {
@@ -328,10 +339,10 @@ function confirmationText(section) {
   const form = formFor(section), saved = savedFor(section)
   const replacing = secretFields[section].filter(field => !form[field.clear] && hasValue(form[field.key])).map(field => field.label)
   const clearing = secretFields[section].filter(field => form[field.clear]).map(field => field.label)
-  const messages = [`将保存${section === 'LOGIN' ? '微信登录' : '微信支付'}配置（当前版本：${versionText(saved.version)}）。`]
-  if (section === 'LOGIN') {
+  const messages = [`将保存${section === 'PAYMENT' ? '微信支付' : loginTabs.find(item => item.section === section).label}配置（当前版本：${versionText(saved.version)}）。`]
+  if (section !== 'PAYMENT') {
     messages.push(`当前来源：${saved.source}。AppID 与 AppSecret 须与同一小程序一致，后端保存后生效。`)
-    if (!form.enabled) messages.push('保存后将关闭微信登录，用户无法通过微信发起新的登录。')
+    if (!form.enabled) messages.push('保存后将关闭该端微信登录，不影响另一端的独立配置。')
     if (saved.appId !== form.appId.trim()) messages.push('AppID 将发生变化，原有账号不会自动合并。')
   } else messages.push('支付模式固定 MOCK；启用参数也不代表真实收单、回调或分账已接通。')
   if (replacing.length) messages.push(`将替换：${replacing.join('、')}。旧值不会回显，请确认新值正确。`)
@@ -340,10 +351,11 @@ function confirmationText(section) {
   return messages.join('\n\n')
 }
 async function saveSection(section) {
+  requireSection(section)
   if (disposed || !canSave.value) return
   confirming.value = true
   try {
-    const formRef = section === 'LOGIN' ? loginFormRef : paymentFormRef
+    const formRef = formRefFor(section)
     const valid = await formRef.value?.validate().catch(() => false)
     if (!valid || disposed) return
     try {
@@ -354,25 +366,26 @@ async function saveSection(section) {
     confirming.value = false
     actionErrors[section] = ''
     try {
-      const response = await (section === 'LOGIN' ? adminApi.saveWechatLogin(buildPayload(section)) : adminApi.saveWechatPayment(buildPayload(section)))
+      const response = await (section === 'PAYMENT' ? adminApi.saveWechatPayment(buildPayload(section)) : adminApi.saveWechatLogin(buildPayload(section), clientFor(section)))
       if (disposed) return
       const data = readSection(response, section)
       clearAllSecrets()
       applySection(data, section)
       validationResults[section] = null
-      ElMessage.success(section === 'LOGIN' ? '微信登录配置已保存，机密输入已清空' : '微信支付参数已保存，当前仍为 MOCK 模式；机密输入已清空')
+      ElMessage.success(section !== 'PAYMENT' ? '该端微信登录配置已保存，所有机密输入已清空' : '微信支付参数已保存，当前仍为 MOCK 模式；所有机密输入已清空')
     } catch (error) { if (!disposed) handleActionError(error, section, '保存') }
   } finally { if (!disposed) { saving.value = ''; confirming.value = false } }
 }
 async function validateSaved(section) {
+  requireSection(section)
   if (disposed || !canValidate.value) return
   validating.value = section
   actionErrors[section] = ''
   validationResults[section] = null
   try {
-    const data = await adminApi.validateWechat(section)
+    const data = await (section === 'PAYMENT' ? adminApi.validateWechat('PAYMENT') : adminApi.validateWechat('LOGIN', clientFor(section)))
     if (disposed) return
-    if (typeof data?.valid !== 'boolean' || !Array.isArray(data.messages) || !data.messages.every(message => typeof message === 'string') || typeof data.runtime !== 'string') throw new Error('INVALID_RESPONSE')
+    if (typeof data?.valid !== 'boolean' || !Array.isArray(data.messages) || !data.messages.every(message => typeof message === 'string') || data.runtime !== (section === 'PAYMENT' ? 'MOCK' : 'WECHAT_CODE2SESSION')) throw new Error('INVALID_RESPONSE')
     validationResults[section] = { valid: data.valid, messages: [...data.messages], runtime: data.runtime }
   } catch (error) { if (!disposed) handleActionError(error, section, '校验') }
   finally { if (!disposed) validating.value = '' }

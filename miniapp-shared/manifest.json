@@ -1,0 +1,32 @@
+{
+  "roots": [
+    "miniapp",
+    "rider-miniapp"
+  ],
+  "files": [
+    "utils/session.js",
+    "utils/request.js",
+    "utils/page.js",
+    "utils/profile-page.js",
+    "utils/format.js",
+    "utils/goods-budget.js",
+    "utils/wallet.js",
+    "utils/phone-authorization.js",
+    "utils/identity-link-page.js",
+    "pages/profile/profile.js",
+    "pages/profile/profile.json",
+    "pages/profile/profile.wxml",
+    "pages/profile/profile.wxss",
+    "pages/wallet/wallet.js",
+    "pages/wallet/wallet.json",
+    "pages/wallet/wallet.wxml",
+    "pages/wallet/wallet.wxss",
+    "pages/login/login.js",
+    "pages/login/login.json",
+    "pages/login/login.wxml",
+    "pages/login/login.wxss",
+    "templates/manual-phone.wxml",
+    "templates/manual-phone.wxss",
+    "app.wxss"
+  ]
+}

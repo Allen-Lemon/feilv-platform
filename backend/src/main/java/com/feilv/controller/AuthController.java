@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 认证接口（对应详细设计10.2 用户域），/api/v1/auth/** 免登录 */
+/** 认证接口；公开入口逐项放行，admin-profile 仍要求管理员认证。 */
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
@@ -43,7 +43,7 @@ public class AuthController {
         return Result.ok(userService.login(req.mobile(), req.code()));
     }
 
-    /** 骑手入驻注册（演示即时审核通过；生产：资料审核≤1个工作日＋培训考试≥80分） */
+    /** Retired: never select or promote a C-end account by a public mobile number. */
     @PostMapping("/rider-register")
     public Result<LoginVO> riderRegister(@Valid @RequestBody RiderRegisterReq req) {
         return Result.ok(userService.registerRider(req.mobile(), req.name(), req.code(), req.plateNo()));

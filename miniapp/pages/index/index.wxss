@@ -23,8 +23,9 @@ page { background: #F7F8FA; }
 .home-page .service-SEND { align-items: center; flex-direction: row; width: 100%; padding: 26rpx; border-color: #F5D4C1; background: #FFF8F2; }
 .service-icon { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 72rpx; height: 72rpx; margin-bottom: 18rpx; border-radius: 23rpx; background: #FFF0E8; color: #AA381B; font-size: 31rpx; font-weight: 700; }
 .service-SEND .service-icon { width: 96rpx; height: 96rpx; margin: 0 24rpx 0 0; border-radius: 28rpx; background: #C94320; color: #FFFFFF; font-size: 42rpx; }
-.service-BUY .service-icon { background: #EEF4FF; color: #344E86; }
-.service-ERRAND .service-icon { background: #EDF7F2; color: #176B52; }
+.home-page .service-TRANSPORT { width: 100%; flex-direction: row; align-items: center; }
+.service-TRANSPORT .service-icon { margin: 0 24rpx 0 0; background: #EEF4FF; color: #344E86; }
+.service-TRANSPORT .service-desc { min-height: 0; }
 .home-page .service-CUSTOM { width: 100%; flex-direction: row; align-items: center; }
 .service-CUSTOM .service-icon { margin: 0 24rpx 0 0; background: #F0EEFA; color: #594780; }
 .service-CUSTOM .service-desc { min-height: 0; }

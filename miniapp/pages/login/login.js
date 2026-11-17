@@ -3,23 +3,85 @@ const session = require('../../utils/session')
 const { definePage, toast } = require('../../utils/page')
 const { mobile } = require('../../utils/format')
 const profilePage = require('../../utils/profile-page')
+const phoneAuthorization = require('../../utils/phone-authorization')
+const client = require('../../config').CLIENT
 
 // 一个页面完成身份登录和资料确认，复用资料页的原生授权与账户隔离。
 definePage(Object.assign({}, profilePage, {
   data: Object.assign({}, profilePage.data, {
     agreed: false, sms: false, mobile: '', code: '', busy: false, sending: false,
-    cooling: 0, smsLabel: '获取验证码', demoCode: '', profileStage: false
+    cooling: 0, smsLabel: '获取验证码', demoCode: '', profileStage: false,
+    smsLoginEnabled: false, identityRequired: false, identityChoice: '', linkCode: '', identityExpiresText: '', riderClient: client === 'RIDER'
   }),
-  onLoad() { this._fromLogin = true },
+  onLoad() { this._fromLogin = true; this._identityGeneration = 0 },
+  onHide() { this.clearIdentity(); profilePage.onHide.call(this) },
+  onUnload() { this.clearIdentity(); profilePage.onUnload.call(this) },
   onShow() {
     this.updateCooling()
-    if (!session.token()) return
+    if (!session.token()) { this.safeSet({ profileStage: false }); return this.loadLoginOptions() }
     this.safeSet({ profileStage: true, fromLogin: true })
     if (this._working) { this._showAfterRun = true; return }
     return profilePage.onShow.call(this)
   },
   consent(e) { if (!this._working) this.safeSet({ agreed: e.detail.value.includes('yes') }) },
-  toggleSms() { if (!this._working) this.safeSet({ sms: !this.data.sms }) },
+  toggleSms() { if (!this._working && this.data.smsLoginEnabled && !this.data.identityRequired) this.safeSet({ sms: !this.data.sms }) },
+  async loadLoginOptions() {
+    const revision = session.revision()
+    this.safeSet({ smsLoginEnabled: false, sms: false })
+    try {
+      const value = await api.forSession(revision).loginOptions()
+      if (!this._dead && this._visible && revision === session.revision()) this.safeSet({ smsLoginEnabled: !!value && value.smsLoginEnabled === true })
+    } catch { /* 能力未知默认关闭，不将演示短信冒充可用。 */ }
+  },
+  clearIdentity() {
+    this._identityGeneration = (this._identityGeneration || 0) + 1
+    this._nativePrivacyAttempt = (this._nativePrivacyAttempt || 0) + 1
+    this._loginTicket = null; this._identityIntent = null
+    this.safeSet({ identityRequired: false, identityChoice: '', linkCode: '', identityExpiresText: '' })
+  },
+  identityCurrent(generation = this._identityGeneration) {
+    return !this._dead && this._visible && !session.token() && this._sessionRevision === session.revision()
+      && generation === this._identityGeneration && !!this._loginTicket && this._loginTicket.expires > Date.now()
+  },
+  async chooseIdentity(e) {
+    if (this._working || !this.identityCurrent()) return toast('请重新微信登录获取有效凭证')
+    const choice = e.currentTarget.dataset.choice
+    if (!['LINK', 'NEW'].includes(choice)) return
+    this._identityIntent = null
+    this.safeSet({ identityChoice: choice, linkCode: '' })
+    if (choice === 'NEW') await phoneAuthorization.privacy(this, () => this.identityCurrent() && this.data.identityChoice === 'NEW')
+  },
+  linkCodeInput(e) { if (!this._working && this.identityCurrent()) this.safeSet({ linkCode: String(e.detail.value || '').trim() }) },
+  async identityPrivacy() { if (this.identityCurrent()) await phoneAuthorization.privacy(this, () => this.identityCurrent()) },
+  openIdentityPrivacy() { if (typeof wx.openPrivacyContract === 'function') wx.openPrivacyContract({}) },
+  prepareAccountPhone() {
+    this._identityIntent = this.identityCurrent() && this.data.identityChoice === 'NEW' && this.data.agreed && this.data.phoneSupported && this.data.privacyReady && !this._working
+      ? { generation: this._identityGeneration, revision: session.revision() } : null
+  },
+  createAccount(e) {
+    const intent = this._identityIntent; this._identityIntent = null
+    if (!intent || !this.identityCurrent(intent.generation) || this._working || !this.checkConsent()) return
+    const phoneCode = phoneAuthorization.phoneCode(e)
+    if (this._usedIdentityPhoneCodes && this._usedIdentityPhoneCodes.has(phoneCode)) return toast('请重新授权获取新手机号凭证')
+    this._usedIdentityPhoneCodes = this._usedIdentityPhoneCodes || new Set(); this._usedIdentityPhoneCodes.add(phoneCode)
+    return this.run('busy', async scopedApi => {
+      if (!(await require('../../utils/page').modal({ title: '确认创建新账号', content: '此操作创建独立平台账号，不继承原账号订单、钱包或骑手身份。若已有账号，请取消并使用临时关联码。手机号必须由微信真实验证，开发或演示号码不能证明归属。' })).confirm || !this.identityCurrent(intent.generation)) return
+      const value = await scopedApi.createAccount(this._loginTicket.value, phoneCode)
+      if (this.identityCurrent(intent.generation)) await this.finish(value)
+    })
+  },
+  linkAccount() {
+    if (this._working || !this.identityCurrent() || !this.checkConsent() || this.data.identityChoice !== 'LINK') return
+    const linkCode = this.data.linkCode.trim()
+    if (!/^[A-Za-z0-9_-]{43}$/.test(linkCode)) return toast('请填写另一小程序当前账号生成的完整临时关联码')
+    const generation = this._identityGeneration
+    return this.run('busy', async scopedApi => {
+      if (!(await require('../../utils/page').modal({ title: '确认关联已有账号', content: '将当前微信身份关联到临时码所代表的平台账号，共用其订单、钱包与骑手档案。请确认临时码来自您本人在另一小程序登录的账号；不是您本人请取消。' })).confirm || !this.identityCurrent(generation)) return
+      const value = await scopedApi.linkIdentity(this._loginTicket.value, linkCode)
+      if (this.identityCurrent(generation)) await this.finish(value)
+    })
+  },
+  restartIdentity() { if (!this._working) this.clearIdentity() },
   input(e) {
     const field = e.currentTarget.dataset.field
     if (!this._working && ['mobile', 'code'].includes(field)) this.safeSet({ [field]: e.detail.value.trim() })
@@ -45,7 +107,7 @@ definePage(Object.assign({}, profilePage, {
     if (cooling && this._visible) this.later(this.updateCooling, 1000)
   },
   sendCode() {
-    if (!this.checkConsent() || this.data.cooling || this.data.profileStage) return
+    if (!this.data.smsLoginEnabled || !this.checkConsent() || this.data.cooling || this.data.profileStage || this.data.identityRequired) return
     if (!mobile(this.data.mobile)) return toast('请输入正确的11位手机号')
     return this.run('sending', async (scopedApi) => {
       const result = await scopedApi.smsCode(this.data.mobile)
@@ -57,6 +119,7 @@ definePage(Object.assign({}, profilePage, {
   },
   async finish(value) {
     if (this._dead || !this._visible) return
+    this.clearIdentity()
     session.save(value)
     // 仅可信登录成功可切换本页作用域；后续请求必须绑定新会话，不能复用登录请求的旧scope。
     this._sessionRevision = session.revision()
@@ -70,17 +133,24 @@ definePage(Object.assign({}, profilePage, {
     if (this.data.profileStage || !this.checkConsent()) return
     return this.run('busy', async (scopedApi) => {
       const revision = session.revision()
-      const result = await new Promise((resolve, reject) => wx.login({ timeout: 15000, success: resolve, fail: () => reject(new Error('微信登录失败，请检查 AppID 或稍后重试')) }))
-      if (this._dead || !this._visible || revision !== session.revision()) return
-      if (!result.code) throw new Error('微信未返回登录 code，请使用真实 AppID 联调')
-      const value = await scopedApi.wechatLogin(result.code)
-      if (this._dead || !this._visible || revision !== session.revision()) return
-      if (!value || !['USER', 'RIDER'].includes(value.role)) throw new Error('微信登录返回的账户类型无效')
-      await this.finish(value)
+      this.clearIdentity()
+      const attempt = this._identityGeneration
+      const current = () => !this._dead && this._visible && revision === session.revision() && attempt === this._identityGeneration
+      const code = await phoneAuthorization.wxCode()
+      if (!current()) return
+      const value = await scopedApi.wechatLogin(code)
+      if (!current()) return
+      if (value && value.state === 'AUTHENTICATED') return this.finish(value.login)
+      const expires = value && Date.parse(value.expiresAt)
+      if (!value || value.state !== 'IDENTITY_REQUIRED' || typeof value.loginTicket !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value.loginTicket) || !Number.isFinite(expires) || expires <= Date.now()) throw new Error('微信登录响应无效，请重新登录')
+      this._loginTicket = { value: value.loginTicket, expires }
+      this.safeSet({ identityRequired: true, identityChoice: '', identityExpiresText: value.expiresAt, sms: false })
+      const generation = this._identityGeneration
+      this.later(() => { if (generation === this._identityGeneration) { this.clearIdentity(); toast('登录凭证已过期，请重新微信登录') } }, Math.min(expires - Date.now(), 2147483647))
     })
   },
   smsLogin() {
-    if (this.data.profileStage || !this.checkConsent()) return
+    if (!this.data.smsLoginEnabled || this.data.profileStage || this.data.identityRequired || !this.checkConsent()) return
     if (!mobile(this.data.mobile) || !/^\d{4,8}$/.test(this.data.code)) return toast('请填写正确的手机号与验证码')
     return this.run('busy', async (scopedApi) => {
       const revision = session.revision()
@@ -123,6 +193,6 @@ definePage(Object.assign({}, profilePage, {
     if (this._working) return
     this._leaving = true
     if (getCurrentPages().length > 1) wx.navigateBack({ delta: 1 })
-    else wx.switchTab({ url: '/pages/index/index' })
+    else wx.switchTab({ url: client === 'RIDER' ? '/pages/rider/workbench' : '/pages/index/index' })
   }
 }))

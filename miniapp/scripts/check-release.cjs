@@ -2,13 +2,22 @@
 // 上传前本地检查：不上传、不发布，不访问微信凭据或远程业务数据。
 const fs = require('node:fs')
 const path = require('node:path')
-const root = path.resolve(__dirname, '..')
+const { projectOptions, repository, UPLOAD_EXCLUSIONS } = require('./native-project.cjs')
+const { root, client } = projectOptions()
 const project = JSON.parse(fs.readFileSync(path.join(root, 'project.config.json'), 'utf8'))
 const config = require(path.join(root, 'config.js'))
 const errors = []
 function check(ok, message) { if (!ok) errors.push(message) }
 check(/^wx[0-9a-fA-F]{16}$/.test(project.appid || ''), 'project.config.json 仍未填写真实小程序 AppID；touristappid 无法上传或完成真实微信登录。')
 check(project.compileType === 'miniprogram' && project.miniprogramRoot === './', '原生入口必须为 miniprogram / ./。')
+check(config.CLIENT === client, 'config.CLIENT 必须匹配当前客户端 ' + client + '。')
+const counterpart = path.join(repository, client === 'USER' ? 'rider-miniapp' : 'miniapp', 'project.config.json')
+if (!fs.existsSync(counterpart)) check(false, '缺少另一端 project.config.json，无法核验独立 AppID。')
+else {
+  const other = JSON.parse(fs.readFileSync(counterpart, 'utf8'))
+  check(/^wx[0-9a-fA-F]{16}$/.test(other.appid || ''), '另一端尚未配置真实 AppID；UNCONFIGURED_RIDER_APPID 不可发布。')
+  check(other.appid !== project.appid, '用户与骑手端必须使用不同的真实 AppID。')
+}
 check(config.BASE_URL === 'https://xt.allms.cn', '正式 API 根地址必须为 https://xt.allms.cn（不带 /api 或 /login）。')
 check(config.ALLOW_DEV_SERVER_OVERRIDE === false, '上传前必须关闭 ALLOW_DEV_SERVER_OVERRIDE。')
 check(project.setting && project.setting.urlCheck === true, '上传前必须开启合法域名检查 urlCheck。')
@@ -21,7 +30,7 @@ if (fs.existsSync(privatePath)) {
   check(!local.appid || local.appid === project.appid, '私有配置的 AppID 与项目配置不一致。')
 }
 const exclusions = project.packOptions && project.packOptions.ignore || []
-for (const value of ['scripts', 'dist', 'node_modules', 'package.json', 'package-lock.json', 'README.md', 'NATIVE_MIGRATION.md', 'WECHAT_DEPLOYMENT.md']) {
+for (const value of UPLOAD_EXCLUSIONS) {
   check(exclusions.some(item => item.value === value), '上传包未排除开发文件/目录：' + value)
 }
 const app = JSON.parse(fs.readFileSync(path.join(root, 'app.json'), 'utf8'))
@@ -29,10 +38,10 @@ for (const page of app.pages || []) {
   for (const ext of ['js', 'json', 'wxml', 'wxss']) check(fs.existsSync(path.join(root, page + '.' + ext)), page + ' 缺少 .' + ext)
 }
 if (errors.length) {
-  console.error('发布配置检查未通过：\n- ' + errors.join('\n- '))
+  console.error(client + ' 发布配置检查未通过 (' + root + ')：\n- ' + errors.join('\n- '))
   process.exitCode = 1
 } else {
   console.log('PASS release config: native project, real AppID, official HTTPS origin, locked server, domain check and minification enabled.')
 }
-console.log('人工必核：微信后台 request/uploadFile 合法域名 https://xt.allms.cn、头像公开读取及持久化、后端匹配 AppID/AppSecret、头像昵称手机号隐私指引和定位权限、真机登录与下单绑定门禁验收。')
-console.log('注意：当前支付、钱包赔付和提现均为 MOCK，无真实微信转账或到账；短信/骑手审核仍有演示逻辑，本检查通过不等于生产业务或微信审核通过。')
+console.log('人工必核：两端独立 AppID/后端凭据、request/uploadFile 合法域名 https://xt.allms.cn、头像持久化、头像昵称手机号隐私指引、真机 ticket 登录/账号关联及入驻；' + (client === 'RIDER' ? '骑手真实定位与履约授权。' : '用户下单绑定门禁，用户端不申请定位。'))
+console.log('注意：支付、钱包赔付和提现均为 MOCK，无真实微信转账或到账；历史 phone-only 骑手恢复、真实不同 AppID、JWT 受控切换与真机联调仍需人工验收，本检查不等于生产业务或微信审核通过。')

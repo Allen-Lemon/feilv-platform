@@ -1,0 +1,69 @@
+<view class="page wallet-page">
+  <view class="page-head"><view class="eyebrow">我的钱包</view><view class="title">钱包与提现</view><view class="page-desc">仅查看当前账号，金额与申请资格以服务端为准</view></view>
+  <view class="mock-note"><text class="mock-badge">MOCK</text><text>全流程为模拟记账，不调用真实微信支付或转账，审核通过也不代表真钱到账。</text></view>
+  <view wx:if="{{!loggedIn}}" class="empty"><view class="empty-title">登录后查看自己的钱包</view><button class="primary" bindtap="login">前往登录</button></view>
+  <block wx:else>
+    <view class="card">
+      <view class="section-title">钱包余额（模拟）</view>
+      <view wx:if="{{loading}}" class="hint">正在实时读取钱包…</view>
+      <view wx:if="{{error}}" class="error">钱包未加载：{{error}}</view>
+      <block wx:if="{{wallet}}">
+        <view class="line row"><text>可用余额</text><text class="wallet-amount">¥{{wallet.availableText}}</text></view>
+        <view class="line row"><text>冻结余额</text><text class="wallet-amount">¥{{wallet.frozenText}}</text></view>
+        <view class="line row"><text>待抵扣欠款</text><text class="wallet-amount">¥{{wallet.debtText}}</text></view>
+        <view wx:if="{{wallet.debtFen > 0}}" class="error">欠款未清，不能申请新提现；请等待后续入账抵扣。</view>
+        <view wx:elif="{{!wallet.withdrawAllowed}}" class="hint">服务端当前不允许新提现，请核实账号状态后重试。</view>
+      </block>
+      <view wx:elif="{{!loading}}" class="hint">金额未加载，不以0元替代。</view>
+      <button bindtap="retryWallet" disabled="{{loading || busy}}">重新读取钱包与绑定状态</button>
+      <view class="hint">待抵扣欠款是已产生但余额暂不足以扣清的投诉扣减，不是可用资金；后续入账、提现驳回后的解冻金额会先抵扣欠款。冻结余额是已申请提现、等待审核的部分，不可重复使用。</view>
+      <view class="hint">今后订单完成时，承接者按原分账减去本单投诉赔付后的金额结算；历史订单是否入账以明细为准。投诉审核赔付模拟记入订单发布者钱包，尚无真实资金流转。</view>
+    </view>
+    <view class="card">
+      <view class="section-title">申请 MOCK 模拟提现</view>
+      <view class="hint">单笔0.01–1000000元，最多两位小数。申请冻结可用余额；后台批准仅模拟出账，驳回解冻先抵扣欠款。</view>
+      <view wx:if="{{profileError}}" class="error">手机号绑定状态未加载：{{profileError}}</view>
+      <view wx:if="{{mobileBound === false}}" class="notice">申请提现前请绑定手机号。<button class="secondary" bindtap="profile" disabled="{{busy}}">前往资料页绑定手机号</button></view>
+      <view wx:if="{{pendingError}}" class="error">{{pendingError}}</view>
+      <view wx:if="{{pending}}" class="notice">原提现 ¥{{pending.amountText}} 结果待核实，已锁定原金额与请求编号。重试只核实同一申请，不会新建提现；即使余额或欠款状态改变也请先核实原申请。</view>
+      <view class="field"><view class="label">提现金额（元）</view><input type="digit" value="{{amount}}" bindinput="input" maxlength="16" placeholder="例如 12.34" disabled="{{busy || pending || pendingError}}"/></view>
+      <view wx:if="{{amountError}}" class="error">{{amountError}}</view>
+      <view wx:if="{{wallet && amount && !pending && !canSubmit && !amountError}}" class="hint">请核实可用余额是否充足、欠款是否清零，以及手机号和服务端提现资格。</view>
+      <view wx:if="{{submitError}}" class="error">{{submitError}}</view>
+      <button wx:if="{{pending}}" class="primary" bindtap="submit" loading="{{busy}}" disabled="{{busy || pendingError}}">重试原申请 · MOCK</button>
+      <button wx:else class="primary" bindtap="submit" loading="{{busy}}" disabled="{{!canSubmit || busy}}">确认金额并申请 · MOCK</button>
+    </view>
+    <view class="card">
+      <view class="section-title">钱包记录</view>
+      <view class="wallet-tabs"><button class="{{tab === 'entries' ? 'secondary' : ''}}" data-tab="entries" bindtap="tabChange">收支明细</button><button class="{{tab === 'withdrawals' ? 'secondary' : ''}}" data-tab="withdrawals" bindtap="tabChange">提现记录</button></view>
+      <block wx:if="{{tab === 'entries'}}">
+        <view wx:if="{{entriesError}}" class="error">明细未更新：{{entriesError}}<button bindtap="retryRecords" disabled="{{entriesLoading}}">重试读取明细</button></view>
+        <view class="wallet-record" wx:for="{{entries}}" wx:key="id">
+          <view class="row wrap"><text class="record-title">{{item.typeText}}</text><text class="wallet-amount">{{item.amountText}} 元</text></view>
+          <view class="hint">{{item.createdText}} · 明细 {{item.id}}</view>
+          <view class="record-remark" wx:if="{{item.remark}}">{{item.remark}}</view>
+          <view class="hint">变动后可用 ¥{{item.availableText}} / 冻结 ¥{{item.frozenText}} / 待抵扣 ¥{{item.debtText}}</view>
+          <view class="hint" wx:if="{{item.orderId}}">关联订单：{{item.orderId}}</view><view class="hint" wx:if="{{item.complaintId}}">关联投诉：{{item.complaintId}}</view><view class="hint" wx:if="{{item.withdrawalId}}">关联提现：{{item.withdrawalId}}</view>
+        </view>
+        <view wx:if="{{entriesLoading}}" class="loading-note">正在读取明细…</view>
+        <view wx:elif="{{entriesLoaded && !entries.length && !entriesError}}" class="hint">暂无收支明细。</view>
+        <button wx:if="{{entriesLoaded && entriesMore}}" bindtap="more" disabled="{{entriesLoading}}">加载更多明细</button>
+        <view wx:if="{{entriesLoaded && !entriesMore && entries.length}}" class="footer-note">明细已全部加载</view>
+      </block>
+      <block wx:else>
+        <view wx:if="{{withdrawalsError}}" class="error">提现记录未更新：{{withdrawalsError}}<button bindtap="retryRecords" disabled="{{withdrawalsLoading}}">重试读取提现记录</button></view>
+        <view class="wallet-record" wx:for="{{withdrawals}}" wx:key="id">
+          <view class="row wrap"><text class="wallet-amount">¥{{item.amountText}}</text><text class="tag withdrawal-{{item.status}}">{{item.statusText}}</text></view>
+          <view class="hint">申请时间：{{item.createdText}} · 提现 {{item.id}}</view>
+          <view wx:if="{{item.reason}}" class="record-remark">审核说明：{{item.reason}}</view>
+          <view wx:if="{{item.status !== 'PENDING'}}" class="hint">审核时间：{{item.reviewedText}}。{{item.status === 'APPROVED' ? '仅 MOCK 模拟出账，无真实转账。' : '解冻金额先抵扣欠款，剩余才回可用余额，以钱包明细为准。'}}</view>
+        </view>
+        <view wx:if="{{withdrawalsLoading}}" class="loading-note">正在读取提现记录…</view>
+        <view wx:elif="{{withdrawalsLoaded && !withdrawals.length && !withdrawalsError}}" class="hint">暂无提现记录。</view>
+        <button wx:if="{{withdrawalsLoaded && withdrawalsMore}}" bindtap="more" disabled="{{withdrawalsLoading}}">加载更多提现记录</button>
+        <view wx:if="{{withdrawalsLoaded && !withdrawalsMore && withdrawals.length}}" class="footer-note">提现记录已全部加载</view>
+      </block>
+      <button bindtap="refresh" disabled="{{busy}}">实时刷新钱包与全部记录</button>
+    </view>
+  </block>
+</view>

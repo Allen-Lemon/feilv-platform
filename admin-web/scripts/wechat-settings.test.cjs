@@ -32,23 +32,25 @@ for (const node of imports.reverse()) {
   executable = executable.slice(0, node.start) + declarations + executable.slice(node.end)
 }
 const componentScript = new vm.Script(executable + '\n__component', { filename })
-const sections = ['LOGIN', 'PAYMENT']
+const sections = ['LOGIN', 'LOGIN_RIDER', 'PAYMENT']
 const keys = {
   LOGIN: [['appSecret', 'clearAppSecret']],
+  LOGIN_RIDER: [['appSecret', 'clearAppSecret']],
   PAYMENT: [['apiV3Key', 'clearApiV3Key'], ['merchantPrivateKey', 'clearMerchantPrivateKey'], ['platformPublicKey', 'clearPlatformPublicKey']]
 }
 const mockSecret = 'a'.repeat(32)
 const snapshot = value => JSON.parse(JSON.stringify(value))
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 const tick = () => new Promise(resolve => setImmediate(resolve))
-const formFor = (state, section) => section === 'LOGIN' ? state.loginForm : state.paymentForm
-const savedFor = (state, section) => section === 'LOGIN' ? state.loginSaved.value : state.paymentSaved.value
+const formFor = (state, section) => state.formFor(section)
+const savedFor = (state, section) => state.savedFor(section)
 const countCalls = (harness, name) => harness.calls.filter(call => call.name === name).length
-const saveMethod = section => section === 'LOGIN' ? 'saveWechatLogin' : 'saveWechatPayment'
+const saveMethod = section => section !== 'PAYMENT' ? 'saveWechatLogin' : 'saveWechatPayment'
 const overview = () => ({
   encryptionReady: true,
   paymentRuntime: 'MOCK',
   login: { enabled: true, appId: 'wx0123456789abcdef', appSecretConfigured: true, source: 'DATABASE', version: 4, updatedTime: null },
+  riderLogin: { enabled: true, appId: 'wxfedcba9876543210', appSecretConfigured: true, source: 'DATABASE', version: 9, updatedTime: null },
   payment: { enabled: false, appId: '', mchId: '', merchantSerialNo: '', notifyUrl: '', refundNotifyUrl: '', apiV3KeyConfigured: false, merchantPrivateKeyConfigured: false, platformPublicKeyConfigured: false, platformPublicKeyId: '', mode: 'MOCK', version: null, updatedTime: null }
 })
 
@@ -59,7 +61,7 @@ function createHarness(t, overrides = {}) {
   const implementations = {
     profile: async () => ({ roles: ['SUPER_ADMIN'], menus: [] }),
     wechatSettings: async () => overview(),
-    saveWechatLogin: async body => ({ ...overview().login, enabled: body.enabled, appId: body.appId, version: 5 }),
+    saveWechatLogin: async (body, clientType) => ({ ...(clientType === 'RIDER' ? overview().riderLogin : overview().login), enabled: body.enabled, appId: body.appId, version: clientType === 'RIDER' ? 10 : 5 }),
     saveWechatPayment: async body => ({ ...overview().payment, enabled: body.enabled, appId: body.appId, version: 0 }),
     validateWechat: async section => ({ valid: false, messages: ['Missing saved configuration'], runtime: section === 'PAYMENT' ? 'MOCK' : 'WECHAT_CODE2SESSION' }),
     ...overrides
@@ -107,8 +109,8 @@ function createHarness(t, overrides = {}) {
   const state = component.setup({}, { expose() {} })
   // Unlike a blanket validate:true stub, run the component's actual field rules.
   for (const section of sections) {
-    const formRef = section === 'LOGIN' ? state.loginFormRef : state.paymentFormRef
-    const rules = section === 'LOGIN' ? state.loginRules : state.paymentRules
+    const formRef = state.formRefFor(section)
+    const rules = state.rulesFor(section)
     formRef.value = { clearValidate() {}, async validate() {
       const valid = await Promise.all(Object.entries(rules).map(([field, rule]) => accepts(rule, formFor(state, section)[field])))
       if (valid.some(value => !value)) throw new Error('FORM_INVALID')
@@ -142,6 +144,7 @@ test('01 authorized loading keeps only redacted fields and exact source/version'
     const harness = createHarness(t, { wechatSettings: async () => {
       const data = overview()
       Object.assign(data.login, { appSecret: 'unexpected-plaintext', source, version: source === 'ENVIRONMENT' ? null : 4 })
+      Object.assign(data.riderLogin, { appSecret: 'unexpected-rider-plaintext', appSecretEncrypted: 'unexpected-ciphertext', source, version: source === 'ENVIRONMENT' ? null : 9 })
       Object.assign(data.payment, { apiV3Key: 'unexpected-plaintext', merchantPrivateKey: 'unexpected-plaintext', platformPublicKey: 'unexpected-plaintext' })
       return data
     } })
@@ -337,8 +340,10 @@ test('08 successful PUT refreshes returned version and clears all section secret
     harness.state.paymentForm.apiV3Key = mockSecret
     await harness.state.saveSection(section)
     assert.equal(countCalls(harness, saveMethod(section)), 1)
-    assert.equal(harness.calls.find(call => call.name === saveMethod(section)).args[0].version, section === 'LOGIN' ? 4 : null)
-    assert.equal(savedFor(harness.state, section).version, section === 'LOGIN' ? 5 : 0)
+    const call = harness.calls.find(call => call.name === saveMethod(section))
+    assert.equal(call.args[0].version, section === 'PAYMENT' ? null : section === 'LOGIN' ? 4 : 9)
+    assert.equal(savedFor(harness.state, section).version, section === 'PAYMENT' ? 0 : section === 'LOGIN' ? 5 : 10)
+    if (section !== 'PAYMENT') assert.equal(call.args[1], section === 'LOGIN' ? 'USER' : 'RIDER')
     assertCleanSecrets(harness.state)
     assert.equal(harness.messages.filter(message => message.type === 'success').length, 1)
     assert.equal(harness.state.busy.value, false)
@@ -411,9 +416,9 @@ test('12 saved validation submits section only and preserves valid=false and dra
     harness.state.loginForm.appSecret = mockSecret
     harness.state.paymentForm.apiV3Key = mockSecret
     await harness.state.validateSaved(section)
-    assert.deepEqual(harness.calls.find(call => call.name === 'validateWechat').args, [section])
+    assert.deepEqual(harness.calls.find(call => call.name === 'validateWechat').args, section === 'PAYMENT' ? ['PAYMENT'] : ['LOGIN', section === 'LOGIN' ? 'USER' : 'RIDER'])
     assert.equal(harness.state.validationResults[section].valid, false)
-    assert.equal(harness.state.validationResults[section].runtime, section === 'LOGIN' ? 'WECHAT_CODE2SESSION' : 'MOCK')
+    assert.equal(harness.state.validationResults[section].runtime, section !== 'PAYMENT' ? 'WECHAT_CODE2SESSION' : 'MOCK')
     assert.equal(harness.state.loginForm.appSecret, mockSecret)
     assert.equal(harness.state.paymentForm.apiV3Key, mockSecret)
     assertNoSuccess(harness)
@@ -454,13 +459,68 @@ test('13 switching tabs/unmount clears secrets, flags and PEM visibility; ignore
   assert.equal(countCalls(confirming, 'saveWechatLogin'), 0)
 })
 
+test('15 independent USER/RIDER drafts, versions, errors and validation do not overwrite each other', async t => {
+  const harness = createHarness(t)
+  await harness.mount()
+  const state = harness.state
+  state.loginForm.appId = 'wx1111111111111111'
+  state.riderLoginForm.appId = 'wx2222222222222222'
+  state.riderLoginForm.appSecret = mockSecret
+  state.actionErrors.LOGIN = 'user-only-error'
+  const userBefore = snapshot(state.loginSaved.value)
+  await state.saveSection('LOGIN_RIDER')
+  assert.deepEqual(snapshot(state.loginSaved.value), userBefore)
+  assert.equal(state.loginForm.appId, 'wx1111111111111111')
+  assert.equal(state.actionErrors.LOGIN, 'user-only-error')
+  assert.equal(state.riderLoginSaved.value.version, 10)
+  assert.equal(state.buildPayload('LOGIN').version, 4)
+  assertCleanSecrets(state)
+  await state.validateSaved('LOGIN_RIDER')
+  assert.equal(state.validationResults.LOGIN, null)
+  assert.equal(state.validationResults.LOGIN_RIDER.valid, false)
+  assert.match(harness.confirmations[0].message, /骑手端微信登录/)
+  state.loginForm.appSecret = mockSecret
+  state.riderLoginForm.clearAppSecret = true
+  state.tab.value = 'LOGIN_RIDER'
+  assertCleanSecrets(state)
+  assert.throws(() => state.formFor('UNKNOWN'), /INVALID_SECTION/)
+  await assert.rejects(state.saveSection('UNKNOWN'), /INVALID_SECTION/)
+  await assert.rejects(state.validateSaved('UNKNOWN'), /INVALID_SECTION/)
+})
+
+test('16 missing RIDER credentials stay absent, and masks cannot be submitted for RIDER', async t => {
+  const harness = createHarness(t, { wechatSettings: async () => {
+    const data = overview()
+    data.riderLogin = { enabled: false, appId: '', appSecretConfigured: false, source: 'ENVIRONMENT', version: null, updatedTime: null }
+    return data
+  } })
+  await harness.mount()
+  const state = harness.state
+  assert.equal(state.riderLoginForm.appId, '')
+  assert.equal(state.riderLoginSaved.value.appSecretConfigured, false)
+  state.riderLoginForm.enabled = true
+  assert.equal(await accepts(state.riderLoginRules.appSecret, ''), false)
+  for (const mask of ['****', '••••', '＊＊＊＊']) {
+    assert.equal(await accepts(state.riderLoginRules.appSecret, mask), false)
+    state.riderLoginForm.appId = 'wxfedcba9876543210'
+    state.riderLoginForm.appSecret = mask
+    await state.saveSection('LOGIN_RIDER')
+  }
+  assert.equal(countCalls(harness, 'saveWechatLogin'), 0)
+  assert.equal(harness.confirmations.length, 0)
+})
+
 test('14 malformed data/unsafe versions never enable saves; no secret storage/logging', async t => {
   const mutations = [
     data => { data.login.version = Number.MAX_SAFE_INTEGER + 1 },
     data => { data.login.source = 'UNKNOWN' },
     data => { delete data.login.appSecretConfigured },
     data => { data.paymentRuntime = 'REAL' },
-    data => { data.payment.mode = 'REAL' }
+    data => { data.payment.mode = 'REAL' },
+    data => { delete data.riderLogin },
+    data => { data.riderLogin.source = 'USER_FALLBACK' },
+    data => { data.riderLogin.version = -1 },
+    data => { delete data.riderLogin.appSecretConfigured }
   ]
   for (const mutate of mutations) {
     const harness = createHarness(t, { wechatSettings: async () => { const data = overview(); mutate(data); return data } })

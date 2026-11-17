@@ -19,25 +19,31 @@ feilv-platform/
 │       ├── service/         # 七服务域：User/Pricing/BanWord/Order/Dispatch/Pay/Track/ReviewRisk/Message
 │       ├── controller/      # REST API（对齐详细设计第十章）
 │       └── task/            # 超时引擎（15分钟关单/待接单提醒/默认完成）
-├── admin-web/       # Vue3 管理后台（登录/看板/订单监控干预/骑手管理/结算/工单）
-└── miniapp/         # 纯微信原生工程，根目录直接包含app.json、pages/、utils/，零框架依赖
+├── admin-web/       # 共用 Vue3 管理后台（用户、订单、骑手、双AppID微信配置等）
+├── miniapp/         # 用户微信原生小程序，沿用原AppID和发布/地址/消费订单链路
+├── rider-miniapp/   # 独立骑手微信原生小程序，需另一个真实AppID
+├── miniapp-shared/  # 小范围共享源；显式同步为各上传根内的副本
+└── scripts/         # 共享副本同步与双工程聚合检查；不生成dist
 ```
 
 ## 二、快速启动
 
 ### 1）后端（需 JDK 17 + Maven，或用 IDEA 直接打开）
 
-```bash
-cd backend
-# 方式A：本机有 MySQL 8 → 先建库：CREATE DATABASE feilv DEFAULT CHARSET utf8mb4;
-#        修改 application.yml 的账号密码，然后：
-mvn spring-boot:run
+**先准备专用开发数据库，不要直接启动默认/local配置验证功能。** 这些配置可能连接业务MySQL，并在启动时执行schema和显式迁移清单；当前没有可直接启动的 `h2` profile。
 
-# 方式B：无 MySQL（H2 内存库演示，重启数据清空）：
-mvn spring-boot:run -Dspring-boot.run.profiles=h2
+```bash
+# 只对已核实的隔离MySQL配置执行；不能指向业务库
+export DB_HOST="127.0.0.1"
+export DB_NAME="feilv_dev"
+export DB_USERNAME="专用开发账号"
+export DB_PASSWORD="专用开发密码"
+# 生成独立的开发JWT密钥，不要替换现有生产密钥
+export JWT_SECRET="$(openssl rand -hex 32)"
+mvn -f backend/pom.xml spring-boot:run
 ```
 
-> schema.sql 全部 `CREATE TABLE IF NOT EXISTS`，可重复执行；管理员账号 admin/123456、默认禁发品类清单自动初始化。
+> 先阅读 `backend/src/main/resources/application.yml` 并核实最终数据源。初始化脚本含演示管理员及默认数据，生产须独立完成初始管理员安全配置；不能将演示口令作为线上口令。只跑测试不需要启动后端；现有持久化/HTTP回归显式使用隔离H2并关闭SQL初始化。
 
 ### 2）管理后台（需 Node 18+）
 
@@ -47,27 +53,19 @@ npm install
 npm run dev        # http://localhost:5173 ，账号 admin / 123456
 ```
 
-### 3）微信原生小程序
+### 3）两个独立微信原生小程序
 
-- 微信开发者工具直接导入 `miniapp`，`project.config.json` 指向 `./`，根目录直接包含 `app.json`，无需框架构建。旧源码、依赖和编译产物文件已清理；不要再导入dist或native子目录。
-- 配置真实小程序 AppID；后端登录参数可在管理后台“微信配置”页面维护，或在尚未保存数据库配置时使用 `WECHAT_APP_ID/WECHAT_APP_SECRET` 环境变量。必须与小程序一致，AppSecret只留在后端。
-- 微信登录：`wx.login` 获取一次性 code → `POST /api/v1/auth/wechat-login` → 后端调用微信 `jscode2session` → 返回平台 JWT。openid、session_key 和 AppSecret 不下发客户端。
-- 原生请求地址已配置为 `https://xt.allms.cn`，默认禁止历史开发地址覆盖。体验版/正式版固定使用官方HTTPS服务，微信后台需配置同名 request 合法域名。真实AppID、上传前校验与发布步骤见 `miniapp/WECHAT_DEPLOYMENT.md`。
-- 默认及 local/docker profile 启动时执行 `db/migrations/20261112_wechat_login.sql`，将手机号改为可空并创建 `t_wechat_identity`；不会删除或重置现有用户。
-- 微信登录不会自动得到手机号，也不会自动合并现有手机号账号；短信登录仍独立保留。未配置微信凭据时接口明确返回配置错误，不使用模拟 openid 冒充登录成功。
-- 原生目录结构见 `miniapp/README.md`；校验命令 `npm run build --prefix miniapp`、`npm run check:wechat --prefix miniapp`，不需要安装第三方npm依赖。
+- 微信开发者工具分别导入 **`miniapp`（用户端）** 和 **`rider-miniapp`（骑手端）**，都以本目录为上传根，无需框架构建。不要导入仓库根、shared、dist或native子目录。
+- 用户端沿用原AppID；骑手端必须配置**另一个真实AppID**，`UNCONFIGURED_RIDER_APPID` 只是明确的未配置占位，不能发布。后端后台“微信配置”分别维护两端登录参数；没有数据库覆盖时分别使用 `WECHAT_APP_ID/WECHAT_APP_SECRET` 与 `WECHAT_RIDER_APP_ID/WECHAT_RIDER_APP_SECRET`。AppSecret只能保留在后端，不能填入小程序源码。
+- 新版两端调用 `POST /api/v1/auth/miniapps/{USER|RIDER}/login`。已绑定微信身份返回平台会话；未绑定先返回短效登录票据，用户明确选择“关联已有平台账号”或经真实微信手机号授权“创建新账号”。原账号端“我的”可验证新的微信登录后生成一次性关联码，另一端消费；关联不改变userId、钱包、订单或骑手授权。**不按手机号或unionid自动合并账号。** 旧 `/auth/wechat-login` 仅保留用户端协议兼容。
+- 骑手入驻在骑手端登录后完成，使用当前平台账号和新微信手机号授权，不再通过公开手机号注册切换主体。已有骑手也可在用户端消费，但用户端会话不能接单，骑手端会话不能支付/取消消费者订单。
+- 两端请求地址保持 `https://xt.allms.cn`；各自微信后台都要配置 request/uploadFile/downloadFile 合法域名、隐私声明和手机号能力。未配置的骑手登录明确失败，不借用用户端凭据。
+- 演示短信登录默认关闭，仅显式允许的隔离开发环境可以打开，生产/docker强制关闭；页面读取服务能力后展示入口，不把演示验证码当作真实认证。
+- 共享副本按 `scripts/sync-miniapp-shared.cjs` 的清单同步；`--check` 只比较，不自动写入。两端都零第三方运行时依赖，不允许跨上传根require或软链接。
 
-后端启动前设置（不要将 AppSecret 写到前端）：
+完整账号协议、只读盘点、隔离测试及维护窗口要求见 **[双小程序接入与上线边界](DUAL_MINIAPP.md)**。各端开发者工具操作见对应目录的 `README.md` / `WECHAT_DEPLOYMENT.md`。真实AppID、真机授权、隔离MySQL迁移和历史phone-only账号恢复均须另外核验，本地回归通过不代表可以上线。
 
-```bash
-export WECHAT_APP_ID="你的小程序AppID"
-export WECHAT_APP_SECRET="你的小程序AppSecret"
-mvn -f backend/pom.xml spring-boot:run
-```
-
-IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Docker Compose 使用项目根 `.env`，模板已包含这两个变量。小程序 AppID 在开发者工具项目配置中填写。游客模式只能查看页面，不能验证真实微信登录。
-
-测试命令：`mvn -f backend/pom.xml test`。微信登录回归测试使用 Mock 微信服务和 H2 内存库，不会修改远程业务数据；真实授权需配置凭据并在微信开发者工具/真机验证。
+后端环境变量模板在 `.env.example`，至少核实数据源、独立 `JWT_SECRET` 和两套微信凭据；Docker Compose已通过 `env_file` 传入，勿将真实 `.env` 提交或展示。不要为本次开发重新生成已有 `CONFIG_ENCRYPTION_KEY` 或轮换线上JWT密钥。
 
 ### 4）用户资料、手机号绑定及后台用户管理
 
@@ -99,11 +97,11 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 - 已绑定不同号码、号码属于其他账户均返回业务 `409`；同号也须重新验证后才幂等成功，首次接口不自动合并账户或换号；换号须走专用换绑接口。数据库行锁与既有微信绑定共用，唯一索引竞争回滚后返回 `409`。
 - 本地联调显式设置 `SMS_BINDING_MOCK_ENABLED=true` 后启动后端（例如 `SMS_BINDING_MOCK_ENABLED=true mvn -f backend/pom.xml spring-boot:run`）。此模式只调用现有 `MessageService` 日志模拟，并使用脱敏号码、不将验证码写入日志；验证码仅在 mock 响应 `demoCode` 中供本地填写。**生产必须保持关闭；开启 mock 不等于发送真实短信，接入真实网关前手动短信绑号不可用，请使用微信授权。**
 - 两个绑号接口设置 `Cache-Control: no-store`。控制台与文件日志保留数据库异常及堆栈，仅将消息和堆栈中的11位大陆手机号替换为 `[PHONE_REDACTED]`，避免唯一约束冲突泄漏完整号码；不关闭 Hibernate 错误日志类别。
-- 凭证与限流当前为单实例内存状态，重启失效；mock 仅用于本地联调。未来接真实短信及多实例部署时须迁移到共享存储、原子限流/消费并取消明文验证码回传。既有短信登录仍是历史 demo，本次不改变其行为，也不能把其登录验证码用于绑定。
+- 凭证与限流当前为单实例内存状态，重启失效；mock 仅用于本地联调。未来接真实短信及多实例部署时须迁移到共享存储、原子限流/消费并取消明文验证码回传。既有短信登录仍是历史demo，双小程序升级后默认关闭且只可在允许的隔离开发profile显式开启；其验证码不能用于绑定、跨端关联或历史账号恢复。
 
 ### 5）后台微信登录/支付参数管理
 
-后台新增 `/wechat-settings`（微信配置），分别管理登录AppID/AppSecret及微信支付API v3商户、公钥、通知URL等参数。机密以AES-256-GCM加密，查询不回显；留空保留、勾选清除、乐观版本冲突与操作审计已接入。
+后台 `/wechat-settings`（微信配置）分别管理用户登录AppID/AppSecret、骑手登录AppID/AppSecret以及微信支付API v3商户、公钥、通知URL等参数。两端登录有各自版本、启停与密钥状态，必须使用不同AppID；旧LOGIN及密文AAD保持不变。机密以AES-256-GCM加密，查询不回显；留空保留、勾选清除、乐观版本冲突与操作审计已接入。
 
 首次部署须生成一次并持久保存 `CONFIG_ENCRYPTION_KEY`（`openssl rand -base64 32`），写入服务器 `.env`，重建后端后才能保存机密。不要将主密钥或商户私钥放到前端/小程序。数据库配置优先于环境变量，登录参数保存后即时读取；**支付运行模式仍为MOCK，保存参数不会接通真实收单、退款或回调**。
 
@@ -116,7 +114,7 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 ### 7）自定义任务与投诉审核扣款
 
 - 管理后台新增“自定义任务”(`/tasks`)和“投诉审核”(`/complaints`)菜单，仅默认授权SUPER_ADMIN；其他角色需明确授权。任务、标签、投诉审核、结算接口均检查数据库中的实时菜单权限。升级后重新登录刷新菜单。
-- 小程序首页收敛为“同城跑腿”和“自定义任务”两个入口：同城跑腿发布页内切换送件、代买、代办，继续使用原配送计价；自定义任务填写标题（1–64字）、内容（1–1000字）、最多5个可选标签与发布者自定总价，不再按距离/重量计价。后台也支持代正常且已绑手机号USER/RIDER发布，创建后仍待支付，由发布者在小程序完成MOCK支付，不会后台代付。
+- 小程序首页提供“飞毛腿”“滴滴接送”和“自定义任务”三个入口：飞毛腿内合并送件/代办，保留代买，继续使用原配送计价；普通自定义任务填写标题（1–64字）、内容（1–1000字）、最多5个可选标签与发布者自定总价，不再按距离/重量计价。接送/代驾采用简化表单，见第12节。后台也支持代正常且已绑手机号USER/RIDER发布，创建后仍待支付，由发布者在小程序完成MOCK支付，不会后台代付。
 - 标签支持新增、改名、排序和启停，更新必须带version，冲突返回409。历史任务保存发布时标签名称快照，不因停用/改名改变。用户发布接口 `/api/v1/custom-tasks`、报价 `/custom-tasks/quote`、标签 `/task-tags`；后台对应 `/api/v1/admin/custom-tasks`、`/admin/task-tags`。普通 `/orders` 不允许绕过任务元数据直接创建CUSTOM订单。
 - 自定义任务分 `ONLINE` 线上任务（无需地点）、`ONSITE` 上门服务（一个服务地点，如通马桶）、`PART_TIME` 兼职劳务（一个工作地点及必填工作时间，如搬水泥）；三类均填写联系人电话，由现有骑手承接，不向普通用户开放接单。非配送服务使用“接单 → 开始服务 → 提交完成 → 发布者确认”并复用钱包/投诉，不能用配送取件码或轨迹接口替代服务履约；历史 `DELIVERY` 自定义订单继续原配送流程。
 - 用户填写价格是任务总价，范围0.01至1000000元、最多两位小数；接口只接受JSON整数分 `priceFen`，拒绝小数分、字符串或布尔值。报价仅回显用户设价并返回当前规则下的 `riderShareFen/platformShareFen`（默认70/30），不按重量距离或夜间附加费用加价；支付使用创建时保存金额，钱包按原支付分账结算，不把总价冒充骑手全部收入。
@@ -156,12 +154,22 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 
 ### 11）代购预算、场景标签与后台菜单下线
 
-- 首页“自定义任务”入口说明上门服务、兼职、线上任务的用途与示例，并提示发布者自定服务总价；跑腿送、代买、代办仍在“同城跑腿”入口。
+- 首页“自定义任务”入口说明上门服务、兼职、线上任务的用途与示例，并提示发布者自定服务总价；送件和代办合并在“飞毛腿”入口，并保留代买切换；接送/代驾使用独立“滴滴接送”入口。
 - 新建跑腿买（`BUY`）必须填写预计商品总价，范围0.01至1000000元、最多两位小数；`POST /api/v1/orders` 新增 `goodsBudgetFen`，只接受1至100000000的JSON整数分。`SEND/ERRAND/CUSTOM` 不接受非空预算，也不根据任务标题或标签推断代购。**商品采购预算独立保存、另行结算，不计入平台服务费、支付、分账、退款或钱包收入。** 确认页、订单详情、骑手大厅/已接订单与后台订单列表分别展示服务费和采购预算。历史BUY预算为空显示“未记录”，仍可支付与履约，不补造历史金额。
-- 标签保存接口新增必填 `taskModes` 数组，必须明确选择1至3个不重复的 `ONSITE/PART_TIME/ONLINE` 场景，可跨场景使用。后台“自定义任务 → 标签管理”可维护；旧标签保持“待分类”，须管理员明确分类后才进入发布页，不按名称或ID自动分组。小程序与后台按当前场景筛选，切换场景、恢复草稿或刷新标签时移除不适用的已选项；服务端再次校验，历史标签名称快照不变。
+- 标签保存接口新增必填 `taskModes` 数组，必须明确选择1至5个不重复的 `ONSITE/PART_TIME/ONLINE/RIDE/DRIVING` 场景（接送/代驾简化发布不提交标签），可跨场景使用。后台“自定义任务 → 标签管理”可维护；旧标签保持“待分类”，须管理员明确分类后才进入发布页，不按名称或ID自动分组。小程序与后台按当前场景筛选，切换场景、恢复草稿或刷新标签时移除不适用的已选项；服务端再次校验，历史标签名称快照不变。
 - 删除后台“营销管理”“内容与客服”“风控与合规”的菜单与页面路由，过滤旧浏览器缓存和服务端菜单输出；旧地址转到经营看板。历史菜单记录仅禁用，不删除角色关联、订单、投诉、用户等业务数据，系统管理也不能重新启用这些入口。
 - 新增幂等迁移 `db/migrations/20261116_buy_budget_task_tag_modes.sql`（两个可空字段及预算范围约束）和 `db/migrations/20261116_retire_admin_menus.sql`（禁用三个旧菜单），已登记到默认/local/docker启动清单。升级前备份，先升级后端/数据库，再配套更新后台与小程序；旧客户端不能创建缺预算的新BUY订单、不能保存缺场景的标签。上线后先为旧标签分类，并重新登录后台刷新菜单。已有待支付或结果待核实的订单继续按原订单处理，不重复创建。
 - 本地回归使用隔离H2及API替身，不操作部署数据库或调用真实微信；MySQL迁移仍须在部署环境验证。本次未执行远程迁移或上线。
+
+### 12）飞毛腿、接送与代驾
+
+- 小程序首页提供“飞毛腿 / 滴滴接送 / 自定义任务”。送件和代办合并为飞毛腿，新单使用 `SEND`，保留代买 `BUY`；历史 `ERRAND`、`CUSTOM/DELIVERY` 及待核实/待支付订单仍按原单继续，不批量转换。
+- “滴滴接送”内选择接送或代驾，复用 `CUSTOM` 订单及 `RIDE / DRIVING` 服务场景。只填一个起始地址、联系人电话、服务总价、必填服务时间说明（最多100字）和可选备注，不需要目的地、距离、重量、标题或标签。标题由后端固定生成，空备注使用默认说明。普通自定义任务仍保留上门、兼职、线上三种场景；标签适用场景可配置五类，但接送/代驾简化表单不提交标签。
+- 服务履约沿用“接单 → 开始服务 → 提交完成 → 发布者确认”，不生成配送取件码或配送轨迹。价格为服务总价，骑手收入使用原支付分账；支付、结算与投诉仍为现有MOCK演示，不代表真实收付款。
+- 管理后台“运力管理”分别开通接送、代驾权限；新老骑手默认均关闭，注册不能自行开通。`GET /api/v1/admin/riders` 及 `PUT /api/v1/admin/riders/{id}/capabilities/{RIDE|DRIVING}` 需要实时 `riders` 菜单授权。修改请求为 `{enabled:boolean,expectedEnabled:boolean,reason:string}`，原因1–160字，拒绝额外字段及非布尔目标；旧值冲突返回业务409并需刷新。单项授权与操作审计同事务。
+- 大厅在数据库过滤无权任务后分页，直接抢单、转派目标/接受、首次开始服务也会复核权限。撤权不改变已有承接归属，未开始任务可转派给有权骑手；已开始服务仍可完成，已成功的履约/转派重试保持幂等。授权是平台接单许可，**不是驾驶证、车辆资格或营运合规审核**。
+- 新增幂等迁移 `db/migrations/20261117_rider_service_capabilities.sql`，仅为骑手追加默认关闭的两列，重复执行不重置已开通权限，不改历史订单/支付/钱包。已登记默认/local/docker启动清单；升级前须备份并在隔离MySQL验证，先升级后端和数据库，再更新后台、小程序。本次开发不自动部署或执行远程迁移。
+- “滴滴接送”仅为界面入口名称，未接入滴滴平台、里程计价、预约调度、真实支付或驾驶资质系统。正式接送/代驾上线前须另行完成当地营运/驾驶资质、安全、保险、隐私及相关名称使用合规核验。既有取消、超时和默认确认规则未改造，不可当作正式出行业务保障。
 
 ## 三、Docker 部署
 
@@ -171,7 +179,8 @@ IDEA 在 Run Configuration 的 Environment variables 中设置以上变量。Doc
 
 ```bash
 cp .env.example .env
-# 编辑 .env，至少填写 DB_HOST、DB_NAME、DB_USERNAME、DB_PASSWORD
+# 编辑 .env：核实数据库、独立JWT_SECRET、两套微信登录参数及既有CONFIG_ENCRYPTION_KEY
+# 注意启动将连接所配置数据库并执行显式SQL初始化/迁移，先备份并在隔离MySQL演练
 ```
 
 不要把 `.env` 提交到版本库或镜像中。
@@ -260,8 +269,8 @@ docker compose down
 - [ ] 真实支付：对接微信/支付宝持牌渠道（回调验签、幂等、T+1对账文件核对），分账走持牌机构
 - [ ] 地图：接入高德（主）/腾讯（备）SDK，替换手填地址与距离（选点、路径规划、轨迹渲染、ETA）
 - [ ] 短信/推送：接真实网关与订阅消息（当前日志模拟）；虚拟号隐私通话
-- [ ] 骑手端独立工程拆分 + 培训考试/OCR活体认证/保险对接
-- [ ] 鉴权升级：JWT密钥入配置中心、RBAC细化、管理员双因素；操作审计落 t_op_log
+- [ ] 双小程序上线核验：不同真实AppID、双向账号关联/旧骑手人工核实、真机授权及隔离MySQL演练（工程与协议见 `DUAL_MINIAPP.md`）；培训考试/OCR活体认证/保险另行接入
+- [ ] 鉴权生产化：受控JWT密钥切换和全账户重登、密钥托管/轮换流程、RBAC细化、管理员双因素（JWT已改环境注入，操作审计已有 `t_op_log`）
 - [ ] 等保二级加固：HTTPS全站、敏感字段AES加密存储、日志≥6个月、渗透测试
 - [ ] 商家端完整功能（入驻审核、店铺配置、出货打印、对账报表）
 

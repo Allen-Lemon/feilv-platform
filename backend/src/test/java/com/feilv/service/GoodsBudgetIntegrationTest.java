@@ -32,7 +32,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
-@SpringBootTest(properties = {
+@SpringBootTest(properties = {com.feilv.controller.TestAuth.TEST_SECRET_PROPERTY,
         "spring.datasource.url=jdbc:h2:mem:goods-budget;DB_CLOSE_DELAY=-1",
         "spring.datasource.username=sa", "spring.datasource.password=", "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect", "spring.jpa.hibernate.ddl-auto=create-drop", "spring.sql.init.mode=never"})
@@ -188,7 +188,7 @@ class GoodsBudgetIntegrationTest {
         assertEquals(0, postBody("/api/v1/grab/" + id, rider, Map.of()).path("code").asInt());
         var riderOrder = find(getData("/api/v1/rider/orders", rider).path("content"), "id", id);
         assertBudget(riderOrder, budget); assertEquals(350, riderOrder.path("rewardFen").asInt());
-        assertBudget(getData("/api/v1/orders/" + id, rider), budget);
+        assertBudget(getData("/api/v1/rider/orders/" + id, rider), budget);
         String pickupCode = orders.findById(id).orElseThrow().getPickupCode();
         assertEquals(0, postBody("/api/v1/orders/" + id + "/pickup", rider, Map.of("pickupCode", pickupCode)).path("code").asInt());
         for (String action : List.of("depart", "deliver")) {
@@ -245,15 +245,20 @@ class GoodsBudgetIntegrationTest {
         return user;
     }
 
-    private String token(User user) { return "Bearer " + JwtUtil.create(user.getId(), user.getRole()); }
+    private String token(User user) { return com.feilv.controller.TestAuth.bearer(user); }
 
     private JsonNode postBody(String path, User user, Object body) throws Exception {
-        return json.readTree(mvc.perform(post(path).header("Authorization", token(user)).contentType(MediaType.APPLICATION_JSON)
+        boolean riderOperation = path.startsWith("/api/v1/grab/")
+                || path.matches("^/api/v1/orders/[^/]+/(pickup|depart|deliver)$");
+        String authorization = riderOperation ? com.feilv.controller.TestAuth.riderBearer(user) : token(user);
+        return json.readTree(mvc.perform(post(path).header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON)
                 .content(json.writeValueAsBytes(body))).andReturn().getResponse().getContentAsByteArray());
     }
 
     private JsonNode getData(String path, User user) throws Exception {
-        var result = mvc.perform(get(path).header("Authorization", token(user))).andExpect(jsonPath("$.code").value(0)).andReturn();
+        String authorization = path.startsWith("/api/v1/rider/") || path.equals("/api/v1/grab/list")
+                ? com.feilv.controller.TestAuth.riderBearer(user) : token(user);
+        var result = mvc.perform(get(path).header("Authorization", authorization)).andExpect(jsonPath("$.code").value(0)).andReturn();
         return json.readTree(result.getResponse().getContentAsByteArray()).path("data");
     }
 }

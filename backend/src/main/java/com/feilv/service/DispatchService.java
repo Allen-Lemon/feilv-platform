@@ -28,6 +28,8 @@ public class DispatchService {
     private final UserRepository userRepository;
     private final OrderService orderService;
     private final OrderTransferService orderTransferService;
+    private final RiderCapabilityService riderCapabilities;
+    private final jakarta.persistence.EntityManager entityManager;
 
     @Transactional
     public void online(long userId, int onlineStatus) {
@@ -40,8 +42,10 @@ public class DispatchService {
     /** 仅现役骑手可看大厅；不展示内容、联系人或电话，且只展示已有成功支付的订单。 */
     @Transactional(readOnly = true)
     public List<GrabVO> waitGrabList(long userId) {
-        requireActiveRider(userId);
-        List<OrderMain> orders = orderRepository.findPaidGrabOrders(OrderStatus.WAIT_GRAB, userId, PageRequest.of(0, 20));
+        Rider rider = requireActiveRider(userId);
+        entityManager.refresh(rider);
+        List<OrderMain> orders = orderRepository.findEligiblePaidGrabOrders(OrderStatus.WAIT_GRAB, userId,
+                rider.isRideEnabled(), rider.isDrivingEnabled(), PageRequest.of(0, 20));
         var paidShares = orderService.paidRiderShares(orders);
         var tasks = orderService.taskIndex(orders);
         return orders.stream().map(o -> {
@@ -54,6 +58,7 @@ public class DispatchService {
     }
 
     /** 保留旧Java调用签名，但仍使用当前身份校验。 */
+    @Transactional(readOnly = true)
     public List<GrabVO> waitGrabList() { return waitGrabList(com.feilv.common.UserContext.userId()); }
 
     @Transactional
@@ -64,6 +69,8 @@ public class DispatchService {
         if (Objects.equals(order.getUserId(), userId)) throw BizException.of(403, "不能承接自己发布的订单或任务");
         if (order.getStatus() != OrderStatus.WAIT_GRAB) throw BizException.of(4091, "订单已不可接单");
         if (!orderService.paidRiderShares(List.of(order)).containsKey(orderId)) throw BizException.of(4090, "订单尚未支付成功");
+        rider = riderCapabilities.requireForOrder(order, rider);
+        if (rider.getOnlineStatus() != 1 && rider.getOnlineStatus() != 2) throw BizException.of(400, "请先切换到抢单/听单模式");
         int rows = orderRepository.grabOrder(orderId, rider.getId(), OrderStatus.ACCEPTED, OrderStatus.WAIT_GRAB, LocalDateTime.now());
         if (rows == 0) throw BizException.of(4091, "手慢了，该订单已被其他骑手抢走");
         order = orderService.mustGet(orderId);
@@ -125,6 +132,8 @@ public class DispatchService {
         requireService(order);
         if (Set.of(OrderStatus.PICKING, OrderStatus.DELIVERING, OrderStatus.DELIVERED, OrderStatus.FINISHED).contains(order.getStatus())) return;
         if (order.getStatus() != OrderStatus.ACCEPTED) throw BizException.of(4090, "当前状态不可开始服务");
+        Rider rider = requireActiveRider(userId);
+        riderCapabilities.requireForOrder(order, rider);
         orderService.changeStatus(order, OrderStatus.PICKING, "RIDER", userId, "骑手开始服务");
         orderTransferService.expirePendingOnStart(order);
     }

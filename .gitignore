@@ -12,8 +12,24 @@
 *.code-workspace
 .history/
 
+# 依赖、编译产物和构建缓存（适用于所有子工程）
+node_modules/
+target/
+dist/
+build/
+out/
+coverage/
+.vite/
+*.class
+*.tsbuildinfo
+
 # 微信开发者工具个人配置
 project.private.config.json
+
+# 本机和部署密钥；仅保留可提交的示例
+.env
+.env.*
+!.env.example
 
 # 本地用户上传文件
 /data/

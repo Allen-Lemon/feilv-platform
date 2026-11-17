@@ -11,9 +11,6 @@
     "pages/order/track",
     "pages/my/my",
     "pages/wallet/wallet",
-    "pages/rider/register",
-    "pages/rider/workbench",
-    "pages/rider/transfers",
     "pages/settings/settings",
     "pages/legal/legal"
   ],
@@ -30,13 +27,20 @@
     "backgroundColor": "#FFFFFF",
     "borderStyle": "white",
     "list": [
-      { "pagePath": "pages/index/index", "text": "首页" },
-      { "pagePath": "pages/order/list", "text": "订单" },
-      { "pagePath": "pages/my/my", "text": "我的" }
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/order/list",
+        "text": "订单"
+      },
+      {
+        "pagePath": "pages/my/my",
+        "text": "我的"
+      }
     ]
   },
-  "permission": { "scope.userLocation": { "desc": "骑手主动上报配送位置，用于向订单用户展示配送轨迹" } },
-  "requiredPrivateInfos": ["getLocation"],
   "sitemapLocation": "sitemap.json",
   "style": "v2",
   "lazyCodeLoading": "requiredComponents"

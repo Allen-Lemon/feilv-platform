@@ -14,7 +14,7 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class TaskTagService {
-    private static final List<String> TASK_MODES = List.of("ONSITE", "PART_TIME", "ONLINE");
+    private static final List<String> TASK_MODES = List.of("ONSITE", "PART_TIME", "ONLINE", "RIDE", "DRIVING");
     private final TaskTagRepository tags;
     private final AuditService audit;
 
@@ -46,13 +46,13 @@ public class TaskTagService {
     }
 
     private static boolean validTaskModes(List<String> modes) {
-        return modes != null && !modes.isEmpty() && modes.size() <= 3
+        return modes != null && !modes.isEmpty() && modes.size() <= TASK_MODES.size()
                 && modes.stream().allMatch(mode -> mode != null && TASK_MODES.contains(mode))
                 && new HashSet<>(modes).size() == modes.size();
     }
 
     private static String normalizedTaskModes(List<String> modes) {
-        if (!validTaskModes(modes)) throw BizException.of(400, "标签须明确选择1至3个不同的有效任务场景");
+        if (!validTaskModes(modes)) throw BizException.of(400, "标签须明确选择1至" + TASK_MODES.size() + "个不同的有效任务场景");
         return String.join(",", TASK_MODES.stream().filter(modes::contains).toList());
     }
 

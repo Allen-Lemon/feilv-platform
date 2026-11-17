@@ -46,7 +46,8 @@ public class PhoneChangeService {
         }
         // 必须在外部兑换前取值；旧响应不得覆盖兑换期间已经完成的另一笔换绑。
         String originalMobile = activeBound(users.findById(userId).orElse(null)).getMobile();
-        var credentials = settings.effectiveLogin();
+        var authorization = MiniappPhoneAuthorization.resolve(userId, settings);
+        var credentials = authorization.credentials();
         requireIdentity(userId, credentials.appId());
         var phone = phoneClient.exchange(code, credentials);
         if (phone == null || !credentials.appId().equals(phone.appId())
@@ -57,10 +58,7 @@ public class PhoneChangeService {
             return transaction.execute(status -> {
                 User user = lockedActiveBound(userId);
                 requireSnapshot(user, originalMobile);
-                var latest = settings.effectiveLogin();
-                if (!credentials.appId().equals(latest.appId()) || !credentials.secret().equals(latest.secret())) {
-                    throw BizException.of(409, "微信配置已变化，请重新授权手机号");
-                }
+                authorization.recheck(settings);
                 requireIdentity(userId, credentials.appId());
                 requireAvailable(users, user, phone.mobile());
                 return apply(users, audit, user, phone.mobile(), "WECHAT");

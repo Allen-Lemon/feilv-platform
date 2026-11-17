@@ -40,7 +40,17 @@ public class WechatSessionClient {
     public record Session(String appId, String openid, String unionid) {}
 
     public Session exchange(String code) {
-        var current = credentials.get();
+        return exchange(code, credentials.get());
+    }
+
+    /** The caller selects one immutable application configuration; never try another AppID. */
+    public Session exchange(String code, WechatConfigService.LoginCredentials current) {
+        if (code == null || code.isBlank() || code.length() > 256) {
+            throw BizException.of(400, "微信登录凭证无效，请重新登录");
+        }
+        if (current == null || current.appId() == null || current.secret() == null) {
+            throw BizException.of(503, "当前小程序微信登录未配置");
+        }
         String appId = current.appId();
         String secret = current.secret();
         if (appId.isBlank() || secret.isBlank()) {

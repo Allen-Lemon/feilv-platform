@@ -9,6 +9,8 @@ import java.time.LocalDateTime;
 /** 骑手档案（t_rider）— 信用分与在线状态为核心运营字段 */
 @Getter @Setter
 @Entity @Table(name = "t_rider")
+// 上下线、信用更新只写脏字段，不能用读到的旧值覆盖并发撤销的授权。
+@org.hibernate.annotations.DynamicUpdate
 public class Rider {
 
     @Id
@@ -37,6 +39,13 @@ public class Rider {
     /** 0下线 1抢单 2听单（功能设计文档 8.2 调度引擎） */
     @Column(name = "online_status")
     private int onlineStatus = 0;
+
+    /** 平台接单权限，独立后台授权；不代表已完成驾驶资质审核。 */
+    @Column(name = "ride_enabled", nullable = false)
+    private boolean rideEnabled = false;
+
+    @Column(name = "driving_enabled", nullable = false)
+    private boolean drivingEnabled = false;
 
     /** 信用分，初始100，事件驱动加减（详细设计表5-1） */
     @Column(name = "credit_score", nullable = false)

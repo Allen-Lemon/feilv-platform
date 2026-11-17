@@ -1,20 +1,53 @@
 const KEYS = ['feilv_token', 'feilv_role', 'feilv_user_id', 'feilv_nickname', 'feilv_avatar_url']
+const BUSINESS_KEYS = ['native_draft', 'native_draft_groups', 'native_pending_order', 'native_pending_withdrawal']
+const QUARANTINE = 'native_expired_business'
 let navigating = false
 let revision = 0
+function backend() { return wx.getStorageSync('native_effective_base_url') || require('../config').BASE_URL.replace(/\/+$/, '') }
+function resetPrivateUI() {
+  if (typeof getCurrentPages !== 'function') return
+  getCurrentPages().forEach(page => {
+    if (page._initialData && typeof page.setData === 'function') page.setData(JSON.parse(JSON.stringify(page._initialData)))
+    if (typeof page.clearIdentity === 'function') page.clearIdentity()
+    if (typeof page.clearLinkCode === 'function') page.clearLinkCode()
+  })
+}
 function clear() {
-  KEYS.forEach(k => wx.removeStorageSync(k))
-  ;['native_draft', 'native_pending_order', 'native_pending_withdrawal'].forEach(k => wx.removeStorageSync(k))
+  KEYS.concat(BUSINESS_KEYS, [QUARANTINE]).forEach(k => wx.removeStorageSync(k))
   revision++
+  resetPrivateUI()
+}
+// 过期与主动退出不同：隔离原业务标记，匿名页面没有可读取的活动草稿或金额。
+function expire() {
+  const owner = wx.getStorageSync('feilv_user_id')
+  if (token() && owner) {
+    const values = {}
+    BUSINESS_KEYS.forEach(key => {
+      const value = wx.getStorageSync(key)
+      if (value && String(value.owner) === String(owner)) values[key] = value
+    })
+    wx.setStorageSync(QUARANTINE, { owner: String(owner), backend: backend(), values })
+  }
+  KEYS.concat(BUSINESS_KEYS).forEach(k => wx.removeStorageSync(k))
+  revision++
+  resetPrivateUI()
 }
 function save(value) {
   if (!value || !value.token || !value.userId || !['USER', 'RIDER'].includes(value.role)) {
     throw new Error('登录响应无效：需要 USER 或 RIDER 的 LoginVO')
   }
+  if (token()) expire()
+  const stored = wx.getStorageSync(QUARANTINE)
+  const restore = stored && stored.owner === String(value.userId) && stored.backend === backend() ? stored.values : null
   clear()
   wx.setStorageSync('feilv_token', value.token)
   wx.setStorageSync('feilv_role', value.role)
   wx.setStorageSync('feilv_user_id', value.userId)
   wx.setStorageSync('feilv_nickname', value.nickname || '用户')
+  if (restore) BUSINESS_KEYS.forEach(key => {
+    const item = restore[key]
+    if (item && String(item.owner) === String(value.userId)) wx.setStorageSync(key, item)
+  })
 }
 // 资料更新不属于重新登录，不能清除草稿或递增会话版本。
 function updateNickname(value, expectedUserId, expectedRevision) {
@@ -62,4 +95,4 @@ async function requireOrderProfile(api, active = () => true) {
   if (me.mobileBound !== true || !nicknameReady(me.nickname)) { openRequiredProfile(); return false }
   return true
 }
-module.exports = { clear, save, updateNickname, updateProfile, avatarPath, validNickname, nicknameReady, token, login, requireLogin, requireOrderProfile, openRequiredProfile, revision: () => revision }
+module.exports = { clear, expire, save, updateNickname, updateProfile, avatarPath, validNickname, nicknameReady, token, login, requireLogin, requireOrderProfile, openRequiredProfile, revision: () => revision }

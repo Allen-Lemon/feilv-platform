@@ -6,9 +6,9 @@
   </view>
 
   <view wx:if="{{!profileStage}}" class="login-intro">
-    <view class="intro-kicker">让同城小事，轻松一点</view>
-    <view class="intro-title">{{'你好，\n很高兴为你跑一趟。'}}</view>
-    <view class="intro-description">取件、代买、办事，把奔波交给我们，把时间留给生活。</view>
+    <view class="intro-kicker">{{riderClient ? '认真履约，安心接单' : '让同城小事，轻松一点'}}</view>
+    <view class="intro-title">{{riderClient ? '你好，\n每份托付都认真。' : '你好，\n很高兴为你跑一趟。'}}</view>
+    <view class="intro-description">{{riderClient ? '独立骑手端，承接订单、履约与转派。已有用户端账号请明确关联。' : '取件、代买、办事，把奔波交给我们，把时间留给生活。'}}</view>
   </view>
   <view wx:else class="profile-welcome">
     <view class="profile-login-state"><view class="login-state-mark">✓</view><text>已安全登录</text></view>
@@ -19,13 +19,21 @@
   <block wx:if="{{!profileStage}}">
     <view class="login-card">
       <view class="card-heading">登录，开启同城服务</view>
-      <view class="card-description">首次登录将为你创建飞毛腿账号</view>
+      <view class="card-description">未绑定微信身份时，由你明确选择关联已有账号或创建新账号</view>
       <button class="wechat-button" loading="{{busy}}" disabled="{{busy || sending}}" bindtap="wechat"><view class="wechat-symbol" wx:if="{{!busy}}"><view class="wechat-bubble"></view><view class="wechat-bubble bubble-small"></view></view><text>{{busy ? '正在安全登录…' : '微信快捷登录'}}</text></button>
       <checkbox-group bindchange="consent"><label class="consent-label"><checkbox value="yes" checked="{{agreed}}" color="#C94320" disabled="{{busy || sending}}"/><text>我已阅读并同意</text></label></checkbox-group>
       <view class="legal-links"><text class="legal-link" data-kind="service" bindtap="legal">《服务说明》</text><text class="legal-link" data-kind="privacy" bindtap="legal">《隐私说明》</text></view>
-      <button class="text-button sms-toggle" disabled="{{busy || sending}}" bindtap="toggleSms">{{sms ? '收起其他登录方式 ↑' : '其他登录方式 →'}}</button>
+      <view class="identity-choices" wx:if="{{identityRequired}}">
+        <view class="inline-notice">此微信身份尚未绑定平台账号。请明确选择；临时凭证失效后需重新微信登录。</view>
+        <button class="secondary" data-choice="LINK" bindtap="chooseIdentity" disabled="{{busy}}">关联已有平台账号</button>
+        <button class="text-button" data-choice="NEW" bindtap="chooseIdentity" disabled="{{busy}}">没有账号，创建新账号</button>
+        <view wx:if="{{identityChoice === 'LINK'}}"><view class="field-help">在另一小程序登录原账号，进入“我的”并确认生成一次性关联码。不要使用他人发送的码。</view><input class="profile-input" value="{{linkCode}}" maxlength="43" bindinput="linkCodeInput" placeholder="输入另一端临时关联码" disabled="{{busy}}"/><button class="primary" bindtap="linkAccount" loading="{{busy}}" disabled="{{busy}}">确认关联本人已有账号</button></view>
+        <view wx:if="{{identityChoice === 'NEW'}}"><view class="inline-notice">创建独立新账号，不继承原账号资产或骑手档案。需要本次真实微信手机号授权。</view><view wx:if="{{!phoneSupported}}">请升级微信并确认手机号能力已开通。</view><block wx:elif="{{privacyNeeded}}"><button class="text-button" bindtap="openIdentityPrivacy">查看{{privacyTitle}}</button><button wx:if="{{privacyGateSupported}}" open-type="agreePrivacyAuthorization" bindagreeprivacyauthorization="identityPrivacy" disabled="{{busy}}">同意隐私指引</button></block><button wx:elif="{{privacyReady}}" class="primary" open-type="getPhoneNumber" bindtap="prepareAccountPhone" bindgetphonenumber="createAccount" loading="{{busy}}" disabled="{{busy}}">授权手机号并确认创建新账号</button><button wx:else class="text-button" bindtap="identityPrivacy">重新检查隐私授权</button></view>
+        <button class="text-button" bindtap="restartIdentity" disabled="{{busy}}">取消选择 / 重新微信登录</button>
+      </view>
+      <button wx:if="{{smsLoginEnabled && !identityRequired}}" class="text-button sms-toggle" disabled="{{busy || sending}}" bindtap="toggleSms">{{sms ? '收起其他登录方式 ↑' : '其他登录方式 →'}}</button>
     </view>
-    <view class="login-card sms-card" wx:if="{{sms}}">
+    <view class="login-card sms-card" wx:if="{{smsLoginEnabled && sms && !identityRequired}}">
       <view class="card-heading">手机号登录</view><view class="card-description">短信账号不会自动与微信账号合并</view>
       <view class="profile-field"><label class="profile-label" for="login-mobile">手机号</label><input id="login-mobile" class="profile-input" type="number" maxlength="11" value="{{mobile}}" data-field="mobile" bindinput="input" placeholder="请输入11位手机号" disabled="{{busy || sending}}"/></view>
       <view class="profile-field"><label class="profile-label" for="login-code">验证码</label><view class="row sms-row"><input id="login-code" class="grow profile-input" type="number" maxlength="8" value="{{code}}" data-field="code" bindinput="input" placeholder="请输入验证码" disabled="{{busy}}"/><button class="secondary small" loading="{{sending}}" disabled="{{cooling > 0 || sending || busy}}" bindtap="sendCode">{{smsLabel}}</button></view></view>

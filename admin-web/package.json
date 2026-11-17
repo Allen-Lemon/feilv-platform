@@ -7,10 +7,11 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:wechat-settings": "node --test scripts/wechat-settings.test.cjs",
+    "test:wechat-settings": "node --test scripts/wechat-settings.test.cjs scripts/wechat-api.test.cjs",
     "test:customer-users": "node --test scripts/customer-users.test.cjs",
     "test:tasks-complaints": "node --test scripts/tasks-complaints.test.cjs",
-    "test:wallets": "node --test scripts/wallets.test.cjs"
+    "test:wallets": "node --test scripts/wallets.test.cjs",
+    "test:rider-capabilities": "node --test scripts/rider-capabilities.test.cjs"
   },
   "dependencies": {
     "axios": "^1.6.8",

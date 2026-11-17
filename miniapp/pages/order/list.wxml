@@ -24,7 +24,7 @@
     <button class="order-card" wx:for="{{list}}" wx:key="id" data-id="{{item.id}}" bindtap="detail" hover-class="order-card-pressed" aria-label="{{item.typeText}}，{{item.statusText}}，查看订单{{item.orderNo}}详情">
       <view class="order-card-heading">
         <view class="order-service">
-          <view class="order-service-icon type-{{item.orderType}}">{{item.orderType === 'SEND' ? '送' : item.orderType === 'BUY' ? '买' : item.orderType === 'ERRAND' ? '办' : item.orderType === 'CUSTOM' ? '自' : '单'}}</view>
+          <view class="order-service-icon type-{{item.orderType}}">{{item.isTransport && item.taskMode === 'RIDE' ? '接' : item.isTransport ? '驾' : item.orderType === 'SEND' || item.orderType === 'ERRAND' ? '飞' : item.orderType === 'BUY' ? '买' : item.orderType === 'CUSTOM' ? '自' : '单'}}</view>
           <view class="service-copy">
             <view class="service-name">{{item.typeText}}</view>
             <view class="order-time">{{item.createdText}}</view>
@@ -44,7 +44,7 @@
         </view>
       </view>
 
-      <view class="order-route" wx:else><view class="route-address">{{item.modeText}} · {{item.taskMode === 'ONLINE' ? '无需地址' : item.locationAddress || item.fromAddress || '服务地点待核实'}}</view><view class="order-time" wx:if="{{item.serviceTime}}">{{item.serviceTime}}</view></view>
+      <view class="order-route" wx:else><view class="route-address">{{item.modeText}} · <block wx:if="{{item.taskMode === 'ONLINE'}}">无需地址</block><block wx:else><text wx:if="{{item.isTransport}}">起始地址：</text>{{item.locationAddress || item.fromAddress || '服务地点待核实'}}</block></view><view class="order-time" wx:if="{{item.serviceTime}}">服务时间：{{item.serviceTime}}</view><view class="order-time" wx:elif="{{item.isTransport}}">服务时间请查看详情</view></view>
       <view class="order-goods" wx:if="{{item.goodsDesc}}"><text class="goods-label">需求</text><text class="goods-value">{{item.goodsDesc}}</text></view>
       <view class="order-card-footer">
         <view class="order-amount"><text class="amount-label">订单金额</text><text class="amount-value">¥{{item.feeText}}</text></view>
@@ -56,7 +56,7 @@
     <view class="empty orders-empty" wx:if="{{!list.length && !loading && !error}}">
       <view class="empty-mark">单</view>
       <view class="empty-title">还没有订单</view>
-      <view class="empty-caption">送物、代买或代办，选个服务开始吧。</view>
+      <view class="empty-caption">飞毛腿、接送或代驾，选个服务开始吧。</view>
       <button class="primary" bindtap="home">去发布任务</button>
     </view>
     <view class="orders-loading" wx:if="{{loading}}"><view class="loading-dot"></view><text>正在加载订单…</text></view>

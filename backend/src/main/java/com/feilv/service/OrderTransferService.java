@@ -18,7 +18,7 @@ import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** 单订单行锁是转派、履约、投诉、结算的共同单写者；用户/骑手只读，不引入反向用户锁。 */
+/** 单订单行锁是转派、履约、投诉、结算的共同单写者；能力检查随后锁目标骑手，不引入反向用户锁。 */
 @Service
 @RequiredArgsConstructor
 @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -31,6 +31,7 @@ public class OrderTransferService {
     private final OrderService orderService;
     private final AuditService audit;
     private final EntityManager entityManager;
+    private final RiderCapabilityService riderCapabilities;
 
     @Transactional(isolation = Isolation.READ_COMMITTED, noRollbackFor = ExpiredTransferException.class)
     public TransferVO create(long userId, long orderId, TransferReq req) {
@@ -47,6 +48,7 @@ public class OrderTransferService {
             expirePending(order, unavailable);
             throw new ExpiredTransferException(unavailable);
         }
+        riderCapabilities.requireForOrder(order, to);
         if (!transfers.findByOrderIdAndStatus(orderId, Status.PENDING).isEmpty()) throw BizException.of(409, "该订单已有待确认转派");
         OrderTransfer transfer = new OrderTransfer(); transfer.setOrderId(orderId);
         transfer.setFromRiderId(from.getId()); transfer.setToRiderId(to.getId()); transfer.setReason(reason);
@@ -71,6 +73,7 @@ public class OrderTransferService {
             return view(transfer);
         }
         activeRider(transfer.getFromRiderId());
+        to = riderCapabilities.requireForOrder(order, to);
         if (to.getOnlineStatus() != 1 && to.getOnlineStatus() != 2) throw BizException.of(400, "请先切换到抢单/听单模式");
         if (Objects.equals(order.getUserId(), userId) || Objects.equals(transfer.getFromRiderId(), to.getId())) throw BizException.of(403, "目标骑手不合法");
         order.setRiderId(to.getId());

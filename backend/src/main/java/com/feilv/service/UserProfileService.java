@@ -68,7 +68,8 @@ public class UserProfileService {
             throw BizException.of(400, "请重新点击按钮授权手机号");
         }
         active(users.findById(userId).orElse(null));
-        var credentials = settings.effectiveLogin();
+        var authorization = MiniappPhoneAuthorization.resolve(userId, settings);
+        var credentials = authorization.credentials();
         requireIdentity(userId, credentials.appId());
         // 微信调用在写事务外进行；手机号仅接受微信服务端兑换结果。
         var phone = phoneClient.exchange(code, credentials);
@@ -79,10 +80,7 @@ public class UserProfileService {
         try {
             return transaction.execute(status -> {
                 User user = active(users.findByIdForUpdate(userId).orElse(null));
-                var latest = settings.effectiveLogin();
-                if (!credentials.appId().equals(latest.appId()) || !credentials.secret().equals(latest.secret())) {
-                    throw BizException.of(409, "微信配置已变化，请重新授权手机号");
-                }
+                authorization.recheck(settings);
                 requireIdentity(userId, credentials.appId());
                 if (phone.mobile().equals(user.getMobile())) return view(user);
                 if (user.getMobile() != null && !user.getMobile().isBlank()) {

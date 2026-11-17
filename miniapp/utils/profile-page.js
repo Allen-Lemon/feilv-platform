@@ -330,6 +330,6 @@ module.exports = {
     if (!this.current()) return
     this._leaving = true
     if (getCurrentPages().length > 1) wx.navigateBack({ delta: 1 })
-    else wx.switchTab({ url: '/pages/my/my' })
+    else wx.switchTab({ url: require('../config').CLIENT === 'RIDER' ? '/pages/rider/workbench' : '/pages/my/my' })
   }
 }

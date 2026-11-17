@@ -42,6 +42,8 @@ page { background: #F7F8FA; }
 .create-page .type-tab { flex: 1; min-height: 44px; margin: 0 4rpx; padding: 14rpx 8rpx; background: transparent; color: #475467; font-size: 26rpx; }
 .create-page .type-tab.selected, .create-page .scene-option.selected { background: #FFF3EB; border-color: #C94320; color: #AA381B; }
 .scene-options { display: flex; flex-direction: column; margin-top: 18rpx; }
+.transport-scenes .scene-options { flex-direction: row; gap: 16rpx; }
+.transport-scenes .scene-option { flex: 1; min-width: 0; }
 .create-page .scene-option { display: block; margin: 6rpx 0; padding: 20rpx; border: 1rpx solid #E4E7EC; background: #FFFFFF; color: #344054; text-align: left; font-size: 27rpx; }
 @media (max-width: 350px) {
   .create-heading .title { font-size: 36rpx; }

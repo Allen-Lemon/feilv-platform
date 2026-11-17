@@ -36,6 +36,10 @@ public class AdminOrderService {
         Map<Long, User> indexed = ids.isEmpty() ? Map.of() : users.findAllById(ids).stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
         var tasks = orderService.taskIndex(result.getContent());
-        return result.map(order -> AdminOrderVO.from(orderService.toVO(order, OrderService.taskMode(tasks.get(order.getId()))), order.getUserId(), indexed.get(order.getUserId())));
+        return result.map(order -> {
+            var task = tasks.get(order.getId());
+            return AdminOrderVO.from(orderService.toVO(order, OrderService.taskMode(task)), order.getUserId(), indexed.get(order.getUserId()),
+                    task == null ? null : task.getLocationAddress(), task == null ? null : task.getServiceTime());
+        });
     }
 }

@@ -14,10 +14,10 @@
     <button class="menu-button" bindtap="orders" hover-class="tap-feedback"><view class="menu-icon">单</view><view class="grow"><view class="menu-title">我的订单</view><view class="menu-caption">查看配送进度与历史订单</view></view><view class="chevron"></view></button>
     <button class="menu-button" bindtap="wallet" hover-class="tap-feedback"><view class="menu-icon">钱</view><view class="grow"><view class="menu-title">我的钱包</view><view class="menu-caption">钱包明细与 MOCK 模拟提现</view></view><view class="chevron"></view></button>
     <button class="menu-button" bindtap="address" hover-class="tap-feedback"><view class="menu-icon address-icon">址</view><view class="grow"><view class="menu-title">地址簿</view><view class="menu-caption">管理常用取件、收件地址</view></view><view class="chevron"></view></button>
-    <button wx:if="{{isRider}}" class="menu-button" bindtap="workbench" hover-class="tap-feedback"><view class="menu-icon rider-icon">骑</view><view class="grow"><view class="menu-title">骑手工作台</view><view class="menu-caption">接单与配送工作入口</view></view><view class="chevron"></view></button>
-    <button wx:else class="menu-button" bindtap="rider" hover-class="tap-feedback"><view class="menu-icon rider-icon">骑</view><view class="grow"><view class="menu-title">成为骑手</view><view class="menu-caption">了解并申请骑手入驻</view></view><view class="chevron"></view></button>
+    <button wx:if="{{loggedIn}}" class="menu-button" bindtap="generateLinkCode" disabled="{{loading || linkBusy}}"><view class="menu-icon neutral-icon">联</view><view class="grow"><view class="menu-title">关联另一小程序</view><view class="menu-caption">本人确认后生成短时一次性关联码</view></view><view class="chevron"></view></button>
   </view>
 
+  <view wx:if="{{loggedIn && linkCode}}" class="card"><view class="subtitle">仅供本人在{{linkTarget}}关联账号</view><text user-select="true">{{linkCode}}</text><view class="muted">失效时间：{{linkExpiresText}}。勿分享给他人；离页即隐藏。</view><button class="text-button" bindtap="clearLinkCode">隐藏临时码</button></view>
   <view class="account-section-title">设置与说明</view>
   <view class="card menu-card account-menu">
     <button wx:if="{{loggedIn}}" class="menu-button" bindtap="phone" disabled="{{loading}}" hover-class="tap-feedback"><view class="menu-icon neutral-icon">绑</view><view class="grow"><view class="menu-title">手机号绑定</view><view class="menu-caption">{{me ? me.mobile : '查看或授权绑定微信手机号'}}</view></view><view class="chevron"></view></button>

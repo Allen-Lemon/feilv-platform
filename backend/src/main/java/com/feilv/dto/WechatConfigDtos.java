@@ -26,7 +26,13 @@ public final class WechatConfigDtos {
                               String notifyUrl, String refundNotifyUrl, boolean apiV3KeyConfigured,
                               boolean merchantPrivateKeyConfigured, boolean platformPublicKeyConfigured,
                               String platformPublicKeyId, String mode, Long version, LocalDateTime updatedTime) {}
-    public record Overview(boolean encryptionReady, LoginView login, PaymentView payment, String paymentRuntime) {}
-    public record ValidateRequest(@NotNull String section) {}
+    public record Overview(boolean encryptionReady, LoginView login, LoginView riderLogin, PaymentView payment, String paymentRuntime) {
+        public Overview(boolean encryptionReady, LoginView login, PaymentView payment, String paymentRuntime) {
+            this(encryptionReady, login, null, payment, paymentRuntime);
+        }
+    }
+    public record ValidateRequest(@NotNull String section, String clientType) {
+        public ValidateRequest(String section) { this(section, null); }
+    }
     public record ValidationView(boolean valid, List<String> messages, String runtime) {}
 }

@@ -23,7 +23,6 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +47,7 @@ public class AdminController {
     private final UserRepository userRepository;
     private final AdminOrderService adminOrderService;
     private final AdminMenuAccess adminMenuAccess;
+    private final com.feilv.service.RiderCapabilityService riderCapabilities;
 
     /** 经营看板（对应功能设计文档7.6） */
     @GetMapping("/stats")
@@ -104,14 +104,15 @@ public class AdminController {
     /** 骑手列表（在线状态、信用分） */
     @GetMapping("/riders")
     public Result<List<Map<String, Object>>> riders() {
-        List<Map<String, Object>> list = new ArrayList<>();
-        riderRepository.findAll().forEach(r -> list.add(Map.of(
-                "riderId", r.getId(),
-                "name", r.getName(),
-                "creditScore", r.getCreditScore(),
-                "onlineStatus", r.getOnlineStatus(),
-                "status", r.getStatus())));
-        return Result.ok(list);
+        adminMenuAccess.requireMenu("riders");
+        return Result.ok(riderRepository.findAll().stream().map(com.feilv.service.RiderCapabilityService::view).toList());
+    }
+
+    @PutMapping("/riders/{id}/capabilities/{mode}")
+    public Result<?> riderCapability(@PathVariable long id, @PathVariable String mode,
+                                    @Valid @RequestBody com.feilv.dto.RiderCapabilityDtos.CapabilityReq req) {
+        adminMenuAccess.requireMenu("riders");
+        return Result.ok(riderCapabilities.update(id, mode, req));
     }
 
     /** 结算中心：骑手分账汇总（对应功能设计文档7.3；生产：结算单→财务审核→批量打款） */

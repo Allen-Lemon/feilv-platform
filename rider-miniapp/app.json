@@ -1,0 +1,48 @@
+{
+  "pages": [
+    "pages/rider/workbench",
+    "pages/my/my",
+    "pages/rider/register",
+    "pages/rider/transfers",
+    "pages/login/login",
+    "pages/profile/profile",
+    "pages/wallet/wallet",
+    "pages/settings/settings",
+    "pages/legal/legal",
+    "pages/order/detail"
+  ],
+  "window": {
+    "navigationBarTitleText": "飞毛腿骑手",
+    "navigationBarBackgroundColor": "#F7F8FA",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F7F8FA",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#667085",
+    "selectedColor": "#C94320",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/rider/workbench",
+        "text": "工作台"
+      },
+      {
+        "pagePath": "pages/my/my",
+        "text": "我的"
+      }
+    ]
+  },
+  "permission": {
+    "scope.userLocation": {
+      "desc": "骑手主动上报配送位置，用于向订单用户展示配送轨迹"
+    }
+  },
+  "requiredPrivateInfos": [
+    "getLocation"
+  ],
+  "sitemapLocation": "sitemap.json",
+  "style": "v2",
+  "lazyCodeLoading": "requiredComponents"
+}

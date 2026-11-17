@@ -22,7 +22,7 @@ import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@SpringBootTest(properties = {"spring.datasource.url=jdbc:h2:mem:order-transfer-integration;DB_CLOSE_DELAY=-1", "spring.datasource.username=sa", "spring.datasource.password=",
+@SpringBootTest(properties = {com.feilv.controller.TestAuth.TEST_SECRET_PROPERTY,"spring.datasource.url=jdbc:h2:mem:order-transfer-integration;DB_CLOSE_DELAY=-1", "spring.datasource.username=sa", "spring.datasource.password=",
         "spring.datasource.driver-class-name=org.h2.Driver", "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect", "spring.jpa.hibernate.ddl-auto=create-drop", "spring.sql.init.mode=never"})
 class OrderTransferIntegrationTest {
     @Autowired OrderTransferService service;

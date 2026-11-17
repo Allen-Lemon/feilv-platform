@@ -7,7 +7,7 @@ import com.feilv.service.WechatConfigService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -26,14 +26,18 @@ public class WechatConfigController {
     public Result<LoginView> login(@Valid @RequestBody LoginRequest body) {
         access.requireManage(); return Result.ok(service.saveLogin(body));
     }
+    @PutMapping("/login/{clientType}")
+    public Result<LoginView> login(@PathVariable String clientType, @Valid @RequestBody LoginRequest body) {
+        access.requireManage(); return Result.ok(service.saveLogin(clientType, body));
+    }
     @PutMapping("/payment")
     public Result<PaymentView> payment(@Valid @RequestBody PaymentRequest body) {
         access.requireManage(); return Result.ok(service.savePayment(body));
     }
     @PostMapping("/validate")
     public Result<ValidationView> validate(@Valid @RequestBody ValidateRequest body) {
-        access.requireManage(); return Result.ok(service.validate(body.section()));
+        access.requireManage(); return Result.ok(service.validate(body.section(), body.clientType()));
     }
-    @ExceptionHandler({ObjectOptimisticLockingFailureException.class, DataIntegrityViolationException.class})
+    @ExceptionHandler({ConcurrencyFailureException.class, DataIntegrityViolationException.class})
     public Result<Void> conflict() { return Result.fail(409, "配置版本已变化或数据冲突，请刷新后重试"); }
 }

@@ -18,7 +18,8 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(authInterceptor).addPathPatterns("/api/**");
+        // Inspect the raw URI even when MVC decodes or strips a prefix before matching handlers.
+        registry.addInterceptor(authInterceptor).addPathPatterns("/**");
     }
 
     @Override

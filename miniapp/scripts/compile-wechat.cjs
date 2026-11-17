@@ -4,7 +4,8 @@ const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
 const { spawnSync } = require('node:child_process')
-const root = path.resolve(__dirname, '..')
+const { projectOptions, walk } = require('./native-project.cjs')
+const { root, client } = projectOptions()
 const app = JSON.parse(fs.readFileSync(path.join(root, 'app.json'), 'utf8'))
 const candidates = [process.env.WECHAT_DEVTOOLS_HOME,
   'C:/Program Files (x86)/Tencent/微信web开发者工具',
@@ -15,10 +16,11 @@ if (!directory) {
   console.error('未找到微信官方 wcc/wcsc 编译器。设置 WECHAT_DEVTOOLS_HOME 为微信开发者工具安装目录，或在工具内点击编译。')
   process.exit(1)
 }
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'feilv-native-compile-'))
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'feilv-' + client.toLowerCase() + '-native-compile-'))
+const templates = walk(root).filter(file => file.endsWith('.wxml') && !path.relative(root, file).startsWith('scripts' + path.sep)).map(file => path.relative(root, file).split(path.sep).join('/'))
 try {
   for (const [exe, files] of [
-    ['wcc.exe', app.pages.map(p => p + '.wxml')],
+    ['wcc.exe', templates],
     ['wcsc.exe', ['app.wxss', ...app.pages.map(p => p + '.wxss')]]
   ]) {
     const output = path.join(temp, exe + '.js')
@@ -26,7 +28,7 @@ try {
     if (result.error || result.status !== 0 || !fs.existsSync(output) || fs.statSync(output).size === 0) {
       throw new Error(exe + ' 编译失败：' + (result.error ? result.error.message : result.stderr || result.stdout || result.status))
     }
-    console.log('PASS official ' + exe + ': ' + files.length + ' files')
+    console.log('PASS ' + client + ' official ' + exe + ': ' + files.length + ' files; temporary output only (' + root + ')')
   }
 } catch (error) {
   console.error(error.message)

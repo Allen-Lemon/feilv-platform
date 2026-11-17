@@ -7,6 +7,7 @@ const os = require('node:os')
 const net = require('node:net')
 const http = require('node:http')
 const { spawn } = require('node:child_process')
+const { randomBytes } = require('node:crypto')
 const jar = path.resolve(__dirname, '../target/feilv-server-1.0.0.jar')
 const java = process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java') : 'java'
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'feilv-health-smoke-'))
@@ -34,7 +35,8 @@ function request(port, method, route, body) {
       '--spring.profiles.active=health-smoke', '--spring.datasource.url=jdbc:h2:mem:healthsmoke;DB_CLOSE_DELAY=-1',
       '--spring.datasource.username=sa', '--spring.datasource.password=', '--spring.datasource.driver-class-name=org.h2.Driver',
       '--spring.jpa.database-platform=org.hibernate.dialect.H2Dialect', '--spring.jpa.hibernate.ddl-auto=create-drop',
-      '--spring.sql.init.mode=never'], { stdio: ['ignore', log, log] })
+      '--spring.sql.init.mode=never'], { stdio: ['ignore', log, log],
+      env: { ...process.env, JWT_SECRET: randomBytes(32).toString('hex'), AUTH_DEMO_SMS_ENABLED: 'false' } })
     let startError
     server.on('error', error => { startError = error })
     const exited = new Promise(resolve => server.once('exit', resolve))

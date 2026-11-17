@@ -1,12 +1,22 @@
 import request from './request'
 
+function requireWechatClient(clientType) {
+  if (clientType !== 'USER' && clientType !== 'RIDER') throw new TypeError('微信客户端类型仅支持USER或RIDER')
+  return clientType
+}
+
 export const adminApi = {
   login: (data) => request.post('/v1/auth/admin-login', data),
   profile: (config) => request.post('/v1/auth/admin-profile', undefined, config),
   wechatSettings: () => request.get('/v1/admin/system/wechat', { silentError: true }),
-  saveWechatLogin: (data) => request.put('/v1/admin/system/wechat/login', data, { silentError: true }),
+  saveWechatLogin: (data, clientType) => request.put(clientType === undefined ? '/v1/admin/system/wechat/login' : `/v1/admin/system/wechat/login/${requireWechatClient(clientType)}`, data, { silentError: true }),
   saveWechatPayment: (data) => request.put('/v1/admin/system/wechat/payment', data, { silentError: true }),
-  validateWechat: (section) => request.post('/v1/admin/system/wechat/validate', { section }, { silentError: true }),
+  validateWechat: (section, clientType) => {
+    if (!['LOGIN', 'PAYMENT'].includes(section)) throw new TypeError('配置类型仅支持LOGIN或PAYMENT')
+    if (section === 'PAYMENT' && clientType !== undefined) throw new TypeError('支付配置不能指定clientType')
+    const data = clientType === undefined ? { section } : { section, clientType: requireWechatClient(clientType) }
+    return request.post('/v1/admin/system/wechat/validate', data, { silentError: true })
+  },
   stats: () => request.get('/v1/admin/stats'),
   customerUsers: (params) => request.get('/v1/admin/users', { params }),
   customerUser: (id) => request.get(`/v1/admin/users/${id}`),
@@ -17,6 +27,7 @@ export const adminApi = {
   completeOrder: (id, reason) => request.post(`/v1/admin/orders/${id}/complete`, { reason }),
   handleComplaint: (id, data) => request.post(`/v1/admin/complaints/${id}/handle`, data),
   riders: () => request.get('/v1/admin/riders'),
+  updateRiderCapability: (id, mode, { enabled, expectedEnabled, reason }) => request.put(`/v1/admin/riders/${id}/capabilities/${mode}`, { enabled, expectedEnabled, reason }),
   settlements: () => request.get('/v1/admin/settlements'),
   wallets: (params) => request.get('/v1/admin/wallets', { params }),
   walletEntries: (userId, params) => request.get(`/v1/admin/wallets/${userId}/entries`, { params }),

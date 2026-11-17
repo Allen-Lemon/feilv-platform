@@ -18,12 +18,13 @@
   <view class="section-head home-section"><view class="section-title">你需要，我们就出发</view><text class="section-note">选择服务</text></view>
   <view class="service-list">
     <button wx:for="{{types}}" wx:key="code" class="service-entry service-{{item.code}}" data-type="{{item.code}}" bindtap="create" hover-class="tap-feedback">
-      <view class="service-icon">{{item.code === 'SEND' ? '送' : item.code === 'BUY' ? '买' : item.code === 'CUSTOM' ? '自' : '办'}}</view>
+      <view class="service-icon">{{item.code === 'SEND' ? '飞' : item.code === 'TRANSPORT' ? '行' : '自'}}</view>
       <view class="service-copy">
         <view class="service-name">{{item.label}}</view>
         <view class="service-desc">{{item.desc}}</view>
         <view class="service-desc" wx:if="{{item.code === 'CUSTOM'}}">由现有骑手承接，不承诺专业资质；请明确范围与安全要求。</view>
-        <view class="service-cta">{{item.code === 'CUSTOM' ? '发布自定义任务' : '发布跑腿任务'}} <text>↗</text></view>
+        <view class="service-desc" wx:if="{{item.code === 'TRANSPORT'}}">平台单独授权骑手承接；非第三方滴滴接口，授权不代表驾驶资质审核。</view>
+        <view class="service-cta">{{item.code === 'CUSTOM' ? '发布自定义任务' : item.code === 'TRANSPORT' ? '选择接送或代驾' : '发布跑腿任务'}} <text>↗</text></view>
       </view>
     </button>
   </view>

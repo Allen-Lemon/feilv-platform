@@ -4,16 +4,10 @@ const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
 const { spawnSync } = require('node:child_process')
-const root = path.resolve(__dirname, '..')
+const { projectOptions, inside, walk, UPLOAD_EXCLUSIONS } = require('./native-project.cjs')
+const { root, client, pages: expectedPages, tabs: expectedTabs } = projectOptions()
 const errors = []
 const check = (ok, message) => { if (!ok) errors.push(message) }
-function walk(dir) {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
-    if (['node_modules', 'dist', '.git'].includes(entry.name)) return []
-    const file = path.join(dir, entry.name)
-    return entry.isDirectory() ? walk(file) : [file]
-  })
-}
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')) }
   catch (e) { errors.push(path.relative(root, file) + ': ' + e.message); return null }
@@ -40,9 +34,15 @@ check(Boolean(project.appid), '必须显式配置游客或真实 AppID')
 check(Array.isArray(app.pages) && app.pages.length > 0, 'app.json 必须注册页面')
 check(new Set(app.pages).size === app.pages.length, 'app.json 包含重复页面')
 check(fs.existsSync(path.join(root, app.sitemapLocation || '')), '缺少 sitemap')
-check((app.requiredPrivateInfos || []).includes('getLocation'), '缺少定位隐私 API 声明')
-check(Boolean(app.permission && app.permission['scope.userLocation'] && app.permission['scope.userLocation'].desc), '缺少定位用途说明')
-for (const tab of (app.tabBar || {}).list || []) check(app.pages.includes(tab.pagePath), 'Tab 页未注册：' + tab.pagePath)
+check(JSON.stringify([...app.pages].sort()) === JSON.stringify([...expectedPages].sort()), client + ' 页面清单与独立工程边界不符')
+const tabPaths = ((app.tabBar || {}).list || []).map(tab => tab.pagePath)
+check(JSON.stringify(tabPaths) === JSON.stringify(expectedTabs), client + ' tab 清单不符（用户三 tab、骑手两 tab）')
+const locationDeclared = (app.requiredPrivateInfos || []).some(name => /location/i.test(name)) || Boolean(app.permission && app.permission['scope.userLocation']) || (app.requiredBackgroundModes || []).includes('location')
+if (client === 'RIDER') {
+  check((app.requiredPrivateInfos || []).includes('getLocation'), '骑手端缺少定位隐私 API 声明')
+  check(Boolean(app.permission && app.permission['scope.userLocation'] && app.permission['scope.userLocation'].desc), '骑手端缺少定位用途说明')
+} else check(!locationDeclared, '用户端不得声明定位 API/权限或后台定位能力')
+for (const tab of tabPaths) check(app.pages.includes(tab), 'Tab 页未注册：' + tab)
 for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) check(Object.keys(pkg[section] || {}).length === 0, '原生工程不应包含第三方依赖：' + section)
 check(Object.keys(lock.packages || {}).every(name => name === ''), '锁文件中残留第三方依赖')
 check(!Object.keys(pkg.scripts || {}).some(name => name.startsWith('legacy:')), '应移除旧框架构建命令')
@@ -54,7 +54,7 @@ if (fs.existsSync(path.join(root, 'dist'))) {
 for (const name of ['src', 'native', 'vite.config.js', 'index.html']) check(!fs.existsSync(path.join(root, name)), '原生根目录残留旧架构：' + name)
 check(!files.some(f => /\.(vue|uts|scss|sass)$/.test(f)), '存在非原生源码')
 const ignores = project.packOptions && project.packOptions.ignore || []
-for (const value of ['scripts', 'node_modules', 'dist', 'package.json', 'package-lock.json', 'README.md', 'NATIVE_MIGRATION.md', 'WECHAT_DEPLOYMENT.md']) {
+for (const value of UPLOAD_EXCLUSIONS) {
   check(ignores.some(item => item.value === value), '上传包未排除开发文件/目录：' + value)
 }
 const pageDefinitions = new Map()
@@ -70,6 +70,7 @@ for (const page of app.pages) {
         if (name.endsWith('/page')) return { definePage(value) { definition = value } }
         if (name.endsWith('/format')) return require(path.join(root, 'utils/format.js'))
         if (name.endsWith('/profile-page')) return require(path.join(root, 'utils/profile-page.js'))
+        if (name.endsWith('/identity-link-page')) return require(path.join(root, 'utils/identity-link-page.js'))
         if (name.endsWith('/address')) return require(path.join(root, 'utils/address.js'))
         return {}
       }
@@ -87,7 +88,7 @@ for (const [page, definition] of pageDefinitions) {
   const names = new Set()
   for (const match of text.matchAll(/<import\s+src=["']([^"']+)["']\s*\/>/g)) {
     const target = path.resolve(path.dirname(file), match[1])
-    const valid = target.startsWith(root + path.sep) && target.endsWith('.wxml') && fs.existsSync(target)
+    const valid = inside(root, target) && target.endsWith('.wxml') && fs.existsSync(target)
     check(valid, file + ': 模板引用不存在或越界 ' + match[1])
     if (!valid) continue
     const consumers = templateConsumers.get(target) || []
@@ -105,10 +106,12 @@ for (const file of runtimeFiles) {
     for (const match of text.matchAll(/require\(['"]([^'"]+)['"]\)/g)) {
       check(match[1].startsWith('.'), file + ': 不能依赖 npm 运行时模块 ' + match[1])
       const target = path.resolve(path.dirname(file), match[1])
-      check(target.startsWith(root + path.sep), file + ': require 越过小程序边界')
+      check(inside(root, target), file + ': require 越过小程序边界')
       check(fs.existsSync(target + '.js') || fs.existsSync(target), file + ': require 路径不存在 ' + match[1])
     }
-    for (const match of text.matchAll(/['"]\/pages\/([^'"?]+)(?:\?[^'"]*)?['"]/g)) check(app.pages.includes('pages/' + match[1]), file + ': 跳转页面未注册 ' + match[1])
+    // Shared sources may contain a fixed client ternary; validate the selected branch, never both unreachable alternatives.
+    const navigationSource = text.replace(/(?:client|require\(['"](?:\.\/|\.\.\/)?config['"]\)\.CLIENT)\s*===\s*['"]RIDER['"]\s*\?\s*(['"])(\/pages\/[^'"]+)\1\s*:\s*(['"])(\/pages\/[^'"]+)\3/g, (_, q1, rider, q2, user) => JSON.stringify(client === 'RIDER' ? rider : user))
+    for (const match of navigationSource.matchAll(/['"]\/pages\/([^'"?]+)(?:\?[^'"]*)?['"]/g)) check(app.pages.includes('pages/' + match[1]), file + ': 跳转页面未注册 ' + match[1])
   }
   if (file.endsWith('.wxml')) {
     wxmlCount++
@@ -131,7 +134,14 @@ for (const file of runtimeFiles) {
     check(stack.length === 0, file + ': 标签未闭合 ' + stack.join(','))
   }
 }
-check(!/Math\.random/.test(fs.readFileSync(path.join(root, 'pages/rider/workbench.js'), 'utf8')), '骑手轨迹不得使用随机点')
+const runtimeSource = runtimeFiles.filter(f => f.endsWith('.js')).map(f => fs.readFileSync(f, 'utf8')).join('\n')
+if (client === 'RIDER') {
+  const workbench = fs.readFileSync(path.join(root, 'pages/rider/workbench.js'), 'utf8')
+  check(!/Math\.random/.test(workbench), '骑手轨迹不得使用随机点')
+  check(/wx\.getLocation\s*\(/.test(workbench), '骑手端必须使用真实原生位置')
+} else check(!/wx\s*(?:\.\s*(?:getLocation|chooseLocation|startLocationUpdate(?:Background)?|onLocationChange|openLocation)|\[\s*['"](?:getLocation|chooseLocation|startLocationUpdate(?:Background)?|onLocationChange|openLocation)['"]\s*\])\s*\(/.test(runtimeSource), '用户端不得调用位置 API')
+const unregistered = files.filter(file => /\.(?:js|json|wxml|wxss)$/.test(file) && path.relative(root, file).startsWith('pages' + path.sep))
+for (const file of unregistered) check(app.pages.includes(path.relative(root, file).split(path.sep).join('/').replace(/\.[^.]+$/, '')), file + ': 页面四件套未注册')
 check(!/wx\.requestPayment\s*\(/.test(runtimeFiles.filter(f => f.endsWith('.js')).map(f => fs.readFileSync(f, 'utf8')).join('\n')), '尚未接入的真实支付不得伪装实现')
 check(/wx\.uploadFile\s*\(/.test(fs.readFileSync(path.join(root, 'utils/request.js'), 'utf8')), '头像必须使用原生 multipart 上传')
 check(fs.readFileSync(path.join(root, 'pages/profile/profile.wxml'), 'utf8').includes('open-type="chooseAvatar"'), '资料页必须提供主动选择头像')
@@ -139,4 +149,4 @@ check(!/statusCode/.test(fs.readFileSync(path.join(root, 'utils/format.js'), 'ut
 const appidFiles = files.filter(f => f.endsWith('.json')).filter(f => { const value = readJson(f); return value && (value.appid || value['mp-weixin']) })
 check(appidFiles.length === 1 && appidFiles[0] === path.join(root, 'project.config.json'), 'AppID 应仅在 project.config.json 配置')
 if (errors.length) { console.error(errors.join('\n')); process.exitCode = 1 }
-else console.log('PASS native root architecture: ' + jsonCount + ' JSON, ' + jsCount + ' JS/CJS, ' + app.pages.length + ' complete pages, ' + wxmlCount + ' WXML; zero framework dependencies; upload exclusions verified.')
+else console.log('PASS ' + client + ' native root architecture (' + root + '): ' + jsonCount + ' JSON, ' + jsCount + ' JS/CJS, ' + app.pages.length + ' complete pages, ' + wxmlCount + ' WXML; zero framework dependencies; upload exclusions verified.')

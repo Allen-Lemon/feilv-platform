@@ -47,7 +47,7 @@ class PhoneChangeControllerTest {
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
     private final ObjectMapper json = new ObjectMapper();
     private final Map<Long, User> accounts = new HashMap<>();
-    private final String token = "Bearer " + JwtUtil.create(42L, "USER");
+    private final String token = "Bearer " + TestAuth.tokens().create(42L, "USER", "USER", "http-change-app");
     private final WechatConfigService.LoginCredentials credentials = new WechatConfigService.LoginCredentials("http-change-app", "secret");
     private User user;
     private MockMvc mvc;
@@ -62,6 +62,7 @@ class PhoneChangeControllerTest {
         when(users.findByMobile(anyString())).thenAnswer(call -> accounts.values().stream().filter(value -> call.getArgument(0).equals(value.getMobile())).findFirst());
         when(users.saveAndFlush(any(User.class))).thenAnswer(call -> call.getArgument(0));
         when(settings.effectiveLogin()).thenReturn(credentials);
+        when(settings.effectiveLogin("USER")).thenReturn(credentials);
         when(identities.existsByUserIdAndAppId(anyLong(), eq(credentials.appId()))).thenReturn(true);
         when(phone.exchange("wechat-authorization", credentials)).thenReturn(new WechatPhoneClient.Phone(credentials.appId(), NEW));
         mvc = mvc(true, true);
@@ -73,7 +74,7 @@ class PhoneChangeControllerTest {
             for (String path : paths()) {
                 var request = post(ROOT + path).contentType(MediaType.APPLICATION_JSON).content(body(path));
                 if (authorization != null) request.header("Authorization", authorization);
-                mvc.perform(request).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value(401));
+                mvc.perform(request).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value(40101));
             }
         }
         verify(users, never()).findByIdForUpdate(anyLong()); verifyNoInteractions(messages, phone, audit);
@@ -118,13 +119,13 @@ class PhoneChangeControllerTest {
 
     @Test
     void riderMayChangeButMissingFrozenMismatchedRoleAndAdminAreRejected() throws Exception {
-        mvc.perform(post(ROOT + "/phone/development/change").header("Authorization", "Bearer " + JwtUtil.create(43L, "RIDER"))
+        mvc.perform(post(ROOT + "/phone/development/change").header("Authorization", "Bearer " + TestAuth.riderToken(43L, "RIDER"))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"mobile\":\"" + NEW + "\"}"))
                 .andExpect(jsonPath("$.code").value(0)).andExpect(jsonPath("$.data.role").value("RIDER"));
-        assertAllBlocked("Bearer " + JwtUtil.create(1L, "ADMIN"), 200, 403);
+        assertAllBlocked("Bearer " + TestAuth.adminToken(1L), 403, 403);
         user.setStatus(0); assertAllBlocked(token, 403, 403);
-        user.setStatus(1); user.setRole("RIDER"); assertAllBlocked(token, 403, 403);
-        accounts.remove(42L); assertAllBlocked(token, 403, 403);
+        user.setStatus(1); user.setRole("RIDER"); assertAllBlocked(token, 401, 40101);
+        accounts.remove(42L); assertAllBlocked(token, 401, 40101);
     }
 
     @Test
@@ -189,7 +190,7 @@ class PhoneChangeControllerTest {
         var changes = new PhoneChangeService(users, identities, settings, phone, development, audit, entityManager, manager);
         var sms = new SmsPhoneBindingService(users, messages, audit, entityManager, manager, smsEnabled);
         return MockMvcBuilders.standaloneSetup(new PhoneChangeController(changes, sms)).setControllerAdvice(new GlobalExceptionHandler())
-                .addInterceptors(new AuthInterceptor(users)).build();
+                .addInterceptors(new AuthInterceptor(TestAuth.tokens(), users, mock(com.feilv.repository.RiderRepository.class))).build();
     }
     private User account(long id, String role, String mobile) {
         User value = new User(); value.setId(id); value.setRole(role); value.setMobile(mobile); accounts.put(id, value); return value;

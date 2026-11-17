@@ -16,9 +16,9 @@ class AccountStatusInterceptorTest {
         var users = mock(UserRepository.class);
         User user = new User(); user.setId(42L);
         when(users.findById(42L)).thenReturn(Optional.of(user));
-        var interceptor = new AuthInterceptor(users);
+        var interceptor = new AuthInterceptor(TestAuth.tokens(), users, mock(com.feilv.repository.RiderRepository.class));
         var req = new MockHttpServletRequest("GET", "/api/v1/user/me");
-        req.addHeader("Authorization", "Bearer " + JwtUtil.create(42L, "USER"));
+        req.addHeader("Authorization", "Bearer " + TestAuth.userToken(42L, "USER"));
         try {
             assertTrue(interceptor.preHandle(req, new MockHttpServletResponse(), new Object()));
             user.setStatus(0);
@@ -28,9 +28,14 @@ class AccountStatusInterceptorTest {
             user.setStatus(1);
             assertTrue(interceptor.preHandle(req, new MockHttpServletResponse(), new Object()));
             user.setRole("ADMIN");
-            assertFalse(interceptor.preHandle(req, new MockHttpServletResponse(), new Object()));
+            var staleRole = new MockHttpServletResponse();
+            assertFalse(interceptor.preHandle(req, staleRole, new Object()));
+            assertEquals(401, staleRole.getStatus());
+            assertTrue(staleRole.getContentAsString().contains("\"code\":40101"));
             when(users.findById(42L)).thenReturn(Optional.empty());
-            assertFalse(interceptor.preHandle(req, new MockHttpServletResponse(), new Object()));
+            var missing = new MockHttpServletResponse();
+            assertFalse(interceptor.preHandle(req, missing, new Object()));
+            assertEquals(401, missing.getStatus());
         } finally {
             interceptor.afterCompletion(req, new MockHttpServletResponse(), new Object(), null);
         }

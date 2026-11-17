@@ -2,6 +2,16 @@
 
 本目录是可直接导入微信开发者工具的**纯原生工程**：App/Page + JavaScript + WXML + WXSS + JSON。不使用 uni-app、Vue、Vite，也不需要 npm 安装依赖或生成 dist。
 
+## 双端拆分（2026-11-17）
+
+本目录现为独立 USER 根，保留原 AppID、十三页与原首页/订单/我的三 tabs。骑手入驻、完整工作台及转派已完整复制核对后迁入同级 `rider-miniapp`，本端移除骑手入口及设备定位能力。骑手账号如需消费仍在用户端使用同一平台主体，不在骑手端发布或支付。
+
+新版登录使用 `/auth/miniapps/USER/login` 的认证/身份待选择协议。未绑定必须明确选择关联原平台账号或通过本次真实微信手机号授权创建新账号；“我的 → 关联另一小程序”在本人确认后用新的 wx.login 凭证生成短时一次性码，不自动按手机号合并、不跨端传token。短信登录仅能力接口明确允许才展示，默认隐藏，不假定生产短信真实可用。
+
+401/40101只清凭证、私有UI并隔离owner+后端的草稿/待核实订单/提现编号，同userId重登恢复原orderID与requestId，不重复创建；异账号、显式退出、换服务完整清除。普通403不清会话。下文旧功能说明保留业务细节；涉及原骑手入口、公开手机号入驻及“401清除pending”的历史描述以本节和双端部署说明为准。
+
+共享源仅24个稳定工具、资料/钱包与登录页面文件，由 `miniapp-shared/manifest.json` 明确列出。`node scripts/sync-miniapp-shared.cjs` 同步根内副本，`--check` 只读验证；运行时不跨根require。双根聚合校验为 `node scripts/check-miniapps.cjs`。详细双端边界和发布阻塞见同级 `rider-miniapp/WECHAT_DEPLOYMENT.md`，没有上传、部署或线上迁移。
+
 ## 目录
 
 ```text
@@ -43,22 +53,25 @@ npm run check:release --prefix miniapp
 
 ## 发布任务（简化流程）
 
-- 首页仅两个入口：“跑腿服务”默认进入SEND，填写页选项切换SEND/BUY/ERRAND；另一个为“自定义任务”。旧BUY/ERRAND深链继续有效，切换类型清理不适用的表单、地址与报价，不能覆盖待核实订单。普通用户和骑手账号均可作为发布者发布。订单统一走底部“订单”，地址簿与服务设置集中在“我的”，不重复放在首页。
+- 首页三个入口：“飞毛腿”（合并送件与代办，新送/办单统一 SEND，填写页保留 SEND/BUY 切换）、“滴滴接送”（接送/代驾）及原“自定义任务”（上门/兼职/线上）。旧 BUY 深链有效，ERRAND 深链进入合并的 SEND 表单；历史 ERRAND 订单及 pending 草稿不改编码、不改原支付链路。切换类型清理不适用字段与报价，不能覆盖待核实订单。普通用户和骑手账号均可作为发布者发布。订单统一走底部“订单”，地址簿与服务设置集中在“我的”，不重复放在首页。
 - 填写页选择取送地址后展示联系人摘要，需要时才展开修改。已有默认地址会在空白取件地址处自动带出，送达地址仍需明确选择。
 - 常见物品/事项可点选；重量默认1公斤并明确展示，实际更重请在“更多要求”修改，备注也在该区域。预估距离仍必须手填，不伪造地图测距。
 - BUY 另设必填“预计商品总价”元输入，复用 `wallet.amountFen/fenText` 精确转换为整数 `goodsBudgetFen`（1–100000000分），仅在创建 BUY 时发送。商品款双方另行结算，不计跑腿费、不进入报价/支付/分账；SEND/ERRAND/CUSTOM 清除此字段。报价请求白名单只含类型、距离、重量；支付仅传原订单ID。
 - BUY 草稿恢复预算；旧未创建草稿缺失/无效预算时确认页引导回 BUY 填写，原草稿不被删除。匹配 `owner + savedAt` 的已知ID或未知结果 pending 始终优先：已知只续办原订单，未知先核实，不能因缺预算清除或重新创建。确认、详情、骑手大厅和承接列表独立展示预算；历史 BUY 的 null/缺失预算显示“未记录”，不是0.00。配套 OrderVO、GrabVO、骑手已接单 map 提供 nullable `goodsBudgetFen`。
 - 点击“确认费用，下一步”会保存当前账号草稿、校验手机号和昵称、获取服务端报价并直接进入确认页，不再要求单独计算费用。
 - 确认页一次点击“确认发布 · MOCK 支付”完成创建及模拟支付，不再弹第二次相同确认。网络失败或创建结果未知仍保留原订单保护，不允许覆盖待核实任务。
-- 再次进入同账号、同服务类型的填写页可恢复上一次继续时保存的任务。报价失败、资料未完善、切号或旧异步响应不会替换其他账号/任务的草稿。
+- 草稿按当前账号及跑腿（RUNNER）、普通自定义（CUSTOM）、接送服务（TRANSPORT）三组隔离，使用 `native_draft_groups` 保存未发布编辑内容，`native_draft` 仍是确认/支付的唯一活动草稿。RUNNER 分为 `RUNNER_SEND` / `RUNNER_BUY` 两个子槽，SEND/BUY 往返及从首页 SEND 入口再选 BUY 不丢需求或商品预算；历史 ERRAND 归 SEND 子槽，兼容原 RUNNER 单槽及旧 `native_draft`，不改 pending 原 payload。接送组保留 RIDE/DRIVING 子类与金额输入；退出/切号清除全部组和子槽。组切换不会把同为 CUSTOM 的草稿串用。任何匹配 `owner + savedAt` 的已创建/结果未知 pending 均优先续办：只锁住所属子槽，其他组或 SEND/BUY 另一子槽仍可保存和恢复未发布编辑，但不能替换活动草稿、pending 对象及其 savedAt。支付完成只清理同一身份的草稿，不删其他组、子槽或新任务；旧活动草稿不会反向覆盖较新的分组编辑。报价失败、资料未完善、切号或旧异步响应不会替换其他账号/任务的草稿。
 
 ## 自定义任务与投诉接口
 
 - 自定义任务沿用“填写 → 确认并 MOCK 支付”两步发布，标题1–64字、内容1–1000字。首页明确上门清洁、兼职搬运、线上资料整理示例，自填需求与服务总价；仅现有骑手承接、不承诺专业资质，不发布需专业资格的任务。场景为 `ONLINE`（资料整理/信息录入，无地址）、默认 `ONSITE`（日常清洁/物品整理，一个服务地点）、`PART_TIME`（搬运协助/临时帮手，一个工作地点及必填时间）。联系人及11位电话始终必填；地点从已保存地址下拉选择或新增，自动带出联系人电话且可改；时间为最多100字人类说明，上门可选。切换场景清空地点和时间，ONLINE不提交地址或时间。CUSTOM无重量、距离、取送两地址或配送步骤。
-- 标签来自 `GET /api/v1/task-tags` 的启用记录（`id,name,enabled,sort,version,taskModes`），仅显示 `taskModes` 为1–3项无重复数组、所有分类均为 `ONSITE/PART_TIME/ONLINE` 且包含当前场景的标签；旧空/缺失分类不按名称猜测。单个标签可配多个场景，同场景最多多选5个，也可不选。切换场景、恢复草稿后的读取与刷新均清理不匹配、移除或停用的选择，跨场景适用标签保留；发布前仍校验当前场景。后台配置是唯一来源；加载失败显示错误与重试，不生成演示标签或静默当作空列表。草稿保存任务标题、内容与已选标签，切号响应不得覆盖当前账号数据。
+- 标签来自 `GET /api/v1/task-tags` 的启用记录（`id,name,enabled,sort,version,taskModes`），仅显示 `taskModes` 为1–5项无重复数组、所有分类均为 `ONSITE/PART_TIME/ONLINE/RIDE/DRIVING` 且包含当前普通场景的标签；旧空/缺失分类不按名称猜测。单个标签可配多个场景，同场景最多多选5个，也可不选。切换场景、恢复草稿后的读取与刷新均清理不匹配、移除或停用的选择，跨场景适用标签保留；发布前仍校验当前场景。后台配置是唯一来源；加载失败显示错误与重试，不生成演示标签或静默当作空列表。草稿保存任务标题、内容与已选标签，切号响应不得覆盖当前账号数据。
 - 总价由用户填写 **0.01–1000000元，最多两位小数**，复用钱包十进制字符串精确元分转换，不使用浮点舍入。用户价是总额，不是骑手实拿。`POST /api/v1/custom-tasks/quote {priceFen}` 返回 `{totalFen,items,riderShareFen,platformShareFen}`；确认页展示发布总价/骑手预计所得/平台分成，校验返回总价相等及两项分成非负整数且合计一致。默认70%/30%只是规则说明，实际数值必须来自后端，不补算缺失分成。普通报价仍调用 `/orders/quote`。
 - `POST /api/v1/custom-tasks {title,content,tagIds,taskMode,priceFen,contact,phone,locationAddress,serviceTime}`，无 `order` 嵌套或配送字段。内部保留 `taskTitle/taskContent/taskTagIds`，新增 `taskMode/taskPriceFen/contact/phone/locationAddress/serviceTime` 在API边界映射；编辑态金额为独立data.taskPrice字符串，tag IDs为排序逗号串，API才转数字数组。返回含订单ID的 `OrderVO`，继续复用原支付/确认接口；普通创建仍调用 `/orders`。旧CUSTOM配送草稿提示重新填写，已创建ID和未知结果保护不能被覆盖，已创建订单继续原确认支付流程。
 - 仅自定义详情读取 `GET /api/v1/orders/{id}/custom-task`，返回 `TaskVO` 或 `null`，在旧字段上增加 `taskMode,priceFen,contact,phone,locationAddress,serviceTime,riderShareFen,platformShareFen`。`OrderVO.taskMode` 普通及旧CUSTOM为 `DELIVERY`，缺字段也兼容DELIVERY；非配送列表/详情展示线上任务或单服务地点、联系人与时间，隐藏取送、取件码及地图。身份和来源等内部字段不额外展示；接口失败须可重试，不能伪造任务内容。
+- 滴滴接送入口使用明确路由 `pages/order/create?type=CUSTOM&service=transport`，仅显示 RIDE（接送）/DRIVING（代驾）切换，提交始终是 `orderType=CUSTOM`，入口别名不作为订单类型。两类只填写一个起始地址（地址簿选择、变更/删除会使报价失效）、可修改的联系人及11位电话、必填服务时间说明（最多100字）、0.01–1000000元服务总价和选填备注（最多1000字）。不要求标题或标签，不读取标签接口；请求 `title:''`、`content:''`（有备注时为备注）、`tagIds:[]` 合法，固定标题“接送服务/代驾服务”及空备注默认说明由后端生成。API 按模式校验，普通三场景仍严格要求标题、内容和标签读取成功；不携带终点、距离、重量等配送字段。
+- 起点、联系人电话、价格、时间、备注及服务分类变化均使报价失效；确认页仍核对服务器总额及分账。接送/代驾显示明确类型、起始地址、真实时间和备注，不出现标题/标签负担。用户列表的既有 OrderVO 没有时间摘要时只引导详情，不虚构时间；详情读取原 custom-task 接口。沿用 C 端 OrderVO 19字段及原 TransferVO 隐私契约，不新增逐行详情请求。大厅只展示原公开摘要，不展示电话、联系人或完整备注；转派只识别类型，不泄露地址/时间等私有详情。
+- 接送、代驾必须分别由后台授权，普通 RIDER 默认不可接；大厅过滤、抢单、转派接受及首次开始服务的能力校验由后端执行，小程序不根据车辆、RIDER角色或本地标志推断权限。撤权后新接单/开始应由后端拒绝，已开始仍可完成；错误不乐观推进状态。平台授权不是驾驶资质审核，未接第三方滴滴接口、真实支付或预约派单/时间冲突调度。
 - 仅现有RIDER从工作台承接，不增加普通用户任务大厅。`GET /grab/list` 追加 `title,taskMode,locationAddress,serviceTime`，不展示联系方式；`/rider/orders` 追加 `orderType,taskMode,title,serviceTime,locationAddress`，`rewardFen`仍表示骑手预计所得。承接订单可点击“查看任务详情”查看有权访问的完整要求与联系方式，`owner:false`不展示发布者支付、取消、确认或评价按钮。
 - 非DELIVERY CUSTOM履约为 `ACCEPTED → POST /orders/{id}/service-start → PICKING服务中 → POST /orders/{id}/service-complete → DELIVERED待用户确认 → 用户确认完成`。无取件码、不调用pickup/depart/deliver或定位；grab返回空pickupCode不展示核对取件码弹窗。普通及旧DELIVERY订单继续原配送工作流。
 - 投诉由订单发布者提出，不是骑手承运操作。订单状态为 `ACCEPTED/PICKING/DELIVERING/DELIVERED/FINISHED` 时可申请，提交保留 `POST /api/v1/complaints {orderId,type,description}`，描述去空白后为1–255字，返回 `ticketId,sla`。角色并不等同归属：骑手也可能是发布者。优先使用 `OrderVO.owner` 判断当前账号是否发布者；旧接口缺失该字段时，自定义单使用 TaskVO.userId 在页面私有内存判断，普通单仅对 USER 兼容开放、仍以后端403拒绝为准。不增加发布者身份展示。

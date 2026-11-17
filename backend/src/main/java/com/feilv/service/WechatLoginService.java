@@ -6,7 +6,6 @@ import com.feilv.domain.WechatIdentity;
 import com.feilv.dto.ApiDtos.LoginVO;
 import com.feilv.repository.UserRepository;
 import com.feilv.repository.WechatIdentityRepository;
-import com.feilv.util.JwtUtil;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -18,13 +17,15 @@ public class WechatLoginService {
     private final WechatIdentityRepository identities;
     private final UserRepository users;
     private final TransactionTemplate transaction;
+    private final AuthTokenService tokens;
 
     public WechatLoginService(WechatSessionClient client, WechatIdentityRepository identities,
-                               UserRepository users, PlatformTransactionManager manager) {
+                               UserRepository users, PlatformTransactionManager manager, AuthTokenService tokens) {
         this.client = client;
         this.identities = identities;
         this.users = users;
         this.transaction = new TransactionTemplate(manager);
+        this.tokens = tokens;
     }
 
     public LoginVO login(String code, boolean agreed) {
@@ -37,7 +38,7 @@ public class WechatLoginService {
             return transaction.execute(status -> {
                 WechatIdentity identity = identities.findByAppIdAndOpenid(session.appId(), session.openid())
                         .orElseThrow(() -> BizException.of(409, "微信登录冲突，请重试"));
-                return tokenFor(identity.getUserId());
+                return tokenFor(identity.getUserId(), session.appId());
             });
         }
     }
@@ -60,16 +61,16 @@ public class WechatLoginService {
             identity.setUnionid(session.unionid());
             identities.save(identity);
         }
-        return tokenFor(identity.getUserId());
+        return tokenFor(identity.getUserId(), session.appId());
     }
 
-    private LoginVO tokenFor(long userId) {
+    private LoginVO tokenFor(long userId, String appId) {
         User user = users.findById(userId).orElseThrow(() -> BizException.of(401, "微信关联账号不存在"));
         if (user.getStatus() != 1) throw BizException.of(403, "账户已冻结，请联系客服");
         // 微信登录仅面向C端，不能作为管理员登录的替代通道。
         if (!"USER".equals(user.getRole()) && !"RIDER".equals(user.getRole())) {
             throw BizException.of(403, "此账号不能使用小程序登录");
         }
-        return new LoginVO(JwtUtil.create(user.getId(), user.getRole()), user.getId(), user.getRole(), user.getNickname());
+        return tokens.login(user, "USER", appId);
     }
 }

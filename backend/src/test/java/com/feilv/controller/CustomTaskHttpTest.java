@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties = {"spring.datasource.url=jdbc:h2:mem:custom-task-http;DB_CLOSE_DELAY=-1", "spring.datasource.username=sa", "spring.datasource.password=",
+@SpringBootTest(properties = {TestAuth.TEST_SECRET_PROPERTY,"spring.datasource.url=jdbc:h2:mem:custom-task-http;DB_CLOSE_DELAY=-1", "spring.datasource.username=sa", "spring.datasource.password=",
         "spring.datasource.driver-class-name=org.h2.Driver", "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect", "spring.jpa.hibernate.ddl-auto=create-drop", "spring.sql.init.mode=never"})
 @AutoConfigureMockMvc
 @Transactional
@@ -47,7 +47,7 @@ class CustomTaskHttpTest {
     private User user(String role, String mobile) {
         User user = new User(); user.setRole(role); user.setMobile(mobile); user.setNickname("任务用户"); return users.saveAndFlush(user);
     }
-    private String token(User user) { return "Bearer " + com.feilv.util.JwtUtil.create(user.getId(), user.getRole()); }
+    private String token(User user) { return TestAuth.bearer(user); }
     private User admin() {
         User user = user("ADMIN", "admin-task-test");
         AdminAccount account = new AdminAccount(); account.setUserId(user.getId()); account.setUsername("task-admin"); account.setPasswordHash("test-hash"); accounts.saveAndFlush(account);
@@ -62,7 +62,7 @@ class CustomTaskHttpTest {
     private Map<String, Object> request(List<Long> ids) { return new LinkedHashMap<>(Map.of("title", "自定义任务标题", "content", "任务详细说明", "tagIds", ids,
             "taskMode", "ONLINE", "priceFen", 12345, "contact", "任务发布人", "phone", "13800138000")); }
     private JsonNode postBody(String path, User user, Object body) throws Exception {
-        return json.readTree(mvc.perform(post(path).header("Authorization", token(user)).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body))).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+        return json.readTree(mvc.perform(post(path).header("Authorization", postToken(path, user)).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body))).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
     }
     private TaskTag tag(String name) { TaskTag tag = new TaskTag(); tag.setName(name); tag.setTaskModes("ONLINE"); return tags.saveAndFlush(tag); }
 
@@ -133,14 +133,14 @@ class CustomTaskHttpTest {
     @Test void tagCreateAndUpdateRequireExplicitValidModesEvenForLegacyHttpBodies() throws Exception {
         User admin = admin();
         var created = postBody("/api/v1/admin/task-tags", admin, Map.of("name", "多场景标签", "sort", 1, "enabled", true,
-                "taskModes", List.of("ONLINE", "ONSITE", "PART_TIME")));
+                "taskModes", List.of("DRIVING", "ONLINE", "RIDE", "ONSITE", "PART_TIME")));
         assertEquals(0, created.path("code").asInt());
         JsonNode label = created.path("data"); long id = label.path("id").asLong(); long version = label.path("version").asLong();
-        assertEquals(json.valueToTree(List.of("ONSITE", "PART_TIME", "ONLINE")), label.path("taskModes"));
-        assertEquals("ONSITE,PART_TIME,ONLINE", tags.findById(id).orElseThrow().getTaskModes());
+        assertEquals(json.valueToTree(List.of("ONSITE", "PART_TIME", "ONLINE", "RIDE", "DRIVING")), label.path("taskModes"));
+        assertEquals("ONSITE,PART_TIME,ONLINE,RIDE,DRIVING", tags.findById(id).orElseThrow().getTaskModes());
         long count = tags.count();
         for (String modes : List.of("", "null", "[]", "[null]", "[\"ONLINE\",null]", "[\"ONLINE\",\"ONLINE\"]",
-                "[\"ONSITE\",\"PART_TIME\",\"ONLINE\",\"ONSITE\"]", "[\"DELIVERY\"]", "[\"online\"]", "[\" ONLINE\"]",
+                "[\"ONSITE\",\"PART_TIME\",\"ONLINE\",\"RIDE\",\"DRIVING\",\"ONSITE\"]", "[\"DELIVERY\"]", "[\"online\"]", "[\" ONLINE\"]",
                 "\"ONLINE\"", "{}", "1", "[true]")) {
             String body = "{\"name\":\"禁止未分类覆盖\",\"enabled\":false,\"sort\":2,\"version\":" + version
                     + (modes.isEmpty() ? "" : ",\"taskModes\":" + modes) + "}";
@@ -152,7 +152,7 @@ class CustomTaskHttpTest {
         assertEquals(count, tags.count());
         TaskTag unchanged = tags.findById(id).orElseThrow();
         assertEquals("多场景标签", unchanged.getName()); assertTrue(unchanged.isEnabled()); assertEquals(version, unchanged.getVersion());
-        assertEquals("ONSITE,PART_TIME,ONLINE", unchanged.getTaskModes());
+        assertEquals("ONSITE,PART_TIME,ONLINE,RIDE,DRIVING", unchanged.getTaskModes());
         mvc.perform(put("/api/v1/admin/task-tags/" + id).header("Authorization", token(admin)).contentType(MediaType.APPLICATION_JSON)
                         .content(json.writeValueAsString(Map.of("name", "已重分类", "sort", 1, "enabled", true, "version", version, "taskModes", List.of("PART_TIME")))))
                 .andExpect(jsonPath("$.code").value(0)).andExpect(jsonPath("$.data.taskModes[0]").value("PART_TIME"));
@@ -270,6 +270,127 @@ class CustomTaskHttpTest {
         org.mockito.Mockito.verifyNoInteractions(pricing);
     }
 
+    private Map<String, Object> rideRequest(String mode) {
+        var body = request(List.of()); body.remove("title"); body.remove("content");
+        body.put("taskMode", mode); body.put("locationAddress", "  起始地点  "); body.put("serviceTime", "  今天18:30  ");
+        return body;
+    }
+
+    @Test void rideAndDrivingPublishThroughBothRoutesWithFixedTitlesOptionalNotesAndEmptyTags() throws Exception {
+        User user = user("USER", "13800138114"), admin = admin();
+        for (String mode : List.of("RIDE", "DRIVING")) {
+            String title = "RIDE".equals(mode) ? "接送服务" : "代驾服务";
+            for (String path : List.of("/api/v1/custom-tasks", "/api/v1/admin/custom-tasks")) {
+                for (String note : Arrays.asList(null, "  \n\t ", "  请提前联系  ")) {
+                    var body = rideRequest(mode); body.put("title", "客户端不能改变服务分类"); body.put("content", note);
+                    if (note == null) { body.remove("title"); body.remove("content"); body.remove("tagIds"); }
+                    else if (note.isBlank()) body.put("tagIds", null);
+                    if (path.contains("/admin/")) body.put("userId", user.getId());
+                    var created = postBody(path, path.contains("/admin/") ? admin : user, body);
+                    assertEquals(0, created.path("code").asInt(), created.toString());
+                    var data = created.path("data"); long id = data.path(path.contains("/admin/") ? "orderId" : "id").asLong();
+                    var task = tasks.findByOrderId(id).orElseThrow(); var order = orders.findById(id).orElseThrow();
+                    assertEquals(mode, data.path("taskMode").asText()); assertEquals(mode, task.getTaskMode());
+                    assertEquals(title, task.getTitle()); assertEquals(title, order.getGoodsDesc());
+                    assertEquals(note == null || note.isBlank() ? title + "，请按约定时间到起始地点提供服务。" : note.strip(), task.getContent());
+                    assertEquals("起始地点", task.getLocationAddress()); assertEquals("今天18:30", task.getServiceTime());
+                    assertEquals("CUSTOM", order.getOrderType()); assertEquals("起始地点", order.getFromAddress()); assertEquals(order.getFromAddress(), order.getToAddress());
+                    assertNull(order.getFromLng()); assertNull(order.getFromLat()); assertNull(order.getToLng()); assertNull(order.getToLat());
+                    assertEquals(0, order.getDistanceM()); assertEquals(1, order.getWeightKg()); assertEquals("", order.getPickupCode());
+                    assertEquals(12345, order.getEstimateFee()); assertEquals(com.feilv.enums.OrderStatus.WAIT_PAY, order.getStatus());
+                    assertTrue(snapshots.findByTaskIdInOrderByIdAsc(List.of(task.getId())).isEmpty());
+                    var detail = getBody("/api/v1/orders/" + id + "/custom-task", user).path("data");
+                    assertEquals(title, detail.path("title").asText()); assertEquals(mode, detail.path("taskMode").asText());
+                    assertEquals("今天18:30", detail.path("serviceTime").asText()); assertEquals(8641, detail.path("riderShareFen").asInt());
+                    assertEquals(3704, detail.path("platformShareFen").asInt()); assertTrue(detail.path("tags").isEmpty());
+                }
+            }
+        }
+        assertEquals(0, payments.count()); org.mockito.Mockito.verifyNoInteractions(pricing);
+    }
+
+    @Test void rideAndDrivingRequireAddressTimeContactAndPhoneAndRejectTagsAndDeliveryFieldsBeforeWrites() throws Exception {
+        User user = user("USER", "13800138115"), admin = admin();
+        TaskTag tag = tag("不可用于接送"); tag.setTaskModes("RIDE,DRIVING"); tags.saveAndFlush(tag);
+        long orderBefore = orders.count(), taskBefore = tasks.count(), feeBefore = fees.count(), snapshotBefore = snapshots.count();
+        for (String mode : List.of("RIDE", "DRIVING")) {
+            for (String path : List.of("/api/v1/custom-tasks", "/api/v1/admin/custom-tasks")) {
+                var invalid = new ArrayList<Map<String, Object>>();
+                for (String field : List.of("locationAddress", "serviceTime", "contact", "phone")) {
+                    for (Object value : Arrays.asList(null, "", " \n\t ", "a\rb")) {
+                        var body = rideRequest(mode); body.put(field, value); invalid.add(body);
+                    }
+                    var body = rideRequest(mode); body.remove(field); invalid.add(body);
+                }
+                for (String field : List.of("locationAddress", "serviceTime", "contact", "content")) {
+                    int max = Map.of("locationAddress", 255, "serviceTime", 100, "contact", 32, "content", 1000).get(field);
+                    var body = rideRequest(mode); body.put(field, "字".repeat(max + 1)); invalid.add(body);
+                }
+                for (String phone : List.of("12800138000", "1380013800", "138001380001", "+8613800138000", "138-0013-8000")) {
+                    var body = rideRequest(mode); body.put("phone", phone); invalid.add(body);
+                }
+                for (String field : List.of("toAddress", "toContact", "toPhone", "toLng", "toLat", "distanceM", "weightKg", "order", "orderType")) {
+                    var body = rideRequest(mode); body.put(field, "不允许配送参数"); invalid.add(body);
+                }
+                var tagged = rideRequest(mode); tagged.put("tagIds", List.of(tag.getId())); invalid.add(tagged);
+                for (var body : invalid) {
+                    if (path.contains("/admin/")) body.put("userId", user.getId());
+                    assertEquals(400, postBody(path, path.contains("/admin/") ? admin : user, body).path("code").asInt(), body.toString());
+                }
+            }
+        }
+        assertEquals(orderBefore, orders.count()); assertEquals(taskBefore, tasks.count()); assertEquals(feeBefore, fees.count()); assertEquals(snapshotBefore, snapshots.count());
+        org.mockito.Mockito.verifyNoInteractions(pricing);
+    }
+
+    @Test void rideAndDrivingEnforceStrictIntegerFenAndTextBoundariesOnBothRoutes() throws Exception {
+        User user = user("USER", "13800138116"), admin = admin();
+        for (String mode : List.of("RIDE", "DRIVING")) {
+            for (String path : List.of("/api/v1/custom-tasks", "/api/v1/admin/custom-tasks")) {
+                for (String value : List.of("0", "-1", "1.0", "1.5", "1e2", "\"1\"", "true", "null", "100000001", "2147483648", "[]", "{}")) {
+                    var body = rideRequest(mode); body.remove("priceFen");
+                    if (path.contains("/admin/")) body.put("userId", user.getId());
+                    String text = json.writeValueAsString(body);
+                    text = text.substring(0, text.length() - 1) + ",\"priceFen\":" + value + "}";
+                    mvc.perform(post(path).header("Authorization", token(path.contains("/admin/") ? admin : user)).contentType(MediaType.APPLICATION_JSON).content(text))
+                            .andExpect(jsonPath("$.code").value(400));
+                }
+                var missing = rideRequest(mode); missing.remove("priceFen");
+                if (path.contains("/admin/")) missing.put("userId", user.getId());
+                assertEquals(400, postBody(path, path.contains("/admin/") ? admin : user, missing).path("code").asInt());
+                for (int price : List.of(1, 100000000)) {
+                    var body = rideRequest(mode); body.put("priceFen", price); body.put("locationAddress", "址".repeat(255));
+                    body.put("serviceTime", "时".repeat(100)); body.put("contact", "人".repeat(32)); body.put("content", "注".repeat(1000));
+                    if (path.contains("/admin/")) body.put("userId", user.getId());
+                    var created = postBody(path, path.contains("/admin/") ? admin : user, body);
+                    assertEquals(0, created.path("code").asInt(), created.toString());
+                    long id = created.path("data").path(path.contains("/admin/") ? "orderId" : "id").asLong();
+                    assertEquals(price, orders.findById(id).orElseThrow().getRealFee());
+                    assertEquals(1000, tasks.findByOrderId(id).orElseThrow().getContent().length());
+                }
+            }
+        }
+    }
+
+    @Test void originalThreeModesStillRequireTitleAndContentOnBothPublicationRoutes() throws Exception {
+        User user = user("USER", "13800138117"), admin = admin();
+        for (String mode : List.of("ONLINE", "ONSITE", "PART_TIME")) {
+            for (String path : List.of("/api/v1/custom-tasks", "/api/v1/admin/custom-tasks")) {
+                for (String field : List.of("title", "content")) {
+                    for (String value : Arrays.asList(null, "", " \n\t ")) {
+                        var body = rideRequest(mode); body.put("title", "任务标题"); body.put("content", "完整需求"); body.put(field, value);
+                        if (path.contains("/admin/")) body.put("userId", user.getId());
+                        assertEquals(400, postBody(path, path.contains("/admin/") ? admin : user, body).path("code").asInt(), mode + "/" + field);
+                    }
+                    var body = rideRequest(mode); body.put("title", "任务标题"); body.put("content", "完整需求"); body.remove(field);
+                    if (path.contains("/admin/")) body.put("userId", user.getId());
+                    assertEquals(400, postBody(path, path.contains("/admin/") ? admin : user, body).path("code").asInt());
+                }
+            }
+        }
+        assertEquals(0, orders.count()); assertEquals(0, tasks.count()); assertEquals(0, fees.count());
+    }
+
     private User rider(String mobile) {
         User user = user("RIDER", mobile); Rider rider = new Rider(); rider.setUserId(user.getId()); rider.setName("现役骑手"); rider.setOnlineStatus(1); riders.saveAndFlush(rider); return user;
     }
@@ -280,12 +401,21 @@ class CustomTaskHttpTest {
         var result = postBody("/api/v1/custom-tasks", user, body);
         assertEquals(0, result.path("code").asInt(), result.toString()); return result.path("data").path("id").asLong();
     }
+    private String postToken(String path, User user) {
+        boolean riderOperation = path.startsWith("/api/v1/grab/") || path.startsWith("/api/v1/rider/")
+                || path.equals("/api/v1/track/report")
+                || path.matches("^/api/v1/orders/[^/]+/(pickup|depart|deliver|service-start|service-complete)$");
+        return riderOperation ? TestAuth.riderBearer(user) : token(user);
+    }
     private void action(User user, long id, String action, int code) throws Exception {
-        mvc.perform(post("/api/v1/orders/" + id + "/" + action).header("Authorization", token(user)))
+        String path = "/api/v1/orders/" + id + "/" + action;
+        mvc.perform(post(path).header("Authorization", postToken(path, user)))
                 .andExpect(jsonPath("$.code").value(code));
     }
     private JsonNode getBody(String path, User user) throws Exception {
-        return json.readTree(mvc.perform(get(path).header("Authorization", token(user))).andReturn().getResponse().getContentAsByteArray());
+        String authorization = path.startsWith("/api/v1/rider/") || path.equals("/api/v1/grab/list")
+                ? TestAuth.riderBearer(user) : token(user);
+        return json.readTree(mvc.perform(get(path).header("Authorization", authorization)).andReturn().getResponse().getContentAsByteArray());
     }
 
     @Test void paidServiceLifecycleKeepsPrivateDetailsAndSettlesOriginalShareExactlyOnceForEveryMode() throws Exception {
@@ -303,16 +433,16 @@ class CustomTaskHttpTest {
             assertEquals(70000000, hall.get(0).path("rewardFen").asInt());
             assertEquals(403, getBody("/api/v1/orders/" + id + "/custom-task", other).path("code").asInt());
             var grabbed = postBody("/api/v1/grab/" + id, rider, Map.of()); assertEquals(0, grabbed.path("code").asInt()); assertEquals("", grabbed.path("data").path("pickupCode").asText());
-            var detail = getBody("/api/v1/orders/" + id + "/custom-task", rider).path("data");
+            var detail = getBody("/api/v1/rider/orders/" + id + "/custom-task", rider).path("data");
             assertEquals("任务详细说明", detail.path("content").asText()); assertEquals("13800138000", detail.path("phone").asText());
-            assertEquals(mode, getBody("/api/v1/orders/" + id, rider).path("data").path("taskMode").asText());
+            assertEquals(mode, getBody("/api/v1/rider/orders/" + id, rider).path("data").path("taskMode").asText());
             action(rider, id, "service-complete", 4090);
             for (String action : List.of("pickup", "depart", "deliver")) action(rider, id, action, 4090);
             action(other, id, "service-start", 403);
             action(publisher, id, "confirm", 4090);
             action(rider, id, "service-start", 0); action(rider, id, "service-start", 0);
             assertEquals(com.feilv.enums.OrderStatus.PICKING, orders.findById(id).orElseThrow().getStatus());
-            assertEquals("服务中", getBody("/api/v1/orders/" + id, rider).path("data").path("statusLabel").asText());
+            assertEquals("服务中", getBody("/api/v1/rider/orders/" + id, rider).path("data").path("statusLabel").asText());
             var track = postBody("/api/v1/track/report", rider, Map.of("orderId", id, "lng", 100, "lat", 20)); assertEquals(4090, track.path("code").asInt());
             assertEquals(4090, getBody("/api/v1/orders/" + id + "/track", publisher).path("code").asInt());
             assertTrue(tracks.findTop50ByOrderIdOrderByIdDesc(id).isEmpty());
@@ -329,7 +459,7 @@ class CustomTaskHttpTest {
                 var rows = getBody("/api/v1/rider/orders", rider).path("data").path("content");
                 var row = java.util.stream.StreamSupport.stream(rows.spliterator(), false).filter(r -> r.path("id").asLong() == id).findFirst().orElseThrow();
                 assertEquals(70000000, row.path("rewardFen").asInt()); assertEquals("CUSTOM", row.path("orderType").asText()); assertEquals(mode, row.path("taskMode").asText());
-                assertEquals(70000000, getBody("/api/v1/orders/" + id + "/custom-task", rider).path("data").path("riderShareFen").asInt());
+                assertEquals(70000000, getBody("/api/v1/rider/orders/" + id + "/custom-task", rider).path("data").path("riderShareFen").asInt());
             } finally { org.springframework.test.util.ReflectionTestUtils.setField(orderService, "riderPercent", 70); }
             action(publisher, id, "confirm", 0); action(publisher, id, "confirm", 0); action(rider, id, "service-complete", 0);
             assertEquals(1, settlements.findAll().stream().filter(s -> s.getOrderId().equals(id)).count());

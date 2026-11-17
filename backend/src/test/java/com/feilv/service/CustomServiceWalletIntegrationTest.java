@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** 新用户定价服务从发布到MOCK支付/骑手履约/钱包和投诉的实际集成，不扫描历史订单。 */
-@SpringBootTest(properties = {"spring.datasource.url=jdbc:h2:mem:priced-service-wallet;DB_CLOSE_DELAY=-1", "spring.datasource.username=sa", "spring.datasource.password=",
+@SpringBootTest(properties = {com.feilv.controller.TestAuth.TEST_SECRET_PROPERTY,"spring.datasource.url=jdbc:h2:mem:priced-service-wallet;DB_CLOSE_DELAY=-1", "spring.datasource.username=sa", "spring.datasource.password=",
         "spring.datasource.driver-class-name=org.h2.Driver", "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect", "spring.jpa.hibernate.ddl-auto=create-drop", "spring.sql.init.mode=never"})
 class CustomServiceWalletIntegrationTest {
     @Autowired CustomTaskService tasks;

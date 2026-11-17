@@ -30,7 +30,7 @@ class WechatLoginServiceTest {
         when(client.exchange("valid-code")).thenReturn(new WechatSessionClient.Session("app", "verified-openid", null));
         user = new User(); user.setId(42L); user.setNickname("微信用户"); user.setStatus(1); user.setRole("USER");
         when(users.findById(42L)).thenReturn(Optional.of(user));
-        service = new WechatLoginService(client, identities, users, transactions);
+        service = new WechatLoginService(client, identities, users, transactions, com.feilv.controller.TestAuth.tokens());
     }
 
     @Test
@@ -51,7 +51,7 @@ class WechatLoginServiceTest {
         });
         var result = service.login("valid-code", true);
         assertEquals(42L, result.userId());
-        assertEquals("USER", JwtUtil.parse(result.token()).role);
+        assertEquals("USER", com.feilv.controller.TestAuth.tokens().parse(result.token()).role);
         verify(identities).saveAndFlush(argThat(identity -> "verified-openid".equals(identity.getOpenid()) && identity.getUserId() == 42L));
     }
 
@@ -70,7 +70,10 @@ class WechatLoginServiceTest {
         user.setRole("RIDER");
         var result = service.login("valid-code", true);
         assertEquals("RIDER", result.role());
-        assertEquals("RIDER", JwtUtil.parse(result.token()).role);
+        var claims = com.feilv.controller.TestAuth.tokens().parse(result.token());
+        assertEquals("RIDER", claims.role);
+        assertEquals("USER", claims.aud, "legacy WeChat login remains the consumer application even for a rider account");
+        assertEquals("app", claims.appId);
         verify(users, never()).saveAndFlush(any());
     }
 

@@ -28,7 +28,8 @@ class AdminMenuRetirementTest {
     private final AdminRoleMenuRepository roleMenus = mock(AdminRoleMenuRepository.class);
     private final AuditService audit = mock(AuditService.class);
     private final WechatConfigAccess configAccess = mock(WechatConfigAccess.class);
-    private final UserService userService = new UserService(users, riders, messages, accounts, roles, menus, userRoles, roleMenus);
+    private final UserService userService = new UserService(users, riders, messages, accounts, roles, menus, userRoles, roleMenus,
+            com.feilv.controller.TestAuth.tokens(), mock(DemoAuthPolicy.class), mock(WechatConfigService.class));
     private final AdminMenuAccess access = new AdminMenuAccess(users, accounts, userRoles, roles, roleMenus, menus);
     private final SystemAdminController system = new SystemAdminController(menus, roles, accounts, userRoles, roleMenus, users, audit, configAccess);
     private AdminRole role;

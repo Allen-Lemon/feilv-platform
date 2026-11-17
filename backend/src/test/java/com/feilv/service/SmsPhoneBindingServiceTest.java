@@ -209,7 +209,8 @@ class SmsPhoneBindingServiceTest {
     @Test
     void loginAndBindingCodesArePurposeIsolatedInBothDirections() {
         var loginMessages = mock(MessageService.class);
-        var login = new UserService(users, null, loginMessages, null, null, null, null, null);
+        var login = new UserService(users, mock(com.feilv.repository.RiderRepository.class), loginMessages, null, null, null, null, null,
+                com.feilv.controller.TestAuth.tokens(), mock(DemoAuthPolicy.class), mock(WechatConfigService.class));
         String loginCode = login.sendSmsCode(MOBILE);
         assertError(4010, () -> service.bindPhone(42L, MOBILE, loginCode));
         // 换一个号码，旧登录域从未收到该号码的验证码。
@@ -383,7 +384,8 @@ class SmsPhoneBindingServiceTest {
         service.sendCode(42L, MOBILE);
         user.setMobile(OTHER_MOBILE);
         assertError(4010, () -> service.changePhone(42L, MOBILE, CODE));
-        var login = new UserService(users, null, mock(MessageService.class), null, null, null, null, null);
+        var login = new UserService(users, mock(com.feilv.repository.RiderRepository.class), mock(MessageService.class), null, null, null, null, null,
+                com.feilv.controller.TestAuth.tokens(), mock(DemoAuthPolicy.class), mock(WechatConfigService.class));
         String loginCode = login.sendSmsCode(MOBILE);
         assertError(4010, () -> service.changePhone(42L, MOBILE, loginCode));
         now = now.plusSeconds(60);

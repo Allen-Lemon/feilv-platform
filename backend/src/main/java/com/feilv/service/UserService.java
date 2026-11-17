@@ -14,7 +14,6 @@ import com.feilv.repository.AdminRoleRepository;
 import com.feilv.repository.AdminUserRoleRepository;
 import com.feilv.repository.RiderRepository;
 import com.feilv.repository.UserRepository;
-import com.feilv.util.JwtUtil;
 import com.feilv.util.PasswordUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,6 +47,9 @@ public class UserService {
     private final AdminMenuRepository adminMenuRepository;
     private final AdminUserRoleRepository adminUserRoleRepository;
     private final AdminRoleMenuRepository adminRoleMenuRepository;
+    private final AuthTokenService tokens;
+    private final DemoAuthPolicy demoAuth;
+    private final WechatConfigService settings;
 
     /** mobile -> 验证码与过期时间 */
     private final Map<String, CodeEntry> codeStore = new ConcurrentHashMap<>();
@@ -64,7 +66,12 @@ public class UserService {
 
     /** 发送验证码：60秒冷却、60秒有效期 */
     public String sendSmsCode(String mobile) {
+        demoAuth.requireEnabled();
         BanWordService.checkMobile(mobile);
+        if (codeStore.size() >= 4096) {
+            codeStore.entrySet().removeIf(entry -> LocalDateTime.now().isAfter(entry.getValue().expireAt()));
+            if (codeStore.size() >= 4096) throw BizException.of(429, "操作频繁，请稍后再试");
+        }
         long now = System.currentTimeMillis();
         String today = java.time.LocalDate.now().toString();
         DailyCounter current = dailySendCounts.get(mobile);
@@ -75,15 +82,15 @@ public class UserService {
         if (last != null && now - last < SEND_COOLDOWN_SEC * 1000) {
             throw BizException.of(4291, "操作频繁，请60秒后再试");
         }
-        String code = String.valueOf(100000 + (int) (Math.random() * 900000));
+        String code = String.valueOf(100000 + new java.security.SecureRandom().nextInt(900000));
         codeStore.put(mobile, new CodeEntry(code, LocalDateTime.now().plusSeconds(CODE_TTL_SEC)));
         sendCooling.put(mobile, now);
         DailyCounter previous = dailySendCounts.get(mobile);
         dailySendCounts.put(mobile, previous == null || !today.equals(previous.day())
                 ? new DailyCounter(today, 1) : new DailyCounter(today, previous.count() + 1));
         codeErrorCounts.remove(mobile);
-        messageService.sendSms(mobile, "【飞毛腿】验证码：" + code + "，有效期60秒。");
-        return code; // 演示模式回传，生产环境改为下发短信并返回空
+        // Demo only: do not route through the logging SMS stub or log credentials.
+        return code;
     }
 
     private void verifyCode(String mobile, String code) {
@@ -107,6 +114,7 @@ public class UserService {
     /** 手机号登录：未注册自动注册（对应详细设计4.1.1） */
     @Transactional
     public LoginVO login(String mobile, String code) {
+        demoAuth.requireEnabled();
         BanWordService.checkMobile(mobile);
         verifyCode(mobile, code);
         User user = userRepository.findByMobile(mobile)
@@ -117,34 +125,19 @@ public class UserService {
                     u.setRole("USER");
                     return userRepository.save(u);
                 });
-        if (user.getStatus() == 0) throw BizException.of(4030, "账户已冻结，请联系客服");
-        return new LoginVO(JwtUtil.create(user.getId(), user.getRole()), user.getId(), user.getRole(), user.getNickname());
+        if (user.getStatus() != 1 || !("USER".equals(user.getRole()) || "RIDER".equals(user.getRole()))) {
+            throw BizException.of(403, "此账户不能使用小程序登录");
+        }
+        if (riderRepository.findByUserId(user.getId()).filter(r -> !"ACTIVE".equals(r.getStatus())).isPresent()) {
+            throw BizException.of(403, "骑手账户已冻结，请联系客服");
+        }
+        return tokens.login(user, "USER", settings.effectiveLogin("USER").appId());
     }
 
     /** 骑手注册（对应详细设计5.1）：验证码校验 → 创建骑手档案（演示即时审核通过） */
     @Transactional
     public LoginVO registerRider(String mobile, String name, String code, String plateNo) {
-        BanWordService.checkMobile(mobile);
-        verifyCode(mobile, code);
-        User user = userRepository.findByMobile(mobile).orElseGet(() -> {
-            User u = new User();
-            u.setMobile(mobile);
-            u.setNickname(name);
-            u.setRole("RIDER");
-            return userRepository.save(u);
-        });
-        user.setRole("RIDER");
-        userRepository.save(user);
-        if (riderRepository.findByUserId(user.getId()).isEmpty()) {
-            Rider r = new Rider();
-            r.setUserId(user.getId());
-            r.setName(name);
-            r.setPlateNo(plateNo == null ? "" : plateNo);
-            r.setStatus("ACTIVE"); // 演示跳过人工审核；生产：PENDING→人工审核≤1个工作日→培训考试≥80分
-            riderRepository.save(r);
-            log.info("骑手入驻：mobile={}, name={}", mobile, name);
-        }
-        return new LoginVO(JwtUtil.create(user.getId(), "RIDER"), user.getId(), "RIDER", name);
+        throw BizException.of(410, "旧版公开骑手注册已停用，请升级骑手小程序并登录后入驻");
     }
 
     /** 管理后台登录；账号、密码摘要、角色和菜单均从数据库读取。 */
@@ -158,7 +151,7 @@ public class UserService {
         User admin = userRepository.findById(account.getUserId())
                 .filter(u -> u.getStatus() == 1 && "ADMIN".equals(u.getRole()))
                 .orElseThrow(() -> BizException.of(403, "管理员账号不可用"));
-        return new LoginVO(JwtUtil.create(admin.getId(), "ADMIN"), admin.getId(), "ADMIN", admin.getNickname());
+        return new LoginVO(tokens.createAdmin(admin.getId()), admin.getId(), "ADMIN", admin.getNickname());
     }
 
     @Transactional(readOnly = true)
