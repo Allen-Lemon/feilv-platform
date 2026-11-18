@@ -5,6 +5,7 @@ import com.feilv.common.BizException;
 import com.feilv.common.Result;
 import com.feilv.dto.ApiDtos.LoginVO;
 import com.feilv.service.DemoAuthPolicy;
+import com.feilv.service.DevelopmentPhonePolicy;
 import com.feilv.service.MiniappIdentityLinkService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -13,13 +14,14 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
-/** Narrow fixed-client protocol: account ids, mobile numbers, roles and AppIDs are never accepted. */
+/** Narrow fixed-client protocol: no account, role or AppID selectors; manual phone is a separate proof mode. */
 @RestController
 @RequestMapping("/api/v1")
 @RequiredArgsConstructor
 public class MiniappIdentityController {
     private final MiniappIdentityLinkService identities;
     private final DemoAuthPolicy demo;
+    private final DevelopmentPhonePolicy development;
 
     @PostMapping("/auth/miniapps/{client}/login")
     public Result<Map<String, Object>> login(@PathVariable String client, @RequestBody JsonNode body, HttpServletRequest request) {
@@ -37,14 +39,22 @@ public class MiniappIdentityController {
     @GetMapping("/auth/miniapps/{client}/options")
     public Result<Map<String, Boolean>> options(@PathVariable String client) {
         MiniappIdentityLinkService.client(client);
-        return Result.ok(Map.of("smsLoginEnabled", "USER".equals(client) && demo.enabled()));
+        return Result.ok(Map.of("smsLoginEnabled", "USER".equals(client) && demo.enabled(),
+                "developmentManualPhoneEnabled", "RIDER".equals(client) && development.enabled()));
     }
 
     @PostMapping("/auth/miniapps/{client}/accounts")
     public Result<LoginVO> account(@PathVariable String client, @RequestBody JsonNode body, HttpServletRequest request) {
-        only(body, "loginTicket", "phoneCode", "agreed");
+        only(body, "loginTicket", "phoneCode", "mobile", "agreed");
+        // has(), not hasNonNull(): even a null alternative counts as a supplied proof field.
+        if (body.has("phoneCode") == body.has("mobile")) throw invalid();
+        String ticket = text(body, "loginTicket", 43);
+        boolean agreed = agreed(body);
+        String proof = text(body, body.has("mobile") ? "mobile" : "phoneCode", body.has("mobile") ? 11 : 256);
         identities.throttleRequest(request.getRemoteAddr());
-        return Result.ok(identities.createAccount(client, text(body, "loginTicket", 43), text(body, "phoneCode", 256), agreed(body)));
+        return Result.ok(body.has("mobile")
+                ? identities.createDevelopmentAccount(client, ticket, proof, agreed)
+                : identities.createAccount(client, ticket, proof, agreed));
     }
 
     @PostMapping("/auth/miniapps/{client}/identity-link")

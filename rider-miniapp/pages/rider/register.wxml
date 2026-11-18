@@ -4,12 +4,22 @@
   <view class="card" wx:else><view class="title">填写当前账号入驻资料</view><view class="error" wx:if="{{error}}">{{error}}</view>
     <view class="field"><text class="label">真实姓名</text><input value="{{form.name}}" data-field="name" maxlength="30" bindinput="input" placeholder="请输入姓名" disabled="{{busy || loading}}"/></view>
     <view class="field"><text class="label">车牌号（选填）</text><input value="{{form.plateNo}}" data-field="plateNo" maxlength="16" bindinput="input" placeholder="请输入车牌号" disabled="{{busy || loading}}"/></view>
-    <checkbox-group class="field" bindchange="consent"><label><checkbox value="yes" checked="{{agreed}}" color="#C94320" disabled="{{busy || loading}}"/>同意为当前平台账号提交资料并使用本次微信手机号凭证核实入驻</label></checkbox-group>
+    <checkbox-group class="field" bindchange="consent"><label><checkbox value="yes" checked="{{agreed}}" color="#C94320" disabled="{{busy || loading}}"/>{{developmentManualPhoneEnabled === true ? '同意为当前账号提交资料，知悉开发手填号码不证明归属且须与已绑定号码一致' : '同意为当前平台账号提交资料并使用本次微信手机号凭证核实入驻'}}</label></checkbox-group>
     <view class="link" bindtap="legal">查看资料与定位使用说明</view>
-    <view class="hint">不接受手填手机号或演示短信作号码归属证明。即使此前已经绑定手机号，新入驻也需要本次真实微信授权。</view>
-    <view wx:if="{{!phoneSupported}}" class="notice">请升级微信，并确认当前骑手小程序已开通手机号能力。</view>
-    <block wx:elif="{{privacyNeeded}}"><button class="text-button" bindtap="openPrivacy">查看{{privacyTitle}}</button><button wx:if="{{privacyGateSupported}}" open-type="agreePrivacyAuthorization" bindagreeprivacyauthorization="privacy" disabled="{{busy || loading}}">同意微信隐私指引</button><view wx:else>请升级微信完成隐私授权。</view></block>
-    <button wx:elif="{{privacyReady}}" class="primary" open-type="getPhoneNumber" bindtap="preparePhone" bindgetphonenumber="register" loading="{{busy}}" disabled="{{busy || loading || !agreed}}">微信手机号授权并确认入驻</button>
-    <button wx:else class="secondary" bindtap="privacy" disabled="{{busy || loading}}">重新检查隐私授权</button>
+    <view wx:if="{{loading}}" class="hint">正在确认当前账号及服务端手机号能力…</view>
+    <view wx:if="{{phoneOptionsError}}" class="notice">{{phoneOptionsError}}<button class="text-button" bindtap="retryPhoneOptions" disabled="{{busy || loading}}">重新读取手机号配置</button></view>
+    <block wx:if="{{!loading && developmentManualPhoneEnabled === true}}">
+      <view class="notice">仅供开发测试：手填号码未经微信或短信验证，不构成真实号码归属证明。不自动绑定或换号，不继承其他账号资产；服务端仅允许当前已绑定号码入驻。</view>
+      <view class="field"><text class="label">当前账号已绑定的手机号</text><input type="number" maxlength="11" value="{{enrollmentMobile}}" bindinput="enrollmentMobileInput" placeholder="请手动填写11位已绑定号码" disabled="{{busy || loading}}"/></view>
+      <view class="hint">未绑定或号码不一致？请先到资料页绑定 / 换绑后再入驻。</view><button class="text-button" bindtap="profile" disabled="{{busy || loading}}">前往资料页绑定 / 换绑</button>
+      <button class="primary" bindtap="registerDevelopment" loading="{{busy}}" disabled="{{busy || loading || !agreed}}">开发模式：确认当前账号入驻</button>
+    </block>
+    <block wx:elif="{{!loading}}">
+      <view class="hint">不接受手填手机号或演示短信作号码归属证明。即使此前已经绑定手机号，新入驻也需要本次真实微信授权。</view>
+      <view wx:if="{{!phoneSupported}}" class="notice">请升级微信，并确认当前骑手小程序已开通手机号能力。</view>
+      <block wx:elif="{{privacyNeeded}}"><button class="text-button" bindtap="openPrivacy">查看{{privacyTitle}}</button><button wx:if="{{privacyGateSupported}}" open-type="agreePrivacyAuthorization" bindagreeprivacyauthorization="privacy" disabled="{{busy || loading}}">同意微信隐私指引</button><view wx:else>请升级微信完成隐私授权。</view></block>
+      <button wx:elif="{{privacyReady}}" class="primary" open-type="getPhoneNumber" bindtap="preparePhone" bindgetphonenumber="register" loading="{{busy}}" disabled="{{busy || loading || !agreed}}">微信手机号授权并确认入驻</button>
+      <button wx:else class="secondary" bindtap="privacy" disabled="{{busy || loading}}">重新检查隐私授权</button>
+    </block>
   </view>
 </view>

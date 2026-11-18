@@ -14,6 +14,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,7 +39,7 @@ import static org.mockito.Mockito.*;
         "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect", "spring.jpa.show-sql=false",
         "security.jwt-secret=identity-test-key-only-2026-11-17-at-least-32-bytes"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({MiniappIdentityLinkService.class, AuthTokenService.class, AuditService.class})
+@Import({MiniappIdentityLinkService.class, AuthTokenService.class, AuditService.class, DevelopmentPhonePolicy.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MiniappIdentityPersistenceTest {
     @Autowired MiniappIdentityLinkService service;
@@ -302,6 +303,95 @@ class MiniappIdentityPersistenceTest {
         String code = unique(); when(sessions.exchange(code, userConfig)).thenReturn(new WechatSessionClient.Session(userConfig.appId(), unique(), null));
         long before = tickets.count(); isolated.login("USER", code);
         assertEquals(before - 100 + 1, tickets.count());
+    }
+
+    @Test void developmentCreatesOnlyNewUserWithRealTicketAndSanitizedAuditWithoutPhoneUpstream() {
+        var ticket = login("RIDER", unique()); String mobile = mobile(); long before = users.count();
+        var manual = development(new MockEnvironment(), "local");
+        var result = manual.createDevelopmentAccount("RIDER", ticket.loginTicket(), mobile, true);
+        assertEquals(before + 1, users.count()); assertEquals("USER", result.role());
+        assertEquals(mobile, users.findById(result.userId()).orElseThrow().getMobile());
+        assertEquals("RIDER", tokens.parse(result.token()).aud);
+        assertEquals(riderConfig.appId(), tokens.parse(result.token()).appId);
+        assertTrue(stored(ticket).isConsumed());
+        var entry = logs.findAll().stream().filter(log -> "MINIAPP_ACCOUNT_CREATE".equals(log.getAction())
+                && log.getDetail().startsWith("userId=" + result.userId() + ",")).findFirst().orElseThrow();
+        assertTrue(entry.getDetail().contains("channel=DEVELOPMENT"));
+        assertFalse(entry.getDetail().contains(mobile)); assertFalse(entry.getDetail().contains(ticket.loginTicket()));
+        assertEquals(401, error(() -> manual.createDevelopmentAccount("RIDER", ticket.loginTicket(), mobile(), true)));
+        verifyNoInteractions(phones);
+    }
+
+    @Test void manualProofStillRequiresUnexpiredCurrentConfigUnusedRiderTicketAndDevelopmentGate() {
+        var environment = new MockEnvironment(); var manual = development(environment, "development");
+        var ticket = login("RIDER", unique()); long before = users.count();
+        assertEquals(403, error(() -> manual.createDevelopmentAccount("USER", ticket.loginTicket(), mobile(), true)));
+        assertEquals(401, error(() -> manual.createDevelopmentAccount("RIDER", "A".repeat(43), mobile(), true)));
+        assertEquals(400, error(() -> manual.createDevelopmentAccount("RIDER", ticket.loginTicket(), "+8613800138000", true)));
+        for (String blocked : new String[]{"prod", "production", "docker"}) {
+            environment.setActiveProfiles("local", blocked);
+            assertEquals(403, error(() -> manual.createDevelopmentAccount("RIDER", ticket.loginTicket(), mobile(), true)));
+        }
+        environment.setActiveProfiles("development");
+        when(settings.effectiveLogin("RIDER")).thenReturn(new WechatConfigService.LoginCredentials(riderConfig.appId(), "rotated"));
+        assertEquals(409, error(() -> manual.createDevelopmentAccount("RIDER", ticket.loginTicket(), mobile(), true)));
+        when(settings.effectiveLogin("RIDER")).thenReturn(riderConfig);
+        tx(() -> { var row = tickets.findForUpdate(MiniappIdentityLinkService.digest(ticket.loginTicket())).orElseThrow();
+            row.setExpiresAt(Instant.now().minusSeconds(1)); tickets.saveAndFlush(row); });
+        assertEquals(401, error(() -> manual.createDevelopmentAccount("RIDER", ticket.loginTicket(), mobile(), true)));
+        assertFalse(stored(ticket).isConsumed()); assertEquals(before, users.count()); verifyNoInteractions(phones);
+    }
+
+    @Test void manualConflictNeverTakesOverAndAuditFailureRollsBackWholeAccount() {
+        long existing = account("USER", "USER", unique()); String occupied = users.findById(existing).orElseThrow().getMobile();
+        var manual = development(new MockEnvironment(), "local"); var ticket = login("RIDER", unique());
+        long beforeUsers = users.count(), beforeIdentities = identities.count();
+        assertEquals(409, error(() -> manual.createDevelopmentAccount("RIDER", ticket.loginTicket(), occupied, true)));
+        assertFalse(stored(ticket).isConsumed()); assertEquals(beforeUsers, users.count()); assertEquals(beforeIdentities, identities.count());
+        String fresh = mobile();
+        doThrow(new IllegalStateException("test audit unavailable")).when(audit).record(eq("MINIAPP_ACCOUNT_CREATE"), anyString());
+        assertThrows(IllegalStateException.class, () -> manual.createDevelopmentAccount("RIDER", ticket.loginTicket(), fresh, true));
+        assertTrue(users.findByMobile(fresh).isEmpty()); assertFalse(stored(ticket).isConsumed());
+        assertEquals(beforeUsers, users.count()); assertEquals(beforeIdentities, identities.count()); verifyNoInteractions(phones);
+    }
+
+    @Test void concurrentManualPhoneAndTicketClaimsHaveOnlyOneAtomicWinner() throws Exception {
+        var manual = development(new MockEnvironment(), "local");
+        for (boolean sameTicket : new boolean[]{false, true}) {
+            var first = login("RIDER", unique()); var second = sameTicket ? first : login("RIDER", unique());
+            String mobile = mobile(); long before = users.count(), beforeIdentities = identities.count();
+            var start = new CountDownLatch(1); var pool = Executors.newFixedThreadPool(2);
+            try {
+                var a = pool.submit(() -> { start.await(); return error(() -> manual.createDevelopmentAccount("RIDER", first.loginTicket(), mobile, true)); });
+                var b = pool.submit(() -> { start.await(); return error(() -> manual.createDevelopmentAccount("RIDER", second.loginTicket(), mobile, true)); });
+                start.countDown(); int ra = a.get(10, TimeUnit.SECONDS), rb = b.get(10, TimeUnit.SECONDS);
+                int loser = sameTicket ? 401 : 409;
+                assertTrue(ra == 0 && rb == loser || rb == 0 && ra == loser, ra + "/" + rb);
+                assertEquals(before + 1, users.count()); assertEquals(beforeIdentities + 1, identities.count());
+                if (!sameTicket) assertNotEquals(stored(first).isConsumed(), stored(second).isConsumed());
+                else assertTrue(stored(first).isConsumed());
+            } finally { pool.shutdownNow(); }
+        }
+        verifyNoInteractions(phones);
+    }
+
+    @Test void manualGateIsRecheckedAfterTicketLockBeforeAnyAccountMutation() {
+        var environment = new MockEnvironment(); var ticket = login("RIDER", unique());
+        var controlledTickets = mock(MiniappLoginTicketRepository.class, org.mockito.AdditionalAnswers.delegatesTo(tickets));
+        doAnswer(call -> { environment.setActiveProfiles("local", "docker"); return tickets.findForUpdate(call.getArgument(0)); })
+                .when(controlledTickets).findForUpdate(anyString());
+        environment.setActiveProfiles("local");
+        var manual = new MiniappIdentityLinkService(settings, sessions, phones, identities, users, riders, controlledTickets,
+                links, tokens, audit, manager, entityManager, new DevelopmentPhonePolicy(environment, true));
+        long before = users.count();
+        assertEquals(403, error(() -> manual.createDevelopmentAccount("RIDER", ticket.loginTicket(), mobile(), true)));
+        assertEquals(before, users.count()); assertFalse(stored(ticket).isConsumed()); verifyNoInteractions(phones);
+    }
+
+    private MiniappIdentityLinkService development(MockEnvironment environment, String... profiles) {
+        environment.setActiveProfiles(profiles);
+        return new MiniappIdentityLinkService(settings, sessions, phones, identities, users, riders, tickets, links,
+                tokens, audit, manager, entityManager, new DevelopmentPhonePolicy(environment, true));
     }
 
     private MiniappIdentityLinkService.LoginState login(String client, String openid) {

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.SimpleTransactionStatus;
@@ -37,6 +38,9 @@ class MiniappEnrollmentServiceTest {
     private final WechatConfigService.LoginCredentials credentials = new WechatConfigService.LoginCredentials("rider-app", "secret");
     private final EnrollmentReq request = new EnrollmentReq("  骑手姓名  ", "  贵D12345  ", "phone-code", true);
     private final AtomicBoolean writeTransaction = new AtomicBoolean();
+    private final MockEnvironment environment = new MockEnvironment();
+    private final DevelopmentPhonePolicy development = new DevelopmentPhonePolicy(environment, true);
+    private final EnrollmentReq manual = new EnrollmentReq("姓名", "贵D12345", null, true, "13800138000");
     private User user;
     private MiniappEnrollmentService service;
 
@@ -60,7 +64,8 @@ class MiniappEnrollmentServiceTest {
         });
         when(tokens.login(user, "RIDER", "rider-app")).thenAnswer(call ->
                 new LoginVO("new-rider-token", user.getId(), user.getRole(), user.getNickname()));
-        service = new MiniappEnrollmentService(users, riders, identities, settings, phones, tokens, entityManager, manager);
+        environment.setActiveProfiles("local");
+        service = new MiniappEnrollmentService(users, riders, identities, settings, phones, tokens, entityManager, manager, development);
     }
 
     @AfterEach
@@ -189,6 +194,61 @@ class MiniappEnrollmentServiceTest {
         verifyNoInteractions(phones, tokens);
         verify(riders, never()).saveAndFlush(any());
         verify(users, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void manualEnrollmentUsesBoundCurrentAccountWithoutUpstreamOrCapabilityGrants() {
+        assertEquals(42L, service.enroll(manual).userId());
+        var captured = ArgumentCaptor.forClass(Rider.class);
+        verify(riders).saveAndFlush(captured.capture());
+        assertFalse(captured.getValue().isRideEnabled()); assertFalse(captured.getValue().isDrivingEnabled());
+        assertEquals("RIDER", user.getRole()); assertEquals("13800138000", user.getMobile());
+        verifyNoInteractions(phones); verify(users, never()).findByMobile(anyString());
+    }
+
+    @Test
+    void manualEnrollmentRequiresCurrentIdentityBoundMobileAndAvailableArchive() {
+        when(identities.existsByUserIdAndAppId(42L, "rider-app")).thenReturn(false);
+        assertCode(403, () -> service.enroll(manual));
+        when(identities.existsByUserIdAndAppId(42L, "rider-app")).thenReturn(true);
+        UserContext.set(new UserContext.CurrentUser(42L, "USER", "RIDER", "old-app"));
+        assertCode(401, () -> service.enroll(manual));
+        UserContext.set(new UserContext.CurrentUser(42L, "USER", "RIDER", "rider-app"));
+        user.setMobile("13900139000"); assertCode(409, () -> service.enroll(manual));
+        user.setMobile(null); assertCode(409, () -> service.enroll(manual));
+        user.setMobile("13800138000");
+        when(riders.findByUserIdForUpdate(42L)).thenReturn(Optional.of(existing("FROZEN")));
+        assertCode(403, () -> service.enroll(manual));
+        when(riders.findByUserIdForUpdate(42L)).thenReturn(Optional.empty()); user.setRole("RIDER");
+        assertCode(409, () -> service.enroll(manual));
+        verifyNoInteractions(phones, tokens); verify(riders, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void manualActiveRetryRetainsGrantsButProtectedProfileStillDeniesBoundRider() {
+        Rider rider = existing("ACTIVE"); rider.setRideEnabled(true); rider.setDrivingEnabled(true);
+        user.setRole("RIDER"); when(riders.findByUserIdForUpdate(42L)).thenReturn(Optional.of(rider));
+        assertEquals("RIDER", service.enroll(manual).role());
+        assertTrue(rider.isRideEnabled()); assertTrue(rider.isDrivingEnabled());
+        verify(riders, never()).saveAndFlush(any());
+        for (String profile : new String[]{"prod", "production", "docker"}) {
+            environment.setActiveProfiles("local", profile);
+            assertCode(403, () -> service.enroll(manual));
+        }
+        verifyNoInteractions(phones);
+    }
+
+    @Test
+    void manualGateIsRecheckedInsideBothWriteLocks() {
+        doAnswer(call -> { environment.setActiveProfiles("local", "docker"); return Optional.of(user); })
+                .when(users).findByIdForUpdate(42L);
+        assertCode(403, () -> service.enroll(manual));
+        environment.setActiveProfiles("local");
+        doAnswer(call -> Optional.of(user)).doAnswer(call -> {
+            environment.setActiveProfiles("local", "production"); return Optional.of(user);
+        }).when(users).findByIdForUpdate(42L);
+        assertCode(403, () -> service.enroll(manual));
+        verifyNoInteractions(phones, tokens); verify(riders, never()).saveAndFlush(any());
     }
 
     private Rider existing(String status) {

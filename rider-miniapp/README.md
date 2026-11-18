@@ -14,13 +14,27 @@
 
 ## 身份、关联与入驻
 
-`config.js` 固定 `CLIENT: 'RIDER'`。微信登录调用 `/api/v1/auth/miniapps/RIDER/login`，发送 `{code,agreed:true}`。已关联返回 `{state:'AUTHENTICATED',login:LoginVO}`；未关联返回 `{state:'IDENTITY_REQUIRED',loginTicket,expiresAt}`，必须明确选择关联已有平台账号，或通过本次原生微信手机号授权创建新账号。不会按手机号、unionid、客户端 role 自动合并账号。
+`config.js` 固定 `CLIENT: 'RIDER'`。微信登录调用 `/api/v1/auth/miniapps/RIDER/login`，发送 `{code,agreed:true}`。已关联返回 `{state:'AUTHENTICATED',login:LoginVO}`；未关联返回 `{state:'IDENTITY_REQUIRED',loginTicket,expiresAt}`，必须明确选择关联已有平台账号，或创建新账号。正式环境创建需要本次原生微信手机号授权；隔离开发环境可使用下述手填免验证码模式。不会按手机号、unionid、客户端 role 自动合并账号。
 
 在另一端的“我的”登录原平台账号，明确确认后使用新的 `wx.login` 凭证签发临时一次性关联码。再在本端输入临时码并再次确认。临时 ticket、码、手机号 code 只留页面内存，不写 URL、日志或本机持久存储；离页隐藏。两端不互传 bearer token、手机号、草稿或 pending。
 
-入驻为受保护 `POST /api/v1/rider/enrollment {name,plateNo,phoneCode,agreed:true}`：当前已认证平台主体不变，姓名最多30字、可选车牌最多16字，新入驻必须本次真实微信手机号授权及隐私门禁，即使之前已经 `mobileBound`。已有 RIDER 先读取真实骑手档案，再 switchTab 返回工作台，不重新走手机号注册。结果未知时先重新微信登录读取档案核实。旧仅手机号且无微信身份的账号需运营方受控人工核实，不能用演示短信恢复或继承资产。
+入驻为受保护 `POST /api/v1/rider/enrollment {name,plateNo,phoneCode,agreed:true}`：当前已认证平台主体不变，姓名最多30字、可选车牌最多16字；正式环境新入驻必须本次真实微信手机号授权及隐私门禁，即使之前已经 `mobileBound`。开发免验证码模式改为提交当前已绑定的手填号码，不代表真实号码验证。已有 RIDER 先读取真实骑手档案，再 switchTab 返回工作台，不重新走手机号注册。结果未知时先重新微信登录读取档案核实。旧仅手机号且无微信身份的账号需运营方受控人工核实，不能用演示短信恢复或继承资产。
 
 骑手端 `/auth/miniapps/RIDER/options` 当前固定返回 `smsLoginEnabled:false`，仅使用本端微信登录；旧演示短信接口只签发USER来源，不能充作骑手端登录。共享登录页在能力接口不可用时同样默认隐藏短信入口，不宣称已接入真实短信。
+
+## 隔离开发环境手填手机号（免验证码）
+
+此能力由**后端**决定，不由微信开发者工具的开发版状态决定。需要连接独立、隔离数据库的开发后端，同时满足：
+
+- active profile 包含 `local` 或 `development`，且 `SMS_BINDING_DEV_BYPASS_ENABLED=true`；单独 `dev` 不符合此门禁。
+- 不包含 `docker`、`prod` 或 `production`，混合 profile 也禁止。不要为线上容器切换 profile 绕过限制；`local` 本身也不保证数据库隔离。
+- 登录前 `/auth/miniapps/RIDER/options` 的 `developmentManualPhoneEnabled` 必须严格为 true；能力缺失、错误或请求失败默认关闭。入驻复用 `/user/phone/options` 的 `developmentBypass`。
+
+开发操作顺序：真实微信登录 → 选择创建新账号 → 手填11位测试手机号并确认 → 完善资料 → 入驻页手填同一手机号并提交。无需 `getPhoneNumber` 能力或短信验证码，但仍需要有效的骑手微信登录配置和短效 ticket。已有账号须使用关联码，不能凭手填手机号领取旧订单或钱包。
+
+开发创建使用原账号接口的 `{loginTicket,mobile,agreed:true}`；入驻使用 `{name,plateNo,mobile,agreed:true}`。`mobile` 与 `phoneCode` 必须二选一，同时提供、缺失或未知字段均拒绝。入驻号码必须与当前主体已绑定号码一致，需绑定/改号时先到资料页显式操作。
+
+本工程默认连接配置的远程 HTTPS 服务且开发地址覆盖关闭，本地开关不会改变远程后端；本次不自动切换服务地址或部署。开发号码仅作测试联系方式，`mobileBound` 不代表真实归属验证，开发数据不可迁入生产。现有短信绑定仍为 MOCK，不是本次新增的真实短信服务。
 
 ## 会话与未知结果保护
 

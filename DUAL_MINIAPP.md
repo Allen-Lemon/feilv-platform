@@ -87,11 +87,29 @@
 {"loginTicket":"...","phoneCode":"本端原生getPhoneNumber动态code","agreed":true}
 ```
 
-使用当前端真实微信手机号授权核验。号码未占用才原子创建USER、身份并消费ticket；号码已占用返回409，提示从原账号关联，不能按同手机号自动继承钱包。不能用手工号码、演示短信或开发免验证代替此证明。
+正式环境使用当前端真实微信手机号授权核验。号码未占用才原子创建USER、身份并消费ticket；号码已占用返回409，提示从原账号关联，不能按同手机号自动继承钱包。手工号码、演示短信或开发免验证都不是正式的号码归属证明。仅隔离开发后端的骑手端可使用下述严格门禁的手填建号分支。
 
 关联/创建成功但客户端丢回包时，重新wx.login会找到已映射的同一userId，不要另建第二个账户。
 
-### 3.4 历史接口
+### 3.4 骑手隔离开发手填模式
+
+复用现有 `SMS_BINDING_DEV_BYPASS_ENABLED` 门禁：开关开启且 active profile 包含 `local` 或 `development` 才允许；任何 `docker`、`prod`、`production` 优先禁止，单独 `dev` 不放行。不要用切换线上 profile 的方式开启；`local` 配置本身也不证明数据库隔离。
+
+登录 options 增加严格布尔 `developmentManualPhoneEnabled`，仅 RIDER 在有效开发门禁下为 true。骑手新账号请求可将 `phoneCode` 替换为 `mobile`，两者必须且只能出现一个：
+
+```json
+{"loginTicket":"...","mobile":"13800138000","agreed":true}
+```
+
+仍须真实 `wx.login` 取得本端有效 ticket、明确创建新账号、号码未占用；新 USER、身份追加和 ticket 消费同事务提交，仍签 RIDER 来源而非直接赋予骑手角色。开发号码不触发微信手机号/短信调用，不会按号码查出旧账号后登录。占用号码仍409，关联码协议不变。
+
+入驻页面通过已有 `/api/v1/user/phone/options` 的严格布尔 `developmentBypass` 识别同一门禁，开发请求为 `{name,plateNo,mobile,agreed:true}`，与原 `phoneCode` 形态互斥。必须是当前已认证 RIDER 来源主体、本端真实微信身份且输入等于该主体已绑定号码；需绑定或改号时先走原资料页显式绑定/换绑。冻结、缺档、当前主体、事务锁顺序和能力默认值不因开发模式放宽。
+
+前端在有效能力下使用普通输入框/按钮，不依赖微信手机号能力和验证码；能力未知默认关闭，原生验证失败也不自动降级。真实微信身份仍必需。`mobileBound` 只是号码非空，不表示真实验证；开发数据不得迁入生产。现有 SMS 为 MOCK，本次未提供生产短信网关。
+
+小程序当前默认远程 HTTPS 后端且地址覆盖关闭；微信开发者工具“开发版”不等于后端开发模式，本机开关不会影响远程服务器。本次不修改真实环境、服务地址、Compose profile 或密钥。操作示例见 `rider-miniapp/README.md`。
+
+### 3.5 历史接口
 
 - `/api/v1/auth/wechat-login` 只保留用户端旧请求/直接LoginVO响应兼容，新版本使用ticket协议。
 - 旧公开 `/api/v1/auth/rider-register` 已退休，不再根据手机号创建/切换骑手主体；旧客户端需升级。
@@ -105,7 +123,7 @@
 {"name":"姓名","plateNo":"车牌","phoneCode":"新的真实微信手机号code","agreed":true}
 ```
 
-主体仅为当前登录userId，不接受mobile/userId选账号。新授权手机号须与当前主体号码一致，历史 `mobileBound` 不足以证明真实归属。新入驻保持即时ACTIVE语义，接送/代驾能力默认关闭，由后台分别授权；不新增虚假的资质审核结论。
+主体仅为当前登录userId，不接受mobile/userId选账号。正式环境新授权手机号须与当前主体号码一致，历史 `mobileBound` 不足以证明真实归属。隔离开发环境允许手填当前已绑定号码，但不能据此切换主体或静默换号。新入驻保持即时ACTIVE语义，接送/代驾能力默认关闭，由后台分别授权；不新增虚假的资质审核结论。
 
 已ACTIVE入驻重试返回当前档案/新角色LoginVO，不重建、不重置能力、不再次消费手机号凭据；FROZEN不重新激活。角色变化后另一端旧角色会话需重登。丢失入驻响应可重新wx.login/读取骑手档案恢复。
 

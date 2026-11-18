@@ -11,6 +11,7 @@ import com.feilv.repository.UserRepository;
 import com.feilv.repository.WechatIdentityRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
@@ -30,11 +31,22 @@ public class MiniappEnrollmentService {
     private final AuthTokenService tokens;
     private final EntityManager entityManager;
     private final TransactionTemplate transaction;
+    private final DevelopmentPhonePolicy development;
 
     public MiniappEnrollmentService(UserRepository users, RiderRepository riders,
                                     WechatIdentityRepository identities, WechatConfigService settings,
                                     WechatPhoneClient phones, AuthTokenService tokens,
                                     EntityManager entityManager, PlatformTransactionManager manager) {
+        this(users, riders, identities, settings, phones, tokens, entityManager, manager,
+                new DevelopmentPhonePolicy(new org.springframework.core.env.StandardEnvironment(), false));
+    }
+
+    @Autowired
+    public MiniappEnrollmentService(UserRepository users, RiderRepository riders,
+                                    WechatIdentityRepository identities, WechatConfigService settings,
+                                    WechatPhoneClient phones, AuthTokenService tokens,
+                                    EntityManager entityManager, PlatformTransactionManager manager,
+                                    DevelopmentPhonePolicy development) {
         this.users = users;
         this.riders = riders;
         this.identities = identities;
@@ -43,6 +55,7 @@ public class MiniappEnrollmentService {
         this.tokens = tokens;
         this.entityManager = entityManager;
         this.transaction = new TransactionTemplate(manager);
+        this.development = development;
     }
 
     // Even if an internal caller has a write transaction, the WeChat exchange must not join it.
@@ -59,7 +72,14 @@ public class MiniappEnrollmentService {
         }
         String name = text(request.name(), 32, true, "姓名");
         String plate = text(request.plateNo(), 16, false, "车牌");
-        if (request.phoneCode() == null || request.phoneCode().isBlank() || request.phoneCode().length() > 256) {
+        if ((request.phoneCode() != null) == (request.mobile() != null)) {
+            throw BizException.of(400, "请提供单一手机号凭证");
+        }
+        boolean manual = request.mobile() != null;
+        if (manual) {
+            development.requireEnabled();
+            if (!request.mobile().matches("1[3-9][0-9]{9}")) throw BizException.of(400, "请输入有效的11位手机号");
+        } else if (request.phoneCode().isBlank() || request.phoneCode().length() > 256) {
             throw BizException.of(400, "请重新授权微信手机号");
         }
         var authorization = MiniappPhoneAuthorization.resolve(current.id(), settings);
@@ -67,8 +87,7 @@ public class MiniappEnrollmentService {
         var before = transaction.execute(status -> {
             User user = lockedUser(current.id());
             Rider rider = lockedRider(current.id());
-            authorization.recheck(settings);
-            requireIdentity(current.id(), current.appId());
+            preflight(user, current.id(), current.appId(), authorization, manual, request.mobile());
             if (rider != null) return new Preparation(null, existing(user, rider, current.appId()));
             requireNewEnrollment(user);
             if (user.getMobile() == null || !user.getMobile().matches("1[3-9][0-9]{9}")) {
@@ -78,22 +97,27 @@ public class MiniappEnrollmentService {
         });
         // An ACTIVE retry returns before touching the one-use WeChat authorization code.
         if (before.login() != null) return before.login();
-        var phone = phones.exchange(request.phoneCode(), credentials);
-        if (phone == null || !credentials.appId().equals(phone.appId())
-                || phone.mobile() == null || !phone.mobile().matches("1[3-9][0-9]{9}")) {
-            throw BizException.of(502, "微信手机号响应异常，请重新授权");
-        }
-        if (!before.mobile().equals(phone.mobile())) {
-            throw BizException.of(409, "微信授权手机号与当前账户不一致，请先使用当前账户手机号授权");
+        String verifiedMobile;
+        if (manual) {
+            verifiedMobile = request.mobile();
+        } else {
+            var phone = phones.exchange(request.phoneCode(), credentials);
+            if (phone == null || !credentials.appId().equals(phone.appId())
+                    || phone.mobile() == null || !phone.mobile().matches("1[3-9][0-9]{9}")) {
+                throw BizException.of(502, "微信手机号响应异常，请重新授权");
+            }
+            verifiedMobile = phone.mobile();
+            if (!before.mobile().equals(verifiedMobile)) {
+                throw BizException.of(409, "微信授权手机号与当前账户不一致，请先使用当前账户手机号授权");
+            }
         }
         return transaction.execute(status -> {
             User user = lockedUser(current.id());
             Rider rider = lockedRider(current.id());
-            authorization.recheck(settings);
-            requireIdentity(current.id(), current.appId());
+            preflight(user, current.id(), current.appId(), authorization, manual, request.mobile());
             if (rider != null) return existing(user, rider, current.appId());
             requireNewEnrollment(user);
-            if (!Objects.equals(before.mobile(), user.getMobile()) || !phone.mobile().equals(user.getMobile())) {
+            if (!Objects.equals(before.mobile(), user.getMobile()) || !verifiedMobile.equals(user.getMobile())) {
                 throw BizException.of(409, "当前账户手机号已变化，请重新授权");
             }
             Rider created = new Rider();
@@ -107,6 +131,17 @@ public class MiniappEnrollmentService {
             promote(user);
             return tokens.login(user, "RIDER", current.appId());
         });
+    }
+
+    /** Run under the user/rider locks, including ACTIVE retries and the final mutation. */
+    private void preflight(User user, long userId, String appId, MiniappPhoneAuthorization.Snapshot authorization,
+                           boolean manual, String mobile) {
+        if (manual) development.requireEnabled();
+        authorization.recheck(settings);
+        requireIdentity(userId, appId);
+        if (manual && !mobile.equals(user.getMobile())) {
+            throw BizException.of(409, "开发手机号必须与当前账户已绑定手机号一致，请先完成手机号绑定或换绑");
+        }
     }
 
     /** Shared lock ordering for both initial and final checks: user, then existing rider. */

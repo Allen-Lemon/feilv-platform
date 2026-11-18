@@ -17,6 +17,7 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,7 +40,7 @@ import static org.mockito.Mockito.*;
         "spring.sql.init.mode=never", "spring.jpa.hibernate.ddl-auto=create-drop",
         "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect", "spring.jpa.show-sql=false"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import(MiniappEnrollmentService.class)
+@Import({MiniappEnrollmentService.class, DevelopmentPhonePolicy.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MiniappEnrollmentPersistenceTest {
     @MockBean WechatConfigService settings;
@@ -51,6 +52,7 @@ class MiniappEnrollmentPersistenceTest {
     @Autowired WechatIdentityRepository identities;
     @Autowired PlatformTransactionManager manager;
     @Autowired DataSource dataSource;
+    @Autowired jakarta.persistence.EntityManager entityManager;
     private final WechatConfigService.LoginCredentials credentials = new WechatConfigService.LoginCredentials("enrollment-app", "secret");
 
     @AfterEach
@@ -135,6 +137,53 @@ class MiniappEnrollmentPersistenceTest {
         assertEquals("FROZEN", after.getStatus()); assertEquals(51, after.getCreditScore()); assertTrue(after.isRideEnabled());
         assertEquals("USER", users.findById(id).orElseThrow().getRole());
         verifyNoInteractions(phones);
+    }
+
+    @Test
+    void concurrentManualEnrollmentIsSameUserAtomicAndRetriesKeepExistingGrants() throws Exception {
+        long id = account("13800138104");
+        var environment = new MockEnvironment(); environment.setActiveProfiles("local");
+        var manual = new MiniappEnrollmentService(users, riders, identities, settings, phones, tokens, entityManager,
+                manager, new DevelopmentPhonePolicy(environment, true));
+        var start = new CountDownLatch(1); var pool = Executors.newFixedThreadPool(2);
+        try {
+            var a = pool.submit(() -> { start.await(); return manualEnroll(manual, id, "13800138104"); });
+            var b = pool.submit(() -> { start.await(); return manualEnroll(manual, id, "13800138104"); });
+            start.countDown(); assertEquals(id, a.get(15, TimeUnit.SECONDS).userId());
+            assertEquals(id, b.get(15, TimeUnit.SECONDS).userId());
+        } finally { pool.shutdownNow(); }
+        Rider created = riders.findByUserId(id).orElseThrow();
+        assertFalse(created.isRideEnabled()); assertFalse(created.isDrivingEnabled());
+        new TransactionTemplate(manager).executeWithoutResult(status -> {
+            Rider rider = riders.findByUserIdForUpdate(id).orElseThrow();
+            rider.setRideEnabled(true); rider.setDrivingEnabled(true); rider.setCreditScore(64); riders.saveAndFlush(rider);
+        });
+        assertEquals("RIDER", manualEnroll(manual, id, "13800138104").role());
+        Rider retained = riders.findByUserId(id).orElseThrow();
+        assertEquals(created.getId(), retained.getId()); assertEquals(64, retained.getCreditScore());
+        assertTrue(retained.isRideEnabled()); assertTrue(retained.isDrivingEnabled());
+        environment.setActiveProfiles("local", "production");
+        assertEquals(403, assertThrows(BizException.class, () -> manualEnroll(manual, id, "13800138104")).getCode());
+        verifyNoInteractions(phones);
+    }
+
+    @Test
+    void manualTokenFailureRollsBackArchiveAndPromotionWithoutChangingMobile() throws Exception {
+        long id = account("13800138105");
+        var environment = new MockEnvironment(); environment.setActiveProfiles("development");
+        var manual = new MiniappEnrollmentService(users, riders, identities, settings, phones, tokens, entityManager,
+                manager, new DevelopmentPhonePolicy(environment, true));
+        doThrow(BizException.of(503, "签名服务暂不可用")).when(tokens).login(any(User.class), eq("RIDER"), eq("enrollment-app"));
+        assertEquals(503, assertThrows(BizException.class, () -> manualEnroll(manual, id, "13800138105")).getCode());
+        assertTrue(riders.findByUserId(id).isEmpty());
+        User user = users.findById(id).orElseThrow();
+        assertEquals("USER", user.getRole()); assertEquals("13800138105", user.getMobile()); verifyNoInteractions(phones);
+    }
+
+    private LoginVO manualEnroll(MiniappEnrollmentService service, long userId, String mobile) {
+        UserContext.set(new UserContext.CurrentUser(userId, "USER", "RIDER", "enrollment-app"));
+        try { return service.enroll(new EnrollmentReq("开发姓名", "贵D12345", null, true, mobile)); }
+        finally { UserContext.clear(); }
     }
 
     private LoginVO enroll(long userId, String code) {

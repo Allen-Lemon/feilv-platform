@@ -5,6 +5,7 @@ import com.feilv.common.GlobalExceptionHandler;
 import com.feilv.config.AuthResponseCacheFilter;
 import com.feilv.dto.ApiDtos.LoginVO;
 import com.feilv.service.DemoAuthPolicy;
+import com.feilv.service.DevelopmentPhonePolicy;
 import com.feilv.service.MiniappIdentityLinkService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,13 +21,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class MiniappIdentityControllerTest {
     private final MiniappIdentityLinkService identities = mock(MiniappIdentityLinkService.class);
     private final DemoAuthPolicy demo = mock(DemoAuthPolicy.class);
+    private final DevelopmentPhonePolicy development = mock(DevelopmentPhonePolicy.class);
     private MockMvc mvc;
     private static final String TICKET = "A".repeat(43), LINK = "B".repeat(43);
     private static final String EXPIRY = "2026-11-17T03:00:00Z";
     private static final LoginVO LOGIN = new LoginVO("signed-session", 42, "USER", "微信用户");
 
     @BeforeEach void setup() {
-        mvc = MockMvcBuilders.standaloneSetup(new MiniappIdentityController(identities, demo))
+        mvc = MockMvcBuilders.standaloneSetup(new MiniappIdentityController(identities, demo, development))
                 .setControllerAdvice(new GlobalExceptionHandler()).addInterceptors(TestAuth.interceptor())
                 .addFilters(new AuthResponseCacheFilter()).build();
     }
@@ -112,13 +114,38 @@ class MiniappIdentityControllerTest {
                 .andExpect(jsonPath("$.code").value(400)).andExpect(header().string("Cache-Control", "no-store"));
     }
 
+    @Test void manualCreationUsesSeparateServiceAndStrictExclusiveProofShape() throws Exception {
+        when(identities.createDevelopmentAccount("RIDER", TICKET, "13800138000", true)).thenReturn(LOGIN);
+        mvc.perform(post("/api/v1/auth/miniapps/RIDER/accounts").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"loginTicket\":\"" + TICKET + "\",\"mobile\":\"13800138000\",\"agreed\":true}"))
+                .andExpect(jsonPath("$.data.token").value(LOGIN.token()));
+        for (String proof : new String[]{"", ",\"mobile\":null", ",\"phoneCode\":null", ",\"mobile\":7",
+                ",\"mobile\":true", ",\"mobile\":{}", ",\"mobile\":[]", ",\"mobile\":\"\"",
+                ",\"mobile\":\"13800138000\",\"phoneCode\":null",
+                ",\"mobile\":null,\"phoneCode\":\"phone-code\"",
+                ",\"mobile\":\"13800138000\",\"phoneCode\":\"phone-code\"",
+                ",\"mobile\":\"13800138000\",\"userId\":null"}) {
+            mvc.perform(post("/api/v1/auth/miniapps/RIDER/accounts").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"loginTicket\":\"" + TICKET + "\",\"agreed\":true" + proof + "}"))
+                    .andExpect(jsonPath("$.code").value(400));
+        }
+        verify(identities).createDevelopmentAccount("RIDER", TICKET, "13800138000", true);
+        verify(identities, never()).createAccount(anyString(), anyString(), anyString(), anyBoolean());
+    }
+
     @Test void optionsExposesOnlyActualDemoCapabilityAndNeverEnablesRiderSms() throws Exception {
         when(demo.enabled()).thenReturn(true);
+        when(development.enabled()).thenReturn(true);
         mvc.perform(get("/api/v1/auth/miniapps/USER/options"))
-                .andExpect(jsonPath("$.data.smsLoginEnabled").value(true)).andExpect(header().string("Cache-Control", "no-store"));
+                .andExpect(jsonPath("$.data.smsLoginEnabled").value(true))
+                .andExpect(jsonPath("$.data.developmentManualPhoneEnabled").value(false))
+                .andExpect(header().string("Cache-Control", "no-store"));
         mvc.perform(get("/api/v1/auth/miniapps/RIDER/options"))
-                .andExpect(jsonPath("$.data.smsLoginEnabled").value(false));
-        when(demo.enabled()).thenReturn(false);
+                .andExpect(jsonPath("$.data.smsLoginEnabled").value(false))
+                .andExpect(jsonPath("$.data.developmentManualPhoneEnabled").value(true));
+        when(demo.enabled()).thenReturn(false); when(development.enabled()).thenReturn(false);
         mvc.perform(get("/api/v1/auth/miniapps/USER/options")).andExpect(jsonPath("$.data.smsLoginEnabled").value(false));
+        mvc.perform(get("/api/v1/auth/miniapps/RIDER/options"))
+                .andExpect(jsonPath("$.data.developmentManualPhoneEnabled").value(false));
     }
 }

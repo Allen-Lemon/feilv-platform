@@ -5,6 +5,7 @@ import com.feilv.common.UserContext;
 import com.feilv.domain.*;
 import com.feilv.dto.ApiDtos.LoginVO;
 import com.feilv.repository.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -41,6 +42,7 @@ public class MiniappIdentityLinkService {
     private final AuditService audit;
     private final TransactionTemplate transaction;
     private final EntityManager entityManager;
+    private final DevelopmentPhonePolicy development;
     // Bounded local abuse guard; credentials themselves remain database-backed and single use.
     private final Map<String, Window> limits = new LinkedHashMap<>();
     private long nextCleanup;
@@ -53,11 +55,22 @@ public class MiniappIdentityLinkService {
             WechatPhoneClient phones, WechatIdentityRepository identities, UserRepository users,
             RiderRepository riders, MiniappLoginTicketRepository tickets, MiniappLinkCodeRepository links,
             AuthTokenService tokens, AuditService audit, PlatformTransactionManager manager, EntityManager entityManager) {
+        this(settings, sessions, phones, identities, users, riders, tickets, links, tokens, audit, manager,
+                entityManager, new DevelopmentPhonePolicy(new org.springframework.core.env.StandardEnvironment(), false));
+    }
+
+    @Autowired
+    public MiniappIdentityLinkService(WechatConfigService settings, WechatSessionClient sessions,
+            WechatPhoneClient phones, WechatIdentityRepository identities, UserRepository users,
+            RiderRepository riders, MiniappLoginTicketRepository tickets, MiniappLinkCodeRepository links,
+            AuthTokenService tokens, AuditService audit, PlatformTransactionManager manager, EntityManager entityManager,
+            DevelopmentPhonePolicy development) {
         this.settings = settings; this.sessions = sessions; this.phones = phones;
         this.identities = identities; this.users = users; this.riders = riders;
         this.tickets = tickets; this.links = links; this.tokens = tokens; this.audit = audit;
         this.transaction = new TransactionTemplate(manager);
         this.entityManager = entityManager;
+        this.development = development;
     }
 
     public static String client(String value) {
@@ -183,19 +196,41 @@ public class MiniappIdentityLinkService {
                 || phone.mobile() == null || !phone.mobile().matches("1[3-9][0-9]{9}")) {
             throw BizException.of(502, "微信手机号响应异常，请重新授权");
         }
+        return finalizeAccount(client, rawTicket, phone.mobile(), credentials, false);
+    }
+
+    /** Manual phone proof is rider-development-only; the real wx.login ticket remains mandatory. */
+    public LoginVO createDevelopmentAccount(String client, String rawTicket, String mobile, boolean agreed) {
+        client(client);
+        if (!"RIDER".equals(client)) throw BizException.of(403, "仅骑手小程序支持开发手机号流程");
+        development.requireEnabled();
+        requireAgreement(agreed); requireToken(rawTicket);
+        if (mobile == null || !mobile.matches("1[3-9][0-9]{9}")) throw BizException.of(400, "请输入有效的11位手机号");
+        limit("ticket:" + digest(rawTicket), 5);
+        MiniappLoginTicket snapshot = tickets.findById(digest(rawTicket)).orElseThrow(MiniappIdentityLinkService::invalidTicket);
+        validateTicket(client, snapshot);
+        var credentials = settings.effectiveLogin(client);
+        if (!snapshot.getConfigFingerprint().equals(fingerprint(credentials))) throw configChanged();
+        return finalizeAccount(client, rawTicket, mobile, credentials, true);
+    }
+
+    private LoginVO finalizeAccount(String client, String rawTicket, String mobile,
+                                   WechatConfigService.LoginCredentials credentials, boolean manual) {
         cleanup();
         try {
             return transaction.execute(status -> {
                 MiniappLoginTicket ticket = lockedTicket(client, rawTicket);
+                if (manual) development.requireEnabled();
                 recheck(client, credentials);
                 requireUnclaimed(ticket);
-                if (users.findByMobile(phone.mobile()).isPresent()) throw phoneConflict();
-                User user = new User(); user.setMobile(phone.mobile()); user.setNickname("微信用户");
+                if (users.findByMobile(mobile).isPresent()) throw phoneConflict();
+                User user = new User(); user.setMobile(mobile); user.setNickname("微信用户");
                 user.setRole("USER"); user.setStatus(1);
                 user = users.saveAndFlush(user);
                 appendIdentity(ticket, user.getId());
                 ticket.setConsumed(true); tickets.saveAndFlush(ticket);
-                audit.record("MINIAPP_ACCOUNT_CREATE", "userId=" + user.getId() + ",client=" + client);
+                audit.record("MINIAPP_ACCOUNT_CREATE", "userId=" + user.getId() + ",client=" + client
+                        + ",channel=" + (manual ? "DEVELOPMENT" : "WECHAT"));
                 return tokens.login(user, client, ticket.getAppId());
             });
         } catch (DataIntegrityViolationException conflict) {

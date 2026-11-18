@@ -39,6 +39,25 @@ class MiniappEnrollmentControllerTest {
     }
 
     @Test
+    void acceptsManualAlternativeButRejectsMissingBothNullOrCoercedProofs() throws Exception {
+        mvc.perform(post("/api/v1/rider/enrollment").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"姓名\",\"mobile\":\"13800138000\",\"agreed\":true}"))
+                .andExpect(jsonPath("$.code").value(0));
+        verify(enrollment).enroll(new EnrollmentReq("姓名", null, null, true, "13800138000"));
+        clearInvocations(enrollment);
+        for (String proof : new String[]{"", ",\"mobile\":null", ",\"phoneCode\":null", ",\"mobile\":7",
+                ",\"mobile\":true", ",\"mobile\":{}", ",\"mobile\":[]", ",\"mobile\":\"\"",
+                ",\"mobile\":\"13800138000\",\"phoneCode\":null",
+                ",\"mobile\":null,\"phoneCode\":\"code\"",
+                ",\"mobile\":\"13800138000\",\"phoneCode\":\"code\""}) {
+            mvc.perform(post("/api/v1/rider/enrollment").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"name\":\"姓名\",\"agreed\":true" + proof + "}"))
+                    .andExpect(jsonPath("$.code").value(400));
+        }
+        verifyNoInteractions(enrollment);
+    }
+
+    @Test
     void rejectsEveryUnknownSelectorAndPrivilegeFieldIncludingNullValues() throws Exception {
         for (String field : new String[]{"mobile", "userId", "role", "status", "rideEnabled", "drivingEnabled", "source", "appId", "code"}) {
             mvc.perform(post("/api/v1/rider/enrollment").contentType(MediaType.APPLICATION_JSON)

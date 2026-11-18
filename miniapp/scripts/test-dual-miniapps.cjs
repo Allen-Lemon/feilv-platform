@@ -12,6 +12,13 @@ module.exports = function ({ assert, fs, path, native, client, expectedPages, ex
     native_pending_withdrawal: { owner: '1', amountFen: 1234, requestId: 'original-withdraw-key' }
   })
   function seed(env) { const value = business(); for (const [key, item] of Object.entries(value)) env.storage.set(key, item); return value }
+  const chooseNew = page => page.chooseIdentity({ currentTarget: { dataset: { choice: 'NEW' } } })
+  const chooseLink = page => page.chooseIdentity({ currentTarget: { dataset: { choice: 'LINK' } } })
+  const manualMobile = page => page.identityMobileInput({ detail: { value: ' 13800138000 ' } })
+  const developmentOptions = async () => ({ developmentManualPhoneEnabled: true, smsLoginEnabled: false })
+  function noNativePhone() {
+    return environment({ canIUse() { return false }, getPrivacySetting() { assert.fail('development flow must not require native privacy') } })
+  }
   async function identity(env, overrides = {}) {
     const page = env.page('pages/login/login', Object.assign({ async loginOptions() { return { smsLoginEnabled: false } }, async wechatLogin() { return { state: 'IDENTITY_REQUIRED', loginTicket: TICKET, expiresAt: future() } }, async me() { return profileValue() } }, overrides))
     page.onLoad({}); await page.onShow(); page.consent({ detail: { value: ['yes'] } }); await page.wechat()
@@ -19,7 +26,7 @@ module.exports = function ({ assert, fs, path, native, client, expectedPages, ex
   }
   async function enrollment(env, overrides = {}) {
     env.authenticated()
-    const page = env.page('pages/rider/register', Object.assign({ async riderEnrollment() { return authenticated({ role: 'RIDER' }) } }, overrides))
+    const page = env.page('pages/rider/register', Object.assign({ async phoneBindingOptions() { return { developmentBypass: false } }, async riderEnrollment() { return authenticated({ role: 'RIDER' }) } }, overrides))
     page.onLoad({}); await page.onShow()
     page.input(event('name', ' 张三 ')); page.input(event('plateNo', ' 贵D12345 ')); page.consent({ detail: { value: ['yes'] } })
     return page
@@ -171,6 +178,110 @@ module.exports = function ({ assert, fs, path, native, client, expectedPages, ex
       page.toggleSms(); await page.sendCode(); await page.smsLogin(); assert.equal(page.data.sms, false); assert.equal(page.data.smsLoginEnabled, false); assert.equal(posts, 0)
     }
   })
+  riderTest('development account API: same public ticket route sends mobile exclusively and keeps native wrapper unchanged', async () => {
+    const env = environment(); const api = env.load(path.join(native, 'utils/api.js'))
+    const pending = api.forSession(env.load(path.join(native, 'utils/session.js')).revision()).createDevelopmentAccount(TICKET, '13800138000')
+    const req = env.calls.requests[0]
+    assert.equal(req.url, 'https://xt.allms.cn/api/v1/auth/miniapps/RIDER/accounts'); assert.equal(req.method, 'POST'); assert.equal(req.header.Authorization, undefined)
+    assert.deepEqual(JSON.parse(JSON.stringify(req.data)), { loginTicket: TICKET, mobile: '13800138000', agreed: true }); okRequest(req, {}); await pending
+  })
+  riderTest('development account: actual wx ticket, explicit NEW and consent, ordinary input without native phone or SMS', async () => {
+    const env = noNativePhone(); let submitted; let wxLogins = 0
+    env.wx.login = value => { wxLogins++; value.success({ code: 'actual-wx-ticket-proof' }) }
+    const page = await identity(env, { loginOptions: developmentOptions, async wechatLogin(code) { assert.equal(code, 'actual-wx-ticket-proof'); return { state: 'IDENTITY_REQUIRED', loginTicket: TICKET, expiresAt: future() } }, async createDevelopmentAccount(ticket, mobile) { submitted = { ticket, mobile }; return authenticated() } })
+    assert.equal(wxLogins, 1); await page.createDevelopmentAccount(); assert.equal(submitted, undefined)
+    await chooseNew(page); assert.equal(page.data.developmentManualPhoneEnabled, true); manualMobile(page)
+    page.consent({ detail: { value: [] } }); await page.createDevelopmentAccount(); assert.equal(submitted, undefined)
+    page.consent({ detail: { value: ['yes'] } }); await page.createDevelopmentAccount()
+    assert.deepEqual(submitted, { ticket: TICKET, mobile: '13800138000' }); assert.equal(page._loginTicket, null); assert.equal(page.data.identityMobile, ''); assert.equal(env.storage.get('feilv_user_id'), 1)
+    assert.equal(env.calls.requests.length, 0)
+    const markup = fs.readFileSync(path.join(native, 'pages/login/login.wxml'), 'utf8')
+    assert.match(markup, /riderClient && developmentManualPhoneEnabled === true/)
+    assert.match(markup, /bindtap="createDevelopmentAccount"/); assert.match(markup, /bindinput="identityMobileInput"/)
+    assert.doesNotMatch(markup.match(/<button[^>]*bindtap="createDevelopmentAccount"[^>]*>/)[0], /open-type/)
+  })
+  commonTest('development account failclosed: false, absent, malformed, rejected options and USER cannot submit manual numbers', async () => {
+    for (const options of [null, {}, { developmentManualPhoneEnabled: false }, { developmentManualPhoneEnabled: 'true' }, { developmentManualPhoneEnabled: 1 }, 'failure', ...(client === 'USER' ? [{ developmentManualPhoneEnabled: true }] : [])]) {
+      const env = environment(); let posts = 0
+      const page = await identity(env, { async loginOptions() { if (options === 'failure') throw new Error('offline'); return options }, async createDevelopmentAccount() { posts++ } })
+      await chooseNew(page); manualMobile(page); await page.createDevelopmentAccount()
+      assert.equal(page.data.developmentManualPhoneEnabled, false); assert.equal(page.data.identityMobile, ''); assert.equal(posts, 0)
+      assert.equal(page.data.privacyReady, true)
+    }
+    if (client === 'USER') assert.equal(environment().load(path.join(native, 'utils/api.js')).createDevelopmentAccount, undefined)
+  })
+  riderTest('development account validation and cancellation: invalid number, LINK choice and canceled warning never post', async () => {
+    const env = noNativePhone(); let posts = 0; const page = await identity(env, { loginOptions: developmentOptions, async createDevelopmentAccount() { posts++ } })
+    await chooseNew(page)
+    for (const value of ['', '123', '12800138000', '138****8000', '138001380001']) { page.identityMobileInput({ detail: { value } }); await page.createDevelopmentAccount() }
+    assert.equal(posts, 0); manualMobile(page); await chooseLink(page); await page.createDevelopmentAccount(); assert.equal(posts, 0); assert.equal(page.data.identityMobile, '')
+    await chooseNew(page); manualMobile(page)
+    env.wx.showModal = value => { assert.match(value.content, /不构成真实号码归属证明/); assert.match(value.content, /不继承/); value.success({ confirm: false }) }
+    await page.createDevelopmentAccount(); assert.equal(posts, 0); assert.equal(page.data.identityMobile, '')
+  })
+  riderTest('development account late options: hide, cancel, choice change, expiry and session replacement cannot enable entry', async () => {
+    for (const change of ['hide', 'unload', 'cancel', 'choice', 'expire', 'switch']) {
+      const env = noNativePhone(); let respond; let count = 0
+      const page = await identity(env, { loginOptions() { if (++count === 1) return Promise.resolve({}); return new Promise(resolve => { respond = resolve }) } })
+      const pending = chooseNew(page); await flush()
+      if (change === 'hide') page.onHide()
+      else if (change === 'unload') page.onUnload()
+      else if (change === 'cancel') page.restartIdentity()
+      else if (change === 'choice') await chooseLink(page)
+      else if (change === 'expire') page._loginTicket.expires = Date.now() - 1
+      else env.load(path.join(native, 'utils/session.js')).save(authenticated({ userId: 2 }))
+      respond(await developmentOptions()); await pending
+      assert.equal(page.data.developmentManualPhoneEnabled, false); assert.equal(page.data.identityMobile, '')
+    }
+  })
+  riderTest('development account options generations: newer disabled response wins, including login mode switch', async () => {
+    const env = noNativePhone(); const responders = []; let count = 0
+    const page = await identity(env, { loginOptions() { if (++count === 1) return Promise.resolve({}); return new Promise(resolve => responders.push(resolve)) } })
+    const old = chooseNew(page); await flush(); const latest = chooseNew(page); await flush()
+    responders[1]({ developmentManualPhoneEnabled: false }); await latest; responders[0](await developmentOptions()); await old
+    assert.equal(page.data.developmentManualPhoneEnabled, false)
+    const other = environment(); let respond
+    const login = other.page('pages/login/login', { loginOptions() { return new Promise(resolve => { respond = resolve }) } }); login.onLoad({}); const pending = login.onShow()
+    login.data.smsLoginEnabled = true; login.toggleSms(); respond(await developmentOptions()); await pending
+    assert.equal(login.data.developmentManualPhoneEnabled, false)
+  })
+  riderTest('development account modal/response guards: repeated taps, hidden/expired/replaced tickets, consent or mode races never apply', async () => {
+    for (const phase of ['modal', 'response']) for (const change of ['hide', 'unload', 'expire', 'switch', 'consent', 'choice', 'mode', 'ticket']) {
+      const env = noNativePhone(); let modalDone; let respond; let posts = 0
+      const page = await identity(env, { loginOptions: developmentOptions, createDevelopmentAccount() { posts++; return new Promise(resolve => { respond = resolve }) } })
+      await chooseNew(page); manualMobile(page)
+      env.wx.showModal = value => { modalDone = value.success }
+      const pending = page.createDevelopmentAccount(); await flush(); await page.createDevelopmentAccount(); assert.equal(posts, 0)
+      if (phase === 'response') { modalDone({ confirm: true }); await flush(); assert.equal(posts, 1); await page.createDevelopmentAccount(); assert.equal(posts, 1) }
+      if (change === 'hide') page.onHide()
+      else if (change === 'unload') page.onUnload()
+      else if (change === 'expire') page._loginTicket.expires = Date.now() - 1
+      else if (change === 'switch') env.load(path.join(native, 'utils/session.js')).save(authenticated({ userId: 2, token: 'replacement' }))
+      else if (change === 'consent') page.data.agreed = false
+      else if (change === 'choice') page.data.identityChoice = 'LINK'
+      else if (change === 'mode') page.data.developmentManualPhoneEnabled = false
+      else page._loginTicket = { value: 'X'.repeat(43), expires: Date.now() + 60000 }
+      if (phase === 'modal') modalDone({ confirm: true }); else respond(authenticated())
+      await pending; assert.equal(posts, phase === 'modal' ? 0 : 1)
+      assert.equal(env.storage.get('feilv_token'), change === 'switch' ? 'replacement' : undefined)
+      if (['hide', 'unload', 'expire'].includes(change)) assert.equal(page.data.identityMobile, '')
+    }
+  })
+  riderTest('development account ticket timer and no fallback: expiry clears input, denied native phone never invokes manual API', async () => {
+    const env = noNativePhone(); const page = await identity(env, { loginOptions: developmentOptions }); await chooseNew(page); manualMobile(page)
+    for (const timer of [...env.timers.values()]) await timer(); await flush(); assert.equal(page.data.identityMobile, ''); assert.equal(page._loginTicket, null)
+    const other = environment(); let manual = 0; const nativePage = await identity(other, { async createDevelopmentAccount() { manual++ } }); await chooseNew(nativePage)
+    nativePage.prepareAccountPhone(); await nativePage.createAccount(phoneEvent('', 'getPhoneNumber:fail user deny')); assert.equal(manual, 0); assert.equal(nativePage.data.developmentManualPhoneEnabled, false)
+  })
+  riderTest('development account session isolation: only same-owner reauth restores pending, new account inherits nothing', async () => {
+    for (const userId of [1, 2]) {
+      const env = noNativePhone(); env.authenticated(); const saved = seed(env); env.load(path.join(native, 'utils/session.js')).expire()
+      const page = await identity(env, { loginOptions: developmentOptions, async createDevelopmentAccount() { return authenticated({ userId }) }, async me() { return profileValue({ userId }) } })
+      await chooseNew(page); manualMobile(page); await page.createDevelopmentAccount()
+      assert.equal(env.storage.get('feilv_user_id'), userId)
+      for (const key of Object.keys(saved)) assert.equal(env.storage.get(key), userId === 1 ? saved[key] : undefined)
+    }
+  })
   commonTest('link code generation: fresh wx proof, target endpoint, page-memory only, cleared on hide', async () => {
     const env = environment(); env.authenticated(); let proof
     const page = env.page('pages/my/my', { async me() { return profileValue() }, async miniappLinkCode(code) { proof = code; return { linkCode: LINK_CODE, expiresAt: future(), targetClient: client === 'USER' ? 'RIDER' : 'USER' } } })
@@ -240,6 +351,100 @@ module.exports = function ({ assert, fs, path, native, client, expectedPages, ex
       if (change === 'hide') page.onHide(); else env.load(path.join(native, 'utils/session.js')).save(authenticated({ userId: 2 }))
       await page.register(phoneEvent('stale-proof')); assert.equal(posts, 0)
     }
+  })
+  riderTest('development enrollment API: same authenticated route with mobile or phoneCode exclusively, no identity selector', async () => {
+    const env = environment(); env.authenticated(); const api = env.load(path.join(native, 'utils/api.js'))
+    for (const [input, body] of [
+      [{ mobile: '13800138000' }, { name: '张三', plateNo: '', mobile: '13800138000', agreed: true }],
+      [{ mobile: '13800138000', phoneCode: null }, { name: '张三', plateNo: '', mobile: '13800138000', agreed: true }],
+      [{ mobile: null, phoneCode: 'proof' }, { name: '张三', plateNo: '', phoneCode: 'proof', agreed: true }]
+    ]) {
+      const pending = api.riderEnrollment(Object.assign({ name: '张三', plateNo: '', userId: 999, role: 'ADMIN' }, input)); const req = env.calls.requests.at(-1)
+      assert.equal(req.url, 'https://xt.allms.cn/api/v1/rider/enrollment'); assert.equal(req.method, 'POST'); assert.equal(req.header.Authorization, 'Bearer token-1')
+      assert.deepEqual(JSON.parse(JSON.stringify(req.data)), body); okRequest(req, {}); await pending
+    }
+  })
+  riderTest('development enrollment: no native phone/privacy/SMS, same account role upgrade and pending preserved', async () => {
+    const env = noNativePhone(); let submitted
+    const page = await enrollment(env, { async phoneBindingOptions() { return { developmentBypass: true } }, async riderEnrollment(value) { submitted = value; return authenticated({ role: 'RIDER' }) } })
+    const saved = seed(env); assert.equal(page.data.developmentManualPhoneEnabled, true); assert.equal(page.data.enrollmentMobile, '')
+    page.enrollmentMobileInput({ detail: { value: ' 13800138000 ' } }); await page.registerDevelopment()
+    assert.deepEqual(JSON.parse(JSON.stringify(submitted)), { name: '张三', plateNo: '贵D12345', mobile: '13800138000' })
+    assert.equal(env.storage.get('feilv_user_id'), 1); assert.equal(env.storage.get('feilv_role'), 'RIDER')
+    for (const key of Object.keys(saved)) assert.equal(env.storage.get(key), saved[key])
+    assert.equal(env.calls.requests.length, 0); assert.equal(env.calls.navigation.at(-1).url, '/pages/rider/workbench')
+    const markup = fs.readFileSync(path.join(native, 'pages/rider/register.wxml'), 'utf8')
+    assert.match(markup, /bindinput="enrollmentMobileInput"/); assert.match(markup, /绑定 \/ 换绑/)
+    assert.doesNotMatch(markup.match(/<button[^>]*bindtap="registerDevelopment"[^>]*>/)[0], /open-type/)
+  })
+  riderTest('development enrollment failclosed: unknown, malformed, false or rejected options retain real authorization and allow retry', async () => {
+    for (const options of [null, {}, { developmentBypass: false }, { developmentBypass: 'true' }, { developmentBypass: 1 }, 'failure']) {
+      const env = environment(); let posts = 0; let enabled = false
+      const page = await enrollment(env, { async phoneBindingOptions() { if (enabled) return { developmentBypass: true }; if (options === 'failure') throw new Error('offline'); return options }, async riderEnrollment() { posts++; return authenticated({ role: 'RIDER' }) } })
+      assert.equal(page.data.developmentManualPhoneEnabled, false); assert.equal(page.data.privacyReady, true)
+      page.enrollmentMobileInput({ detail: { value: '13800138000' } }); await page.registerDevelopment(); assert.equal(posts, 0); assert.equal(page.data.enrollmentMobile, '')
+      if (options && options.developmentBypass === false) assert.equal(page.data.phoneOptionsError, '')
+      else assert.match(page.data.phoneOptionsError, /禁用手填/)
+      enabled = true; await page.retryPhoneOptions(); assert.equal(page.data.developmentManualPhoneEnabled, true)
+    }
+  })
+  riderTest('development enrollment late options: loading blocks both submits, hide/unload/switch/newer read invalidate callbacks', async () => {
+    for (const change of ['hide', 'unload', 'switch', 'newer']) {
+      const env = noNativePhone(); env.authenticated(); let respond; let reads = 0; let posts = 0
+      const page = env.page('pages/rider/register', { phoneBindingOptions() { if (++reads > 1) return Promise.resolve({ developmentBypass: false }); return new Promise(resolve => { respond = resolve }) }, async riderEnrollment() { posts++ } })
+      page.onLoad({}); const pending = page.onShow(); await flush(); assert.equal(page.data.loading, true)
+      page.data.agreed = true; page.data.enrollmentMobile = '13800138000'; page.data.form = { name: '张三', plateNo: '' }
+      await page.registerDevelopment(); page.preparePhone(); await page.register(phoneEvent('loading-proof')); assert.equal(posts, 0)
+      if (change === 'hide') page.onHide()
+      else if (change === 'unload') page.onUnload()
+      else if (change === 'switch') env.load(path.join(native, 'utils/session.js')).save(authenticated({ userId: 2 }))
+      else page.onShow()
+      respond({ developmentBypass: true }); await pending; assert.equal(page.data.developmentManualPhoneEnabled, false)
+      if (['hide', 'unload'].includes(change)) { assert.equal(page.data.enrollmentMobile, ''); assert.equal(page.data.form.name, ''); assert.equal(page.data.agreed, false) }
+    }
+  })
+  riderTest('development enrollment validation: format/name/plate/consent local only, bound-number mismatch belongs to server', async () => {
+    const env = noNativePhone(); let submitted; let posts = 0
+    const page = await enrollment(env, { async phoneBindingOptions() { return { developmentBypass: true } }, async riderEnrollment(value) { posts++; submitted = value; throw new Error('手机号与当前绑定号码不一致，请先绑定或换绑') } })
+    for (const value of ['', '12', '12800138000', '138****8000', '138001380001']) { page.enrollmentMobileInput({ detail: { value } }); await page.registerDevelopment() }
+    page.enrollmentMobileInput({ detail: { value: '13900139000' } }); page.consent({ detail: { value: [] } }); await page.registerDevelopment()
+    page.consent({ detail: { value: ['yes'] } }); page.input(event('name', '')); await page.registerDevelopment()
+    page.input(event('name', '张三')); page.input(event('plateNo', 'X'.repeat(17))); await page.registerDevelopment(); assert.equal(posts, 0)
+    page.input(event('plateNo', '')); await page.registerDevelopment(); assert.equal(posts, 1); assert.equal(submitted.mobile, '13900139000')
+    assert.match(page.data.error, /不一致/); assert.equal(env.storage.get('feilv_role'), 'USER'); assert.equal(env.storage.get('feilv_token'), 'token-1'); assert.equal(env.calls.navigation.length, 0)
+    page.profile(); assert.equal(env.calls.navigation.at(-1).url, '/pages/profile/profile?mode=phone')
+  })
+  riderTest('development enrollment cancellation: warning is explicit and manual phone is cleared', async () => {
+    const env = noNativePhone(); let posts = 0
+    const page = await enrollment(env, { async phoneBindingOptions() { return { developmentBypass: true } }, async riderEnrollment() { posts++ } })
+    page.enrollmentMobileInput({ detail: { value: '13800138000' } })
+    env.wx.showModal = value => { assert.match(value.content, /不构成真实号码归属证明/); assert.match(value.content, /必须与当前账号已绑定号码一致/); value.success({ confirm: false }) }
+    await page.registerDevelopment(); assert.equal(posts, 0); assert.equal(page.data.enrollmentMobile, '')
+  })
+  riderTest('development enrollment modal/response races: repeated taps, lifecycle, owner, consent and mode changes cannot submit or save', async () => {
+    for (const phase of ['modal', 'response']) for (const change of ['hide', 'unload', 'switch', 'consent', 'mode', 'owner']) {
+      const env = noNativePhone(); let modalDone; let respond; let posts = 0
+      const page = await enrollment(env, { async phoneBindingOptions() { return { developmentBypass: true } }, riderEnrollment() { posts++; return new Promise(resolve => { respond = resolve }) } })
+      page.enrollmentMobileInput({ detail: { value: '13800138000' } }); env.wx.showModal = value => { modalDone = value.success }
+      const pending = page.registerDevelopment(); await flush(); await page.registerDevelopment(); assert.equal(posts, 0)
+      if (phase === 'response') { modalDone({ confirm: true }); await flush(); assert.equal(posts, 1); await page.registerDevelopment(); assert.equal(posts, 1) }
+      if (change === 'hide') page.onHide()
+      else if (change === 'unload') page.onUnload()
+      else if (change === 'switch') env.load(path.join(native, 'utils/session.js')).save(authenticated({ userId: 2, token: 'replacement' }))
+      else if (change === 'consent') page.data.agreed = false
+      else if (change === 'mode') page.data.developmentManualPhoneEnabled = false
+      else env.storage.set('feilv_user_id', 2)
+      if (phase === 'modal') modalDone({ confirm: true }); else respond(authenticated({ role: 'RIDER' }))
+      await pending; assert.equal(posts, phase === 'modal' ? 0 : 1); assert.equal(env.storage.get('feilv_token'), change === 'switch' ? 'replacement' : 'token-1')
+      assert.equal(env.calls.navigation.length, 0)
+      if (['hide', 'unload'].includes(change)) assert.equal(page.data.enrollmentMobile, '')
+    }
+  })
+  riderTest('development enrollment foreign response: no false success, token replacement or pending loss', async () => {
+    const env = noNativePhone(); const page = await enrollment(env, { async phoneBindingOptions() { return { developmentBypass: true } }, async riderEnrollment() { return authenticated({ userId: 2, role: 'RIDER' }) } }); const saved = seed(env)
+    page.enrollmentMobileInput({ detail: { value: '13800138000' } }); await page.registerDevelopment()
+    assert.equal(env.storage.get('feilv_user_id'), 1); assert.equal(env.storage.get('feilv_token'), 'token-1'); assert.equal(env.calls.navigation.length, 0); assert.match(page.data.error, /身份不匹配/)
+    for (const key of Object.keys(saved)) assert.equal(env.storage.get(key), saved[key])
   })
   riderTest('rider detail API: dedicated authorized read endpoint, no publisher mutation or track functions', async () => {
     const env = environment(); env.authenticated('RIDER'); const api = env.load(path.join(native, 'utils/api.js'))

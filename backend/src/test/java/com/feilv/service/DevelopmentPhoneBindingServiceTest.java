@@ -26,12 +26,18 @@ class DevelopmentPhoneBindingServiceTest {
     }
 
     @Test void bypassRequiresExplicitFlagAndDevelopmentProfileAndExcludesProductionProfiles() {
-        assertFalse(service(true).enabled()); assertFalse(service(false, "local").enabled());
+        assertFalse(service(false).enabled()); assertFalse(service(true).enabled());
+        assertFalse(service(true, "dev").enabled()); assertFalse(service(false, "local").enabled());
+        assertFalse(service(false, "development").enabled());
         assertTrue(service(true, "local").enabled()); assertTrue(service(true, "development").enabled());
+        assertTrue(service(true, "local", "development").enabled());
         for (String blocked : new String[]{"prod", "production", "docker"}) {
-            var binding = service(true, "local", blocked);
-            assertFalse(binding.enabled());
-            assertEquals(403, assertThrows(BizException.class, () -> binding.bind(42L, "13800138000")).getCode());
+            for (String[] profiles : new String[][]{{blocked}, {"local", blocked}, {blocked, "development"}, {"local", blocked, "development"}}) {
+                var binding = service(true, profiles);
+                assertFalse(binding.enabled());
+                assertEquals(DevelopmentPhoneBindingService.BypassStatus.PROTECTED_PROFILE, binding.status());
+                assertEquals(403, assertThrows(BizException.class, () -> binding.bind(42L, "13800138000")).getCode());
+            }
         }
         verify(users, never()).saveAndFlush(any());
     }
@@ -43,7 +49,7 @@ class DevelopmentPhoneBindingServiceTest {
                 .withBean(UserRepository.class, () -> users)
                 .withBean(PlatformTransactionManager.class, () -> manager)
                 .withPropertyValues("feilv.sms.binding-dev-bypass-enabled=${SMS_BINDING_DEV_BYPASS_ENABLED:false}")
-                .withUserConfiguration(DevelopmentPhoneBindingService.class)
+                .withUserConfiguration(DevelopmentPhoneBindingService.class, DevelopmentPhonePolicy.class)
                 .run(context -> {
                     assertNull(context.getStartupFailure());
                     var binding = context.getBean(DevelopmentPhoneBindingService.class);

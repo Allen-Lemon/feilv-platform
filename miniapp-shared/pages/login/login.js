@@ -11,7 +11,8 @@ definePage(Object.assign({}, profilePage, {
   data: Object.assign({}, profilePage.data, {
     agreed: false, sms: false, mobile: '', code: '', busy: false, sending: false,
     cooling: 0, smsLabel: '获取验证码', demoCode: '', profileStage: false,
-    smsLoginEnabled: false, identityRequired: false, identityChoice: '', linkCode: '', identityExpiresText: '', riderClient: client === 'RIDER'
+    smsLoginEnabled: false, identityRequired: false, identityChoice: '', linkCode: '', identityExpiresText: '', riderClient: client === 'RIDER',
+    developmentManualPhoneEnabled: false, identityMobile: '', loginOptionsLoading: false
   }),
   onLoad() { this._fromLogin = true; this._identityGeneration = 0 },
   onHide() { this.clearIdentity(); profilePage.onHide.call(this) },
@@ -24,38 +25,63 @@ definePage(Object.assign({}, profilePage, {
     return profilePage.onShow.call(this)
   },
   consent(e) { if (!this._working) this.safeSet({ agreed: e.detail.value.includes('yes') }) },
-  toggleSms() { if (!this._working && this.data.smsLoginEnabled && !this.data.identityRequired) this.safeSet({ sms: !this.data.sms }) },
+  toggleSms() {
+    if (!this._working && this.data.smsLoginEnabled && !this.data.identityRequired) {
+      this._loginOptionsAttempt = (this._loginOptionsAttempt || 0) + 1
+      this.safeSet({ sms: !this.data.sms, developmentManualPhoneEnabled: false, identityMobile: '', loginOptionsLoading: false })
+    }
+  },
   async loadLoginOptions() {
-    const revision = session.revision()
-    this.safeSet({ smsLoginEnabled: false, sms: false })
+    const revision = session.revision(); const generation = this._identityGeneration
+    const attempt = this._loginOptionsAttempt = (this._loginOptionsAttempt || 0) + 1
+    const choice = this.data.identityChoice; const profileStage = this.data.profileStage; const sms = this.data.sms
+    const current = () => !this._dead && this._visible && !session.token() && revision === session.revision()
+      && generation === this._identityGeneration && attempt === this._loginOptionsAttempt
+      && choice === this.data.identityChoice && profileStage === this.data.profileStage && sms === this.data.sms
+      && (!this._loginTicket || this.identityCurrent(generation))
+    this.safeSet({ smsLoginEnabled: false, developmentManualPhoneEnabled: false, identityMobile: '', loginOptionsLoading: true })
     try {
       const value = await api.forSession(revision).loginOptions()
-      if (!this._dead && this._visible && revision === session.revision()) this.safeSet({ smsLoginEnabled: !!value && value.smsLoginEnabled === true })
-    } catch { /* 能力未知默认关闭，不将演示短信冒充可用。 */ }
+      if (current()) this.safeSet({ smsLoginEnabled: !!value && value.smsLoginEnabled === true,
+        developmentManualPhoneEnabled: client === 'RIDER' && !!value && value.developmentManualPhoneEnabled === true })
+    } catch { /* 能力未知默认关闭，不将演示短信或手填号码冒充真实授权。 */ }
+    finally { if (current()) this.safeSet({ loginOptionsLoading: false }) }
   },
   clearIdentity() {
     this._identityGeneration = (this._identityGeneration || 0) + 1
     this._nativePrivacyAttempt = (this._nativePrivacyAttempt || 0) + 1
+    this._loginOptionsAttempt = (this._loginOptionsAttempt || 0) + 1
     this._loginTicket = null; this._identityIntent = null
-    this.safeSet({ identityRequired: false, identityChoice: '', linkCode: '', identityExpiresText: '' })
+    this.setData({ identityRequired: false, identityChoice: '', linkCode: '', identityExpiresText: '', identityMobile: '',
+      developmentManualPhoneEnabled: false, loginOptionsLoading: false })
   },
   identityCurrent(generation = this._identityGeneration) {
+    if (this._loginTicket && this._loginTicket.expires <= Date.now()) { this.clearIdentity(); return false }
     return !this._dead && this._visible && !session.token() && this._sessionRevision === session.revision()
-      && generation === this._identityGeneration && !!this._loginTicket && this._loginTicket.expires > Date.now()
+      && generation === this._identityGeneration && !!this._loginTicket
   },
   async chooseIdentity(e) {
     if (this._working || !this.identityCurrent()) return toast('请重新微信登录获取有效凭证')
     const choice = e.currentTarget.dataset.choice
     if (!['LINK', 'NEW'].includes(choice)) return
-    this._identityIntent = null
-    this.safeSet({ identityChoice: choice, linkCode: '' })
-    if (choice === 'NEW') await phoneAuthorization.privacy(this, () => this.identityCurrent() && this.data.identityChoice === 'NEW')
+    this._identityGeneration++; this._loginOptionsAttempt = (this._loginOptionsAttempt || 0) + 1
+    this._nativePrivacyAttempt = (this._nativePrivacyAttempt || 0) + 1; this._identityIntent = null
+    this.safeSet({ identityChoice: choice, linkCode: '', identityMobile: '', developmentManualPhoneEnabled: false, loginOptionsLoading: false })
+    if (choice === 'NEW') {
+      const generation = this._identityGeneration
+      await this.loadLoginOptions()
+      if (this.identityCurrent(generation) && this.data.identityChoice === 'NEW' && !this.data.developmentManualPhoneEnabled) await this.identityPrivacy()
+    }
   },
   linkCodeInput(e) { if (!this._working && this.identityCurrent()) this.safeSet({ linkCode: String(e.detail.value || '').trim() }) },
-  async identityPrivacy() { if (this.identityCurrent()) await phoneAuthorization.privacy(this, () => this.identityCurrent()) },
+  async identityPrivacy() {
+    const generation = this._identityGeneration
+    const current = () => this.identityCurrent(generation) && this.data.identityChoice === 'NEW' && !this.data.developmentManualPhoneEnabled && !this.data.loginOptionsLoading
+    if (current()) await phoneAuthorization.privacy(this, current)
+  },
   openIdentityPrivacy() { if (typeof wx.openPrivacyContract === 'function') wx.openPrivacyContract({}) },
   prepareAccountPhone() {
-    this._identityIntent = this.identityCurrent() && this.data.identityChoice === 'NEW' && this.data.agreed && this.data.phoneSupported && this.data.privacyReady && !this._working
+    this._identityIntent = this.identityCurrent() && this.data.identityChoice === 'NEW' && !this.data.developmentManualPhoneEnabled && !this.data.loginOptionsLoading && this.data.agreed && this.data.phoneSupported && this.data.privacyReady && !this._working
       ? { generation: this._identityGeneration, revision: session.revision() } : null
   },
   createAccount(e) {
@@ -68,6 +94,28 @@ definePage(Object.assign({}, profilePage, {
       if (!(await require('../../utils/page').modal({ title: '确认创建新账号', content: '此操作创建独立平台账号，不继承原账号订单、钱包或骑手身份。若已有账号，请取消并使用临时关联码。手机号必须由微信真实验证，开发或演示号码不能证明归属。' })).confirm || !this.identityCurrent(intent.generation)) return
       const value = await scopedApi.createAccount(this._loginTicket.value, phoneCode)
       if (this.identityCurrent(intent.generation)) await this.finish(value)
+    })
+  },
+  identityMobileInput(e) {
+    if (!this._working && this.developmentIdentityCurrent()) this.safeSet({ identityMobile: String(e.detail.value || '').trim() })
+  },
+  developmentIdentityCurrent(generation = this._identityGeneration) {
+    return this.identityCurrent(generation) && client === 'RIDER' && this.data.developmentManualPhoneEnabled === true
+      && !this.data.loginOptionsLoading && this.data.identityRequired && this.data.identityChoice === 'NEW' && !this.data.profileStage
+  },
+  createDevelopmentAccount() {
+    if (this._working || !this.developmentIdentityCurrent() || !this.checkConsent()) return
+    const identityMobile = this.data.identityMobile.trim()
+    if (!/^1[3-9]\d{9}$/.test(identityMobile)) return toast('请输入正确的11位手机号')
+    const generation = this._identityGeneration; const ticket = this._loginTicket.value; const revision = session.revision()
+    const current = () => this.developmentIdentityCurrent(generation) && this.data.agreed && revision === session.revision()
+      && this._loginTicket.value === ticket && this.data.identityMobile === identityMobile
+    return this.run('busy', async scopedApi => {
+      const confirmed = (await require('../../utils/page').modal({ title: '开发模式：确认创建独立账号', content: '仅供开发测试：手填手机号未经微信或短信验证，不构成真实号码归属证明。此操作创建独立账号，不继承原账号订单、钱包或骑手档案。已有账号请取消并使用临时关联码。' })).confirm
+      if (!confirmed) { this.safeSet({ identityMobile: '' }); return }
+      if (!current()) return
+      const value = await scopedApi.createDevelopmentAccount(ticket, identityMobile)
+      if (current()) await this.finish(value)
     })
   },
   linkAccount() {
@@ -145,8 +193,8 @@ definePage(Object.assign({}, profilePage, {
       if (!value || value.state !== 'IDENTITY_REQUIRED' || typeof value.loginTicket !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value.loginTicket) || !Number.isFinite(expires) || expires <= Date.now()) throw new Error('微信登录响应无效，请重新登录')
       this._loginTicket = { value: value.loginTicket, expires }
       this.safeSet({ identityRequired: true, identityChoice: '', identityExpiresText: value.expiresAt, sms: false })
-      const generation = this._identityGeneration
-      this.later(() => { if (generation === this._identityGeneration) { this.clearIdentity(); toast('登录凭证已过期，请重新微信登录') } }, Math.min(expires - Date.now(), 2147483647))
+      const ticket = this._loginTicket
+      this.later(() => { if (ticket === this._loginTicket) { this.clearIdentity(); toast('登录凭证已过期，请重新微信登录') } }, Math.min(expires - Date.now(), 2147483647))
     })
   },
   smsLogin() {

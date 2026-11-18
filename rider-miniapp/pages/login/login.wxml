@@ -28,7 +28,22 @@
         <button class="secondary" data-choice="LINK" bindtap="chooseIdentity" disabled="{{busy}}">关联已有平台账号</button>
         <button class="text-button" data-choice="NEW" bindtap="chooseIdentity" disabled="{{busy}}">没有账号，创建新账号</button>
         <view wx:if="{{identityChoice === 'LINK'}}"><view class="field-help">在另一小程序登录原账号，进入“我的”并确认生成一次性关联码。不要使用他人发送的码。</view><input class="profile-input" value="{{linkCode}}" maxlength="43" bindinput="linkCodeInput" placeholder="输入另一端临时关联码" disabled="{{busy}}"/><button class="primary" bindtap="linkAccount" loading="{{busy}}" disabled="{{busy}}">确认关联本人已有账号</button></view>
-        <view wx:if="{{identityChoice === 'NEW'}}"><view class="inline-notice">创建独立新账号，不继承原账号资产或骑手档案。需要本次真实微信手机号授权。</view><view wx:if="{{!phoneSupported}}">请升级微信并确认手机号能力已开通。</view><block wx:elif="{{privacyNeeded}}"><button class="text-button" bindtap="openIdentityPrivacy">查看{{privacyTitle}}</button><button wx:if="{{privacyGateSupported}}" open-type="agreePrivacyAuthorization" bindagreeprivacyauthorization="identityPrivacy" disabled="{{busy}}">同意隐私指引</button></block><button wx:elif="{{privacyReady}}" class="primary" open-type="getPhoneNumber" bindtap="prepareAccountPhone" bindgetphonenumber="createAccount" loading="{{busy}}" disabled="{{busy}}">授权手机号并确认创建新账号</button><button wx:else class="text-button" bindtap="identityPrivacy">重新检查隐私授权</button></view>
+        <view wx:if="{{identityChoice === 'NEW'}}">
+          <view class="inline-notice">创建独立新账号，不继承原账号资产或骑手档案。</view>
+          <view wx:if="{{loginOptionsLoading}}" class="field-help">正在确认服务端手机号能力…</view>
+          <block wx:elif="{{riderClient && developmentManualPhoneEnabled === true}}">
+            <view class="inline-notice">开发测试模式：手填号码未经微信或短信验证，不构成真实号码归属证明。已有账号请使用临时关联码。</view>
+            <view class="profile-field"><label class="profile-label" for="identity-mobile">开发测试手机号</label><input id="identity-mobile" class="profile-input" type="number" maxlength="11" value="{{identityMobile}}" bindinput="identityMobileInput" placeholder="手动填写11位手机号" disabled="{{busy}}"/></view>
+            <button class="primary" bindtap="createDevelopmentAccount" loading="{{busy}}" disabled="{{busy || !agreed}}">开发模式：确认创建独立新账号</button>
+          </block>
+          <block wx:else>
+            <view class="field-help">需要本次真实微信手机号授权；授权失败不会切换为手填号码。</view>
+            <view wx:if="{{!phoneSupported}}">请升级微信并确认手机号能力已开通。</view>
+            <block wx:elif="{{privacyNeeded}}"><button class="text-button" bindtap="openIdentityPrivacy">查看{{privacyTitle}}</button><button wx:if="{{privacyGateSupported}}" open-type="agreePrivacyAuthorization" bindagreeprivacyauthorization="identityPrivacy" disabled="{{busy}}">同意隐私指引</button></block>
+            <button wx:elif="{{privacyReady}}" class="primary" open-type="getPhoneNumber" bindtap="prepareAccountPhone" bindgetphonenumber="createAccount" loading="{{busy}}" disabled="{{busy}}">授权手机号并确认创建新账号</button>
+            <button wx:else class="text-button" bindtap="identityPrivacy">重新检查隐私授权</button>
+          </block>
+        </view>
         <button class="text-button" bindtap="restartIdentity" disabled="{{busy}}">取消选择 / 重新微信登录</button>
       </view>
       <button wx:if="{{smsLoginEnabled && !identityRequired}}" class="text-button sms-toggle" disabled="{{busy || sending}}" bindtap="toggleSms">{{sms ? '收起其他登录方式 ↑' : '其他登录方式 →'}}</button>
