@@ -3,9 +3,13 @@
 FROM maven:3.9.9-eclipse-temurin-17 AS build
 WORKDIR /workspace
 COPY pom.xml .
-RUN mvn -B -ntp dependency:go-offline
 COPY src ./src
-RUN mvn -B -ntp clean package -DskipTests
+RUN --mount=type=cache,id=feilv-maven-repository,target=/root/.m2/repository,sharing=locked \
+    --mount=type=secret,id=maven_settings,target=/root/.m2/settings.xml,required=false \
+    mvn -B \
+      -Daether.connector.connectTimeout=10000 \
+      -Daether.connector.requestTimeout=60000 \
+      clean package -DskipTests
 
 FROM eclipse-temurin:17-jre-jammy
 RUN apt-get update \

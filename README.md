@@ -185,7 +185,38 @@ cp .env.example .env
 
 不要把 `.env` 提交到版本库或镜像中。
 
+### 构建长时间停在 Maven 下载时
+
+旧 Dockerfile 的 `dependency:go-offline` 会预解析依赖和插件，可能下载比实际打包更多的内容；仅凭长时间停在该行不能确定是网络故障。现在改为一次 `clean package -DskipTests`，使用 BuildKit Maven 仓库缓存，并保留下载地址和结果日志。需要启用 BuildKit 的 Docker/Buildx。
+
+在项目根目录先执行**只构建、不启动服务**的检查，不加载 `.env`、不连接业务数据库：
+
+```bash
+# 只验证 Maven 构建阶段，不执行运行镜像中的 apt-get
+DOCKER_BUILDKIT=1 docker build --progress=plain --target build -f backend/Dockerfile -t feilv/backend-build-check ./backend
+
+# 上一步通过后，验证完整运行镜像（仍不启动容器）
+DOCKER_BUILDKIT=1 docker build --progress=plain -f backend/Dockerfile -t feilv/backend:build-check ./backend
+```
+
+- 首次仍需下载依赖；缓存保留在同一个 BuildKit builder 中，源码修改后可复用已下载的依赖，不会把 Maven 仓库带入运行镜像。不要为了重试使用 `docker builder prune` 清空缓存。
+- Maven 3.9 使用原生 Resolver；连接超时设为 10 秒，请求等待超时设为 60 秒，约束单次等待，**不是整个构建必须在 60 秒内完成**。多个依赖/重试仍可能累计较长时间。
+- 如果仍失败，保留完整 `--progress=plain` 日志，重点查看具体仓库地址、依赖坐标和 `Could not transfer artifact` / 超时 / DNS / TLS 错误，再排查构建环境的网络、代理或仓库。不要关闭 TLS 校验。
+- `--target build` 成功但完整镜像失败时，检查失败是否发生在运行阶段的 `apt-get` 或基础镜像拉取；这与 Maven 下载是不同阶段。
+- 宿主机的 `.m2/settings.xml` 不会自动进入镜像。确需内网仓库、经确认可信的 HTTPS 镜像或 Maven 代理时，将 settings 文件放在构建上下文之外，用可选 BuildKit secret 传入，不通过 `COPY`、`ARG`、`ENV` 提交仓库凭据：
+
+```bash
+# 将 /absolute/path/outside-repo/settings.xml 替换为运维自己的文件；默认不使用第三方镜像
+DOCKER_BUILDKIT=1 docker build --progress=plain --target build --secret id=maven_settings,src=/absolute/path/outside-repo/settings.xml -f backend/Dockerfile -t feilv/backend-build-check ./backend
+```
+
+完整镜像构建需要相同 settings 时也传入该 `--secret`。Secret 内容变化不会使已有构建层自动失效；需要强制验证新配置时可为该命令加 `--no-cache`（不会清空 Maven cache mount）。不要把含凭据的 settings 内容或日志公开。`docker-compose.prod.yml` 为预构建镜像部署配置，单独使用它不会构建本 Dockerfile。
+
+本地静态构建契约回归：`node --test backend/scripts/docker-build.test.cjs`，只检查 Dockerfile，不运行 Maven、Docker 或后端；不等于真实镜像构建通过。
+
 ### 2）构建并启动
+
+完成镜像检查、数据库备份和隔离迁移演练后，按部署授权执行：
 
 ```bash
 docker compose up -d --build
