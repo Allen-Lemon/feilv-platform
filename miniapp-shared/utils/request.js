@@ -44,10 +44,13 @@ function response(res, options, ctx, uploaded) {
     throw failure('登录已过期，请重新登录', { status: 401 })
   }
   if (res.statusCode < 200 || res.statusCode >= 300) {
-    const msg = body && typeof body.msg === 'string' ? body.msg : '服务请求失败（HTTP ' + res.statusCode + '）'
+    const fallback = uploaded && res.statusCode === 413
+      ? '头像文件超过服务端或代理上传上限（HTTP 413），请压缩图片后重试'
+      : '服务请求失败（HTTP ' + res.statusCode + '）'
+    const msg = body && typeof body.msg === 'string' ? body.msg : fallback
     throw failure(msg, { status: res.statusCode, code: businessCode })
   }
-  if (!body || typeof body !== 'object' || typeof body.code !== 'number') throw failure('服务响应格式错误，预期 Result 响应体')
+  if (!body || typeof body !== 'object' || typeof body.code !== 'number') throw failure('服务响应格式错误，预期 Result 响应体（HTTP ' + res.statusCode + '）')
   if (body.code !== 0) throw failure(body.msg || '业务处理失败', { code: body.code })
   return body.data
 }
@@ -68,19 +71,80 @@ function request(options) {
     })
   })
 }
+// 上传前探测只用于友好提示；探测能力缺失或失败不阻断，最终由后端校验文件大小和图片内容。
+const AVATAR_LIMIT = 5 * 1024 * 1024
+const AVATAR_UNSUPPORTED = new Set(['gif', 'webp', 'bmp', 'tiff', 'tif', 'heic', 'heif', 'svg'])
+function fileSize(filePath, ctx) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (size, failed) => {
+      if (settled) return
+      settled = true
+      try { ctx.check() } catch (e) { reject(e); return }
+      resolve(failed || !Number.isFinite(size) ? null : size)
+    }
+    const legacy = () => {
+      if (typeof wx.getFileInfo !== 'function') return finish(null, true)
+      try {
+        wx.getFileInfo({
+          filePath,
+          success(result) { finish(result && result.size) },
+          fail() { finish(null, true) }
+        })
+      } catch { finish(null, true) }
+    }
+    let manager = null
+    try { manager = typeof wx.getFileSystemManager === 'function' ? wx.getFileSystemManager() : null } catch { manager = null }
+    if (manager && typeof manager.getFileInfo === 'function') {
+      try {
+        manager.getFileInfo({
+          filePath,
+          success(result) { finish(result && result.size) },
+          fail: legacy
+        })
+        return
+      } catch { /* 回退到旧接口 */ }
+    }
+    legacy()
+  })
+}
+function imageType(filePath, ctx) {
+  return new Promise((resolve, reject) => {
+    if (typeof wx.getImageInfo !== 'function') return resolve('')
+    let settled = false
+    const finish = (type, failed) => {
+      if (settled) return
+      settled = true
+      try { ctx.check() } catch (e) { reject(e); return }
+      resolve(failed ? '' : String(type || '').toLowerCase())
+    }
+    try {
+      wx.getImageInfo({
+        src: filePath,
+        success(result) { finish(result && result.type) },
+        fail() { finish('', true) }
+      })
+    } catch { finish('', true) }
+  })
+}
+function uploadFailure(err) {
+  const detail = String(err && err.errMsg || '')
+  if (/domain list|合法域名/i.test(detail)) {
+    const origin = (baseURL().match(/^https?:\/\/[^/?#]+/i) || [])[0] || '当前服务地址'
+    return '头像上传失败：' + origin + ' 未加入该小程序 uploadFile 合法域名，请在小程序后台配置后重试'
+  }
+  if (/ssl|certificate|cert/i.test(detail)) return '头像上传失败：HTTPS 证书校验未通过，请检查证书链与合法域名配置'
+  if (/timeout|timed out/i.test(detail)) return '头像上传超时，请检查网络后重试'
+  return detail ? '头像上传失败（' + detail.slice(0, 120) + '）' : '头像上传失败，请检查网络及 uploadFile 合法域名后重试'
+}
 async function uploadAvatar(filePath, options = {}) {
   const ctx = context(options)
   if (!ctx.token) { session.login(); throw failure('请先登录', { status: 401 }) }
   if (typeof filePath !== 'string' || !filePath) throw failure('请先选择头像')
-  const inspect = method => new Promise((resolve, reject) => wx[method]({
-    filePath, src: filePath,
-    success(result) { try { ctx.check(); resolve(result) } catch (e) { reject(e) } },
-    fail() { try { ctx.check(); reject(failure('无法读取头像，请重新选择 JPEG 或 PNG 图片')) } catch (e) { reject(e) } }
-  }))
-  const file = await inspect('getFileInfo')
-  if (!Number.isFinite(file.size) || file.size <= 0 || file.size > 5 * 1024 * 1024) throw failure('头像大小须为5MB以内')
-  const image = await inspect('getImageInfo')
-  if (!['jpeg', 'jpg', 'png'].includes(String(image.type).toLowerCase())) throw failure('头像仅支持 JPEG 或 PNG 图片')
+  const size = await fileSize(filePath, ctx)
+  if (size !== null && (size <= 0 || size > AVATAR_LIMIT)) throw failure('头像大小须为5MB以内')
+  const type = await imageType(filePath, ctx)
+  if (AVATAR_UNSUPPORTED.has(type)) throw failure('头像仅支持 JPEG 或 PNG 图片')
   ctx.check()
   return new Promise((resolve, reject) => {
     wx.uploadFile({
@@ -88,7 +152,7 @@ async function uploadAvatar(filePath, options = {}) {
       header: { Authorization: 'Bearer ' + ctx.token },
       success(res) { try { resolve(response(res, options, ctx, true)) } catch (e) { reject(e) } },
       fail(err) {
-        try { ctx.check(); reject(failure('头像上传失败，请检查网络及 uploadFile 合法域名后重试', { cause: err })) } catch (e) { reject(e) }
+        try { ctx.check(); reject(failure(uploadFailure(err), { cause: err })) } catch (e) { reject(e) }
       }
     })
   })

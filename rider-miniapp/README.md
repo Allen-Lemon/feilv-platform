@@ -45,8 +45,9 @@
 ## 独立导入与离线检查
 
 1. 微信开发者工具直接导入本目录，`miniprogramRoot: './'`。
-2. `project.config.json` 的 `UNCONFIGURED_RIDER_APPID` 是明确未配置状态，不是虚构 wx AppID。须由负责人填写真实且不同于用户端的 AppID；AppSecret 只能配置后端。未复制用户端个人 private config。
+2. `project.config.json` 已填写骑手 AppID `wx98f8e0e0b1440761`；发布前须核对它与后端骑手登录配置一致、确实属于独立骑手小程序且不同于用户端。AppSecret 只能配置后端。未复制用户端个人 private config。骑手端与用户端是两个独立小程序，**必须各自在微信公众平台配置 `request` 与 `uploadFile` 合法域名**（`https://xt.allms.cn`，无路径、无端口）；只在用户端配置不会让骑手端的头像上传通过域名校验。
 3. 本地无需 npm install。项目根可运行 `node scripts/check-miniapps.cjs`，或分别运行两个根的 `npm run build`、`npm run check:wechat`。
 4. `miniapp-shared/manifest.json` 是24个稳定共用源码文件的明确清单。修改共享源后运行 `node scripts/sync-miniapp-shared.cjs`；`--check` 只读核对两根副本一致，不改文件。上传工程内已包含副本，不依赖运行时生成或父目录。
+5. 头像上传失败按页面提示定位：提示“uploadFile 合法域名”表示该骑手 AppID 未配置上传域名；提示“HTTP 413”表示服务端或外层反向代理的体积上限小于 6MB（后端 multipart 为 5MB），需把代理 `client_max_body_size` 提到不低于 6MB；证书/timeout 提示则检查 HTTPS 证书链与网络。仍失败时在开发者工具 Network 查看 `/api/v1/user/avatar` 的真实响应，不要关闭 `urlCheck` 掩盖上线问题；用户端 private config 的 `urlCheck:false` 不是骑手端上线依据。
 
 真实 AppID、微信登录/手机号能力、真机隐私授权、历史账号恢复和维护窗口 JWT 切换均未由离线测试证明。发布阻塞与人工验收见 [WECHAT_DEPLOYMENT.md](WECHAT_DEPLOYMENT.md)。本轮不上传、不部署、不接线上库。

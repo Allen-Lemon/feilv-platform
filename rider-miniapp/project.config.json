@@ -1,4 +1,55 @@
 {
   "compileType": "miniprogram",
-  "appid": "wx98f8e0e0b1440761"
+  "miniprogramRoot": "./",
+  "appid": "wx98f8e0e0b1440761",
+  "projectname": "feilv-rider-native",
+  "setting": {
+    "urlCheck": true,
+    "es6": true,
+    "minified": true,
+    "minifyWXML": true,
+    "minifyWXSS": true
+  },
+  "packOptions": {
+    "ignore": [
+      {
+        "value": "scripts",
+        "type": "folder"
+      },
+      {
+        "value": "dist",
+        "type": "folder"
+      },
+      {
+        "value": "node_modules",
+        "type": "folder"
+      },
+      {
+        "value": "package.json",
+        "type": "file"
+      },
+      {
+        "value": "package-lock.json",
+        "type": "file"
+      },
+      {
+        "value": "README.md",
+        "type": "file"
+      },
+      {
+        "value": "NATIVE_MIGRATION.md",
+        "type": "file"
+      },
+      {
+        "value": "WECHAT_DEPLOYMENT.md",
+        "type": "file"
+      },
+      {
+        "value": ".gitignore",
+        "type": "file"
+      }
+    ],
+    "include": []
+  },
+  "libVersion": "3.18.0"
 }

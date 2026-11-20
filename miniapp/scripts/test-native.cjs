@@ -753,18 +753,50 @@ commonTest('avatar: multipart bearer upload parses string Result; API /api suffi
   req.success({ statusCode: 200, data: JSON.stringify({ code: 0, data: profileValue({ avatarUrl: AVATAR }) }) })
   assert.equal((await pending).avatarUrl, AVATAR)
 })
-commonTest('avatar: file validation rejects oversized, empty, unsupported and unreadable files before upload', async () => {
+commonTest('avatar: known oversized, empty or unsupported files are rejected before upload', async () => {
   for (const override of [
     { getFileInfo(o) { o.success({ size: 5 * 1024 * 1024 + 1 }) } },
     { getFileInfo(o) { o.success({ size: 0 }) } },
-    { getFileInfo(o) { o.fail({}) } },
-    { getImageInfo(o) { o.success({ type: 'gif' }) } },
-    { getImageInfo(o) { o.fail({}) } }
+    { getFileInfo: undefined, getFileSystemManager() { return { getFileInfo(o) { o.success({ size: 5 * 1024 * 1024 + 1 }) } } } },
+    { getImageInfo(o) { o.success({ type: 'gif' }) } }
   ]) {
     const env = environment(override); env.authenticated()
     await assert.rejects(env.load(path.join(native, 'utils/api.js')).uploadAvatar('wxfile://tmp/file'))
     assert.equal(env.calls.uploads.length, 0); assert.equal(env.storage.get('feilv_token'), 'token-1')
   }
+})
+commonTest('avatar: unavailable file probes never block upload; backend remains authoritative', async () => {
+  for (const override of [
+    { getFileInfo(o) { o.fail({}) } },
+    { getImageInfo(o) { o.fail({}) } },
+    { getImageInfo(o) { o.success({ type: 'unknown' }) } },
+    { getFileInfo: undefined, getImageInfo: undefined }
+  ]) {
+    const env = environment(override); env.authenticated()
+    const pending = env.load(path.join(native, 'utils/api.js')).uploadAvatar('wxfile://tmp/file'); await flush()
+    assert.equal(env.calls.uploads.length, 1)
+    env.calls.uploads[0].success({ statusCode: 200, data: '{"code":0,"data":{}}' })
+    await pending
+  }
+})
+commonTest('avatar: native uploadFile failures surface actionable domain/SSL/timeout guidance', async () => {
+  for (const [errMsg, pattern] of [
+    ['uploadFile:fail url not in domain list', /uploadFile 合法域名/],
+    ['uploadFile:fail ssl hand shake error', /证书/],
+    ['uploadFile:fail timeout', /超时/]
+  ]) {
+    const env = environment(); env.authenticated()
+    const pending = env.load(path.join(native, 'utils/api.js')).uploadAvatar('wxfile://tmp/file'); await flush()
+    env.calls.uploads[0].fail({ errMsg })
+    await assert.rejects(pending, e => pattern.test(e.message))
+    assert.equal(env.storage.get('feilv_token'), 'token-1')
+  }
+})
+commonTest('avatar: non-JSON 413 response keeps the HTTP status and suggests compression', async () => {
+  const env = environment(); env.authenticated()
+  const pending = env.load(path.join(native, 'utils/api.js')).uploadAvatar('wxfile://tmp/file'); await flush()
+  env.calls.uploads[0].success({ statusCode: 413, data: '<html>request entity too large</html>' })
+  await assert.rejects(pending, e => /413/.test(e.message) && /压缩/.test(e.message))
 })
 commonTest('avatar: HTTP/business 401 clear session; other upload errors retain it', async () => {
   for (const response of [
@@ -807,7 +839,8 @@ commonTest('avatar: account switch during file inspection prevents upload with e
 commonTest('profile: chooseAvatar is explicit; successful save persists only server path and preserves nickname draft', async () => {
   const env = environment(); let uploaded = 0
   const page = await readyProfile(env, { async me() { return profileValue() }, async uploadAvatar(p) { uploaded++; assert.equal(p, 'wxfile://tmp/avatar'); return profileValue({ avatarUrl: AVATAR }) } })
-  page.chooseAvatar({ detail: { avatarUrl: 'ignored' } }); assert.equal(page.data.avatarDraft, '')
+  page.chooseAvatar({ detail: { avatarUrl: 'no-tap-temp' } }); assert.equal(page.data.avatarDraft, 'no-tap-temp')
+  page.discardAvatar(); assert.equal(page.data.avatarDraft, '')
   page.input({ detail: { value: '尚未保存' } }); selectAvatar(page)
   assert.equal(uploaded, 0); assert.equal(env.storage.has('feilv_avatar_url') && !!env.storage.get('feilv_avatar_url'), false)
   const session = env.load(path.join(native, 'utils/session.js')); const revision = session.revision()

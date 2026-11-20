@@ -30,7 +30,7 @@
 ## 微信公众平台设置
 
 1. 使用对应小程序账号登录微信公众平台。
-2. 开发管理 / 开发设置 / 服务器域名，添加 **request、uploadFile** 合法域名：`https://xt.allms.cn`（无路径、无端口）。头像公开读取也需符合微信图片 HTTPS 域名规则；域名变更时一并核对图片及上传配置。
+2. 开发管理 / 开发设置 / 服务器域名，添加 **request、uploadFile** 合法域名：`https://xt.allms.cn`（无路径、无端口）。头像公开读取也需符合微信图片 HTTPS 域名规则；域名变更时一并核对图片及上传配置。**用户端与骑手端是独立 AppID，需分别在各自小程序后台配置**；只配一端时另一端真机会报 `url not in domain list`。
 3. 确认域名备案、HTTPS证书链和平台域名规则符合微信要求。不要关闭域名或证书校验来冒充上线就绪。
 4. 完善运营主体、服务类目、用户隐私保护指引、客服电话/联系方式及数据删除等说明。
 5. 当前骑手上报使用 `getLocation`。按账号类目和微信要求申请定位能力并声明用途；`app.json` 中的声明不能代替微信后台授权。
@@ -59,7 +59,7 @@ docker compose up -d --build --force-recreate backend
 - 不会自动获取头像、昵称或手机号。微信及短信登录成功后留在同一登录页，以**新登录会话**读取 `GET /api/v1/user/me`。手机号已绑定且昵称有效则自动返回原业务页或“我的”；否则在当前页显示资料表单，不再跳转独立资料页。头像昵称不能通过一次微信登录授权自动取得，仍需原生选择/填写；手机号仍需独立授权。首页登录同样遵守此流程。
 - 昵称由用户主动选择或填写并点击保存，作为平台展示用户名，不是微信号或真实姓名。微信默认昵称不代表已完善；`PUT /api/v1/user/profile {nickname}` 只提交昵称，返回完整 me。
 - 头像由用户主动点击 `chooseAvatar` 选择；登录页点击“保存并继续”会依次上传选中的头像、保存昵称并重新核验 me，失败留在原页重试，已成功上传的头像不重复上传。“我的”独立资料页点击“保存头像”后调用 `wx.uploadFile`。可保留默认头像，不强制上传才能浏览或下单。支持5MB以内 JPEG/PNG；`POST /api/v1/user/avatar`，multipart 字段名 `file`，Bearer 认证，不能手工指定 multipart Content-Type。
-- 上传接口、昵称保存、手机号绑定和 GET me 均返回完整 me，包含持久化 `avatarUrl`（`/api/v1/avatars/<uuid>.jpg|png`）。头像 URL 按服务 **origin** 解析，即使 API_BASE_URL 含 `/api` 也不重复拼接路径。服务必须持久化头像文件并允许公开读取；头像不可包含私密身份字段，不应上传证件、手机号等信息。客户端仅缓存合法服务端路径，绝不缓存 chooseAvatar 临时路径。
+- 上传接口、昵称保存、手机号绑定和 GET me 均返回完整 me，包含持久化 `avatarUrl`（`/api/v1/avatars/<uuid>.jpg|png`）。头像 URL 按服务 **origin** 解析，即使 API_BASE_URL 含 `/api` 也不重复拼接路径。服务必须持久化头像文件并允许公开读取；头像不可包含私密身份字段，不应上传证件、手机号等信息。客户端仅缓存合法服务端路径，绝不缓存 chooseAvatar 临时路径。客户端对文件大小/格式的探测只用于友好提示，探测能力缺失或失败不会拦截上传，最终由后端校验；上传失败会区分“uploadFile 合法域名未配置”“HTTP 413 体积上限”“证书/超时”等可执行原因。若经反向代理部署，代理请求体上限须不低于 6MB（后端 multipart 为 5MB），否则大图会以 413 失败；开发者工具本地 `urlCheck:false` 不能作为上线依据。
 - 手机号绑定入口：登录后的授权按钮，或“我的 → 手机号绑定”（专用模式不要求先修改头像昵称）。绑定成功立即生效，“完成”返回“我的”后刷新资料。只有接口明确返回 `mobileBound: true` 才显示成功；未确认成功可重新读取状态，旧凭证不重放。
 - 手动输入为另一条独立验证流程：`POST /api/v1/user/phone/sms-code {mobile}` 返回 `{retryAfterSeconds,mock,demoCode}`；`POST /api/v1/user/phone {mobile,code}` 返回完整me。两接口需要平台JWT，验证码绑定用户+号码+绑号用途，不能复用 `/auth/sms-code` 的登录凭证，不能只填号码直接绑定。
 - 开发测试免验证码：`GET /api/v1/user/phone/options` 的 `developmentBypass` 决定是否显示“开发模式直接绑定”，提交 `/api/v1/user/phone/development {mobile}`，不发送/校验短信。后端仅在local/development profile且开发开关开启时允许；local默认开启（`SMS_BINDING_DEV_BYPASS_ENABLED=false`关闭），同时激活prod/production/docker一律拒绝。仅允许隔离开发数据和测试号码，未验证归属的数据不能迁入生产。选项查询失败或服务端拒绝时不放开免验证。

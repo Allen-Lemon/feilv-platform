@@ -5,7 +5,7 @@
 ## 独立配置
 
 - 用户根：`miniapp`，保留原 `wxe87cc0779829a077`，十三页、原首页/订单/我的三 tabs，无设备定位声明或调用。
-- 骑手根：`rider-miniapp`，十页、工作台/我的两 tabs，真实配送位置上报用途声明。当前 `UNCONFIGURED_RIDER_APPID` 明确阻止发布，绝不能借用用户 AppID 或伪造 wx 标识。
+- 骑手根：`rider-miniapp`，十页、工作台/我的两 tabs，真实配送位置上报用途声明。`project.config.json` 当前填写 `wx98f8e0e0b1440761`，发布前须核对它确为独立骑手小程序且与后端 RIDER 登录配置一致；绝不能借用用户 AppID 或伪造 wx 标识。
 - 两个根直接包含 `app.json`、`app.js` 和页面四件套；不选择 dist、不用框架构建，不复制用户 `project.private.config.json`。
 - 本端 `config.js.CLIENT` 必须保持 RIDER，后端由签名来源与实际角色决定权限，不能通过 header、role 或接口来源假开通权限。
 - 两端 request、uploadFile 和头像 HTTPS 域名需按实际服务配置并校验。`BASE_URL` 当前为 `https://xt.allms.cn`，离线检查不访问它；默认禁止开发服务覆盖。不要为联调关闭合法域名校验。
@@ -28,7 +28,7 @@ npm run check:release --prefix rider-miniapp
 
 ## 当前发布阻塞
 
-1. 骑手真实且独立 AppID/后端凭据尚未填写，必须通过发布检查后再上传。
+1. 骑手 AppID 已在本地 `project.config.json` 填写，但后端骑手登录凭据是否成对匹配、该 AppID 是否已开通手机号能力与 `request`/`uploadFile` 合法域名仍需负责人核实；通过发布检查后再上传。
 2. 用户端现有个人 private config 关闭域名校验是已知发布阻塞，本次不擅改个人文件。
 3. 两端微信后台合法域名、隐私保护指引、手机号能力及骑手定位类目尚需负责人真实核实。
 4. 历史 phone-only 骑手无可验证微信身份时需受控人工核实、明确授权与审计；不存在安全的手机号自动迁移或演示短信恢复。原钱包、订单、骑手能力不得变更或丢弃。

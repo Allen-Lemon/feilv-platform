@@ -218,7 +218,11 @@ module.exports = {
   },
   chooseAvatar(e) {
     const intent = this._avatarIntent; this._avatarIntent = null
-    if (!intent || !this.current(intent.revision, intent.userId) || this._working) return
+    // 部分基础库/真机不会先触发按钮 tap；chooseavatar 已证明用户在当前页操作，
+    // 没有 intent 时按当前页面、会话和 owner 复核，隐藏页/切号后的迟到事件仍然拒绝。
+    const revision = intent ? intent.revision : this._profileRevision
+    const userId = intent ? intent.userId : this._profileUserId
+    if (this._working || !this.current(revision, userId)) return
     const path = e.detail && e.detail.avatarUrl
     if (typeof path !== 'string' || !path) return toast('未选择头像，可保留默认头像')
     // 临时文件只在当前页面内预览；上传成功后仅保存服务端持久化路径。
